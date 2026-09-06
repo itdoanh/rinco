@@ -1,52 +1,86 @@
-# Default values for RINCO Helm chart.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+image:
+  registry: ghcr.io/itdoanh
+  pullPolicy: IfNotPresent
+  tag: ""
 
-global:
-  imageRegistry: ""
-  imagePullPolicy: IfNotPresent
-  imagePullSecrets: []
+imagePullSecrets:
+  - name: ghcr-secret
 
-# Common service settings
-service:
-  type: ClusterIP
-  port: 80
+nameOverride: ""
+fullnameOverride: ""
 
-# Ingress
-ingress:
-  enabled: true
-  className: traefik
-  annotations: {}
-  hosts:
-    - host: rinco.local
-      paths:
-        - path: /
-          pathType: Prefix
-  tls: []
+# Application configuration
+env: production
+logLevel: info
 
-# PostgreSQL
-postgresql:
-  enabled: true
+# Service ports (do not change unless ports in source change)
+services:
   auth:
-    postgresPassword: rinco_dev_password
-    database: rinco
-  primary:
-    persistence:
-      size: 100Gi
+    enabled: true
+    port: 8081
+    replicas: 3
+  tenant:
+    enabled: true
+    port: 8082
+    replicas: 3
+  crm:
+    enabled: true
+    port: 8083
+    replicas: 3
+  dynamicModel:
+    enabled: true
+    port: 8084
+    replicas: 2
+  lead:
+    enabled: true
+    port: 8085
+    replicas: 3
+  landing:
+    enabled: true
+    port: 8086
+    replicas: 5
+  email:
+    enabled: true
+    port: 8087
+    replicas: 2
+  notification:
+    enabled: true
+    port: 8088
+    replicas: 2
+  observability:
+    enabled: true
+    port: 8089
+    replicas: 2
+  chatEngine:
+    enabled: true
+    port: 8094
+    replicas: 4
+  webrtcSfu:
+    enabled: true
+    port: 8095
+    replicas: 6
+  recording:
+    enabled: true
+    port: 8096
+    replicas: 2
+  leadScoring:
+    enabled: true
+    port: 8092
+    replicas: 2
+  aiSre:
+    enabled: true
+    port: 8090
+    replicas: 1
+  ragChatbot:
+    enabled: true
+    port: 8091
+    replicas: 3
+  sttService:
+    enabled: false
+    port: 8093
+    replicas: 1
 
-# ScyllaDB
-scylla:
-  enabled: true
-  persistence:
-    size: 200Gi
-
-# ClickHouse
-clickhouse:
-  enabled: true
-  persistence:
-    size: 100Gi
-
-# Resources
+# Common resource limits
 resources:
   requests:
     cpu: 100m
@@ -61,103 +95,183 @@ autoscaling:
   minReplicas: 2
   maxReplicas: 10
   targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
 
-# Services config
-services:
+# Pod-level
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Service & ingress
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: traefik
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+  hosts:
+    - host: api.rinco.app
+      paths:
+        - path: /
+          pathType: Prefix
+    - host: app.rinco.app
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: rinco-api-tls
+      hosts:
+        - api.rinco.app
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  annotations: {}
+
+# Default probes
+probes:
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# ServiceMonitor (Prometheus Operator)
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  honorLabels: true
+
+# Network policy
+networkPolicy:
+  enabled: true
+
+# Databases dependencies
+postgres:
+  enabled: true
   auth:
+    existingSecret: rinco-postgresql-secret
+    username: rinco_app
+    database: rinco
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: longhorn
+    resources:
+      requests:
+        cpu: 1
+        memory: 4Gi
+      limits:
+        cpu: 4
+        memory: 8Gi
+    podAnnotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "9187"
+  metrics:
     enabled: true
-    replicas: 2
-    port: 8081
 
-  tenant:
-    enabled: true
-    replicas: 2
-    port: 8082
-
-  crm:
-    enabled: true
-    replicas: 2
-    port: 8083
-
-  dynamicModel:
-    enabled: true
-    replicas: 2
-    port: 8084
-
-  lead:
-    enabled: true
-    replicas: 2
-    port: 8085
-
-  landing:
-    enabled: true
-    replicas: 3
-    port: 8086
-
-  email:
-    enabled: true
-    replicas: 1
-    port: 8087
-
-  notification:
-    enabled: true
-    replicas: 1
-    port: 8088
-
-  observability:
-    enabled: true
-    replicas: 1
-    port: 8089
-
-  chatEngine:
-    enabled: true
-    replicas: 2
-    port: 8094
-
-  webrtcSfu:
-    enabled: true
-    replicas: 2
-    port: 8095
-
-  recording:
-    enabled: true
-    replicas: 1
-    port: 8096
-
-  leadScoring:
-    enabled: true
-    replicas: 2
-    port: 8092
-
-  aiSre:
-    enabled: true
-    replicas: 1
-    port: 8090
-
-  ragChatbot:
-    enabled: true
-    replicas: 2
-    port: 8091
-
-  sttService:
-    enabled: false  # Requires GPU
-    replicas: 1
-    port: 8093
-
-# Persistence
-persistence:
+scylla:
   enabled: true
-  storageClass: longhorn
-  size: 10Gi
-
-# Logging
-logging:
-  level: info
-  format: json
-
-# Monitoring
-monitoring:
-  enabled: true
-  serviceMonitor:
+  persistence:
     enabled: true
-    interval: 30s
+    size: 200Gi
+    storageClass: longhorn
+  resources:
+    requests:
+      cpu: 1
+      memory: 4Gi
+    limits:
+      cpu: 4
+      memory: 8Gi
+
+clickhouse:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: longhorn
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: 2
+      memory: 4Gi
+
+valkey:
+  enabled: true
+  master:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: longhorn
+  replica:
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClass: longhorn
+
+# External services
+externalServices:
+  minio:
+    enabled: true
+    endpoint: minio.rinco.svc.cluster.local:9000
+    accessKey: rinco
+    secretKeySecret:
+      name: rinco-minio
+      key: secret-key
+  qdrant:
+    enabled: true
+    endpoint: qdrant.rinco.svc.cluster.local:6333
+  meilisearch:
+    enabled: true
+    endpoint: meilisearch.rinco.svc.cluster.local:7700
+  nats:
+    enabled: true
+    endpoint: nats.rinco.svc.cluster.local:4222
+  mongo:
+    enabled: true
+    endpoint: mongo.rinco.svc.cluster.local:27017
+
+# Secrets (override at install via --values)
+secrets:
+  dbPassword: ""
+  pasetoCurrent: ""
+  pasetoPrevious: ""
+  jwtSigning: ""
+  minioRootPassword: ""
+  rfc: 3339
+
+# Config
+configMap:
+  data:
+    LOG_FORMAT: json
+    TRACING_SAMPLE_RATIO: "0.10"
+    SENTRY_DSN: ""
+    TZ: Asia/Ho_Chi_Minh

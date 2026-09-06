@@ -1,0 +1,29 @@
+# Defaults for the postgresql subchart.
+# These are added to parent chart's values.yaml via the
+# `dependencies:` block in Chart.yaml.
+auth:
+  enablePostgresUser: true
+  existingSecret: rinco-postgresql-secret
+  username: rinco_app
+  database: rinco
+  usePasswordFiles: true
+primary:
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: longhorn
+  resources:
+    requests:
+      cpu: 1
+      memory: 4Gi
+    limits:
+      cpu: 4
+      memory: 8Gi
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9187"
+metrics:
+  enabled: true
+replicaCount: 3
+readReplicas:
+  enabled: true

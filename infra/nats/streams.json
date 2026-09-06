@@ -1,0 +1,119 @@
+{
+  "comment": "Declarative NATS JetStream stream configuration. Apply with `nats stream import` or via the API.",
+  "streams": [
+    {
+      "name": "EVENTS",
+      "description": "Domain event bus (lead.*, user.*, deal.*, workflow.*)",
+      "subjects": [
+        "lead.created", "lead.updated", "lead.scored", "lead.converted",
+        "user.created", "user.updated", "user.deleted", "user.login",
+        "deal.created", "deal.updated", "deal.won", "deal.lost",
+        "workflow.executed", "workflow.failed",
+        "tenant.created", "tenant.updated"
+      ],
+      "retention": "limits",
+      "max_msgs": 10000000,
+      "max_bytes": 536870912,
+      "max_age": 2592000000000000,
+      "max_msg_size": 2097152,
+      "storage": "file",
+      "num_replicas": 1,
+      "discard": "old",
+      "duplicate_window": 120000000000
+    },
+    {
+      "name": "CHAT",
+      "description": "Chat message bus",
+      "subjects": [
+        "chat.message.*",
+        "chat.typing.*",
+        "chat.presence.*",
+        "chat.reaction.*",
+        "chat.read.*"
+      ],
+      "retention": "limits",
+      "max_msgs": 50000000,
+      "max_bytes": 2147483648,
+      "max_age": 2592000000000000,
+      "max_msg_size": 1048576,
+      "storage": "file",
+      "num_replicas": 1,
+      "discard": "old"
+    },
+    {
+      "name": "WEBRTC",
+      "description": "WebRTC SFU / meeting events",
+      "subjects": [
+        "webrtc.session.*",
+        "webrtc.participant.*",
+        "webrtc.recording.*"
+      ],
+      "retention": "limits",
+      "max_msgs": 5000000,
+      "max_age": 604800000000000,
+      "max_msg_size": 2097152,
+      "storage": "file",
+      "num_replicas": 1,
+      "discard": "old"
+    },
+    {
+      "name": "CRM",
+      "description": "Internal CRM events (activity, audit)",
+      "subjects": [
+        "crm.activity.*",
+        "crm.audit.*",
+        "crm.note.*"
+      ],
+      "retention": "work",
+      "max_msgs": 1000000,
+      "max_age": 7776000000000000,
+      "max_msg_size": 1048576,
+      "storage": "file",
+      "num_replicas": 1,
+      "discard": "old"
+    },
+    {
+      "name": "FILES",
+      "description": "Object-storage events (MinIO)",
+      "subjects": [
+        "file.uploaded.*",
+        "file.deleted.*",
+        "file.transcoded.*"
+      ],
+      "retention": "limits",
+      "max_msgs": 5000000,
+      "max_age": 86400000000000,
+      "max_msg_size": 524288,
+      "storage": "file",
+      "num_replicas": 1,
+      "discard": "old"
+    },
+    {
+      "name": "OBSERVABILITY",
+      "description": "Service-internal telemetry events",
+      "subjects": [
+        "obs.circuit.*",
+        "obs.alert.*",
+        "obs.metric.*"
+      ],
+      "retention": "limits",
+      "max_msgs": 1000000,
+      "max_age": 86400000000000,
+      "max_msg_size": 262144,
+      "storage": "memory",
+      "num_replicas": 1,
+      "discard": "old"
+    }
+  ],
+  "consumers": [
+    {
+      "stream_name": "EVENTS",
+      "name": "ai-sre-consumer",
+      "filter_subject": "lead.>",
+      "ack_policy": "explicit",
+      "ack_wait": 30000000000,
+      "max_deliver": 5,
+      "max_ack_pending": 100
+    }
+  ]
+}

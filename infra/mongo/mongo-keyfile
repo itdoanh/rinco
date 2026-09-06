@@ -1,0 +1,7 @@
+-----BEGIN OPENSSH PRIVATE FILE FORMAT-----
+
+This file is generated for development only. In production, generate
+a real keyfile via: openssl rand -base64 756 > mongo-keyfile
+
+replace_me_real_keyfile_content
+-----END OPENSSH PRIVATE FILE FORMAT-----

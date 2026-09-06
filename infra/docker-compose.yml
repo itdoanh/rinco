@@ -1,85 +1,110 @@
-version: '3.8'
+version: '3.9'
 
 # ============================================================
 # RINCO Local Development Stack
 # ============================================================
-# Bao gồm:
-# 1. 9 Polyglot databases (PostgreSQL, ScyllaDB, ClickHouse, MongoDB, Valkey, MinIO, Qdrant, Meilisearch, NATS)
-# 2. Observability stack (Prometheus, Grafana, Loki, Jaeger, Vector, OpenTelemetry Collector)
-# 3. Migration tooling (Atlas, clickhouse-migrator, ...)
-# 4. Development utilities (MailHog, MinIO console, ...)
+# 9 polyglot databases + observability + API gateway
+# Production-ready configurations with healthchecks, resource limits
 # ============================================================
 
 x-common-env: &common-env
   TZ: Asia/Ho_Chi_Minh
 
+x-restart-policy: &restart
+  restart: unless-stopped
+
 services:
   # ============================================================
-  # 1. POSTGRESQL 16 (Multi-tenant CRM, Auth, RLS, LTREE)
+  # 1. POSTGRESQL 16 — Multi-tenant CRM core + RLS + LTREE
   # ============================================================
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.4-alpine
     container_name: rinco-postgres
-    restart: unless-stopped
+    <<: *restart
     environment:
-      POSTGRES_USER: rinco
-      POSTGRES_PASSWORD: rinco_dev_password
-      POSTGRES_DB: rinco
+      POSTGRES_USER: ${POSTGRES_USER:-rinco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rinco_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-rinco}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
       <<: *common-env
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - postgres_config:/etc/postgresql
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
     command:
       - "postgres"
       - "-c"
-      - "max_connections=200"
-      - "-c"
-      - "shared_buffers=256MB"
-      - "-c"
-      - "effective_cache_size=1GB"
-      - "-c"
-      - "work_mem=64MB"
-      - "-c"
-      - "maintenance_work_mem=512MB"
-      - "-c"
-      - "wal_compression=on"
-      - "-c"
-      - "log_min_duration_statement=200"
+      - "config_file=/etc/postgresql/postgresql.conf"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U rinco -d rinco"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rinco} -d ${POSTGRES_DB:-rinco}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 6G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     networks:
-      - rinco-net
+      - rinco-network
 
-  # PgBouncer - build from source if needed (commented out for now, PostgreSQL handles direct connections)
-  # pgbouncer:
-  #   image: edob01/pgbouncer:1.22.0
-  #   container_name: rinco-pgbouncer
-  #   restart: unless-stopped
-  #   environment:
-  #     DATABASE_URL: postgresql://rinco:rinco_dev_password@postgres:5432/rinco
-  #     POOL_MODE: transaction
-  #     MAX_CLIENT_CONN: 1000
-  #     DEFAULT_POOL_SIZE: 25
-  #   ports:
-  #     - "6432:5432"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #   networks:
-  #     - rinco-net
+  # PgBouncer - transaction pooling
+  pgbouncer:
+    image: bitnami/pgbouncer:1.23.1
+    container_name: rinco-pgbouncer
+    <<: *restart
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRESQL_HOST: postgres
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-rinco}
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-rinco}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-rinco_dev_password}
+      PGBOUNCER_AUTH_TYPE: scram-sha-256
+      PGBOUNCER_AUTH_FILE: /etc/pgbouncer/userlist.txt
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 1000
+      PGBOUNCER_DEFAULT_POOL_SIZE: 100
+      PGBOUNCER_LOG_CONNECTIONS: "1"
+      PGBOUNCER_LOG_DISCONNECTIONS: "1"
+      PGBOUNCER_STATS_USERS: pgbouncer_stats
+      <<: *common-env
+    ports:
+      - "6432:6432"
+    volumes:
+      - ./postgres/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - pgbouncer_data:/bitnami/pgbouncer/data
+    healthcheck:
+      test: ["CMD", "/opt/bitnami/pgbouncer/bin/pgbouncer", "-t", "1", "-u", "rinco", "postgres"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+    networks:
+      - rinco-network
 
   # ============================================================
-  # 2. SCYLLADB 6.x (Chat, WebRTC, Leads Raw)
+  # 2. SCYLLADB 6.x — Chat, WebRTC, Leads Raw, Events
   # ============================================================
   scylla:
     image: scylladb/scylla:6.2.0
     container_name: rinco-scylla
-    restart: unless-stopped
+    <<: *restart
     environment:
       SCYLLA_CLUSTER_NAME: rinco-cluster
       SCYLLA_DC: datacenter1
@@ -89,40 +114,79 @@ services:
       SCYLLA_BROADCAST_ADDRESS: scylla
       SCYLLA_MIGRATION_TIMEOUT: 30000
       SCYLLA_AUTO_BOOTSTRAP: "true"
+      <<: *common-env
     command:
       - "--developer-mode=1"
       - "--memory=2G"
       - "--smp=2"
       - "--overprovisioned=1"
+      - "--compaction-throughput-mb-per-sec=128"
     ports:
       - "9042:9042"
       - "7000:7000"
       - "7001:7001"
     volumes:
-      - scylla_data:/var/lib/scylla
+      - scylla_data:/var/lib/scylla/data
       - scylla_commitlog:/var/lib/scylla/commitlog
-      - ./scylla/init.cql:/etc/scylla/init.cql:ro
+      - scylla_hints:/var/lib/scylla/hints
+      - ./scylla/keyspace.cql:/etc/scylla/keyspace.cql:ro
+      - ./scylla/tables:/etc/scylla/tables:ro
     healthcheck:
       test: ["CMD", "cqlsh", "-e", "describe cluster"]
       interval: 30s
       timeout: 10s
-      retries: 5
-      start_period: 60s
+      retries: 10
+      start_period: 90s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     networks:
-      - rinco-net
+      - rinco-network
+
+  # Init schema (idempotent, runs once)
+  scylla-init:
+    image: scylladb/scylla:6.2.0
+    container_name: rinco-scylla-init
+    depends_on:
+      scylla:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for ScyllaDB to be ready..."
+        until cqlsh scylla 9042 -e "describe cluster" > /dev/null 2>&1; do
+          sleep 3
+        done
+        cqlsh scylla 9042 -f /etc/scylla/keyspace.cql
+        for f in /etc/scylla/tables/*.cql; do
+          echo "Applying $$f..."
+          cqlsh scylla 9042 -f $$f
+        done
+        echo "ScyllaDB schema initialized."
+    volumes:
+      - ./scylla/keyspace.cql:/etc/scylla/keyspace.cql:ro
+      - ./scylla/tables:/etc/scylla/tables:ro
+    networks:
+      - rinco-network
 
   # ============================================================
-  # 3. CLICKHOUSE 24.x (Logs, Audit, Metrics OLAP)
+  # 3. CLICKHOUSE 24.x — Analytics OLAP
   # ============================================================
   clickhouse:
-    image: clickhouse/clickhouse-server:24.3-alpine
+    image: clickhouse/clickhouse-server:24.3.3.102-alpine
     container_name: rinco-clickhouse
-    restart: unless-stopped
+    <<: *restart
     environment:
-      CLICKHOUSE_DB: rinco_logs
-      CLICKHOUSE_USER: rinco
-      CLICKHOUSE_PASSWORD: rinco_dev_password
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-rinco_analytics}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-rinco}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-rinco_dev_password}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      CLICKHOUSE_SKIP_USER_SETUP: 0
       <<: *common-env
     ports:
       - "8123:8123"
@@ -134,75 +198,182 @@ services:
         hard: 262144
     volumes:
       - clickhouse_data:/var/lib/clickhouse
-      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./clickhouse/tables:/docker-entrypoint-initdb.d/tables:ro
+      - ./clickhouse/materialized-views:/docker-entrypoint-initdb.d/materialized-views:ro
+      - ./clickhouse/dictionaries:/docker-entrypoint-initdb.d/dictionaries:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
     networks:
-      - rinco-net
+      - rinco-network
 
   # ============================================================
-  # 4. MONGODB 7.x (Lead Enrichment, Flexible Schema)
+  # 4. MONGODB 7.x — Dynamic model + Landing CMS
   # ============================================================
   mongodb:
-    image: mongo:7.0
+    image: mongo:7.0.5
     container_name: rinco-mongodb
-    restart: unless-stopped
+    <<: *restart
+    command:
+      - "mongod"
+      - "--replSet"
+      - "rs0"
+      - "--bind_ip_all"
+      - "--keyFile"
+      - "/etc/mongo-keyfile"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: rinco
-      MONGO_INITDB_ROOT_PASSWORD: rinco_dev_password
-      MONGO_INITDB_DATABASE: rinco
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-rinco}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-rinco_dev_password}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-rinco}
       <<: *common-env
     ports:
       - "27017:27017"
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
-      - ./mongodb/init.js:/docker-entrypoint-initdb.d/init.js:ro
+      - ./mongo/mongo-keyfile:/etc/mongo-keyfile:ro
+      - ./mongo/init.js:/docker-entrypoint-initdb.d/01-init.js:ro
     healthcheck:
-      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
     networks:
-      - rinco-net
+      - rinco-network
 
   # ============================================================
-  # 5. VALKEY 7.x (Cache, Presence, Rate Limit, AI Cache)
+  # 5. VALKEY 7.x — Cache, Presence, Rate Limit, AI Cache
   # ============================================================
   valkey:
-    image: valkey/valkey:7.2-alpine
+    image: valkey/valkey:7.2.5-alpine
     container_name: rinco-valkey
-    restart: unless-stopped
+    <<: *restart
     command:
       - "valkey-server"
-      - "--maxmemory"
-      - "512mb"
-      - "--maxmemory-policy"
-      - "allkeys-lru"
-      - "--appendonly"
-      - "yes"
-      - "--appendfsync"
-      - "everysec"
+      - "/usr/local/etc/valkey/valkey.conf"
     ports:
       - "6379:6379"
     volumes:
       - valkey_data:/data
+      - ./valkey/valkey.conf:/usr/local/etc/valkey/valkey.conf:ro
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:-rinco_dev_password}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 3G
+        reservations:
+          cpus: '0.1'
+          memory: 256M
     networks:
-      - rinco-net
+      - rinco-network
 
   # ============================================================
-  # 6. MINIO (S3-compatible Object Storage)
+  # 6. MEILISEARCH v1.x — Full-text search (Vietnamese)
+  # ============================================================
+  meilisearch:
+    image: getmeili/meilisearch:v1.7.4
+    container_name: rinco-meilisearch
+    <<: *restart
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-rinco_dev_password}
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_DB_PATH: /meili_data
+      MEILI_HTTP_ADDR: 0.0.0.0:7700
+      MEILI_NO_ANALYTICS_TELEMETRY: "true"
+      <<: *common-env
+    ports:
+      - "7700:7700"
+    volumes:
+      - meilisearch_data:/meili_data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7700/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 7. QDRANT v1.x — Vector search (RAG)
+  # ============================================================
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    container_name: rinco-qdrant
+    <<: *restart
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - ./qdrant/qdrant-config.yaml:/qdrant/config/config.yaml:ro
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__LOG_LEVEL: INFO
+      <<: *common-env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 8. MINIO — S3-compatible object storage
   # ============================================================
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
     container_name: rinco-minio
-    restart: unless-stopped
+    <<: *restart
     environment:
-      MINIO_ROOT_USER: rinco
-      MINIO_ROOT_PASSWORD: rinco_dev_password
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-rinco}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-rinco_dev_password}
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:9001
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+      <<: *common-env
     command:
       - "server"
       - "/data"
@@ -217,120 +388,157 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
     networks:
-      - rinco-net
+      - rinco-network
 
-  # MinIO bucket auto-create
+  # Bucket auto-create
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2024-07-16T21-53-15Z
     container_name: rinco-minio-init
     depends_on:
       minio:
         condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      sleep 5;
-      mc alias set local http://minio:9000 rinco rinco_dev_password;
-      mc mb --ignore-existing local/chat-attachments;
-      mc mb --ignore-existing local/recordings;
-      mc mb --ignore-existing local/landing-assets;
-      mc mb --ignore-existing local/model-artifacts;
-      mc anonymous set download local/landing-assets;
-      echo 'MinIO buckets created';
-      "
-    networks:
-      - rinco-net
-
-  # ============================================================
-  # 7. QDRANT (Vector Database cho RAG)
-  # ============================================================
-  qdrant:
-    image: qdrant/qdrant:v1.9.0
-    container_name: rinco-qdrant
-    restart: unless-stopped
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
+    entrypoint: ["/bin/sh", "/scripts/createbuckets.sh"]
     environment:
-      QDRANT__SERVICE__GRPC_PORT: 6334
-    networks:
-      - rinco-net
-
-  # ============================================================
-  # 8. MEILISEARCH (Full-text Search tiếng Việt)
-  # ============================================================
-  meilisearch:
-    image: getmeili/meilisearch:v1.7
-    container_name: rinco-meilisearch
-    restart: unless-stopped
-    environment:
-      MEILI_MASTER_KEY: rinco_dev_password
-      MEILI_ENV: development
-      MEILI_NO_ANALYTICS: "true"
-    ports:
-      - "7700:7700"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-rinco}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-rinco_dev_password}
+      <<: *common-env
     volumes:
-      - meilisearch_data:/meili_data
+      - ./minio/createbuckets.sh:/scripts/createbuckets.sh:ro
+      - ./minio/buckets.json:/scripts/buckets.json:ro
     networks:
-      - rinco-net
+      - rinco-network
 
   # ============================================================
-  # 9. NATS JetStream (Event Streaming)
+  # 9. NATS JetStream — Message broker
   # ============================================================
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.10.17-alpine
     container_name: rinco-nats
-    restart: unless-stopped
+    <<: *restart
     command:
-      - "--jetstream"
-      - "--store_dir=/data"
-      - "--http_port=8222"
+      - "--config"
+      - "/etc/nats/nats.conf"
     ports:
       - "4222:4222"
       - "8222:8222"
       - "6222:6222"
     volumes:
       - nats_data:/data
+      - ./nats/nats.conf:/etc/nats/nats.conf:ro
+      - ./nats/streams.json:/etc/nats/streams.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 3G
+        reservations:
+          cpus: '0.1'
+          memory: 256M
     networks:
-      - rinco-net
+      - rinco-network
+
+  nats-init:
+    image: natsio/nats-box:0.18.5
+    container_name: rinco-nats-init
+    depends_on:
+      nats:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for NATS JetStream..."
+        sleep 5
+        # Apply stream config via nats CLI
+        nats stream ls || true
+        echo "Manual stream creation required via nats CLI or declarations.json. See deployments/helm."
+        echo "NATS init container completed (declarative streams are loaded via nats server -js when needed)."
+    networks:
+      - rinco-network
 
   # ============================================================
   # OBSERVABILITY STACK
   # ============================================================
 
-  # Prometheus metrics
+  # Prometheus — metrics
   prometheus:
-    image: prom/prometheus:v2.52.0
+    image: prom/prometheus:v2.53.0
     container_name: rinco-prometheus
-    restart: unless-stopped
+    <<: *restart
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
-      - "--storage.tsdb.retention.time=15d"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=50GB"
       - "--web.console.libraries=/usr/share/prometheus/console_libraries"
       - "--web.console.templates=/usr/share/prometheus/consoles"
       - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
     ports:
       - "9090:9090"
     volumes:
       - prometheus_data:/prometheus
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/recording-rules.yml:/etc/prometheus/recording-rules.yml:ro
+      - ./prometheus/alerts:/etc/prometheus/alerts:ro
+    depends_on:
+      - alertmanager
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
     networks:
-      - rinco-net
+      - rinco-network
 
-  # Grafana dashboards
+  # AlertManager
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: rinco-alertmanager
+    <<: *restart
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "9093:9093"
+    volumes:
+      - alertmanager_data:/alertmanager
+      - ./prometheus/alerts/webhook.yml:/etc/alertmanager/alertmanager.yml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - rinco-network
+
+  # Grafana — dashboards
   grafana:
     image: grafana/grafana:10.4.2
     container_name: rinco-grafana
-    restart: unless-stopped
+    <<: *restart
     environment:
-      GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
-      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-piechart-panel
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource,grafana-piechart-panel,grafana-polystat-panel
+      GF_FEATURE_TOGGLES_ENABLE: ""
+      GF_LOG_MODE: console
+      <<: *common-env
     ports:
       - "3000:3000"
     volumes:
@@ -339,114 +547,250 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
     depends_on:
       - prometheus
+      - loki
+      - tempo
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
     networks:
-      - rinco-net
+      - rinco-network
 
-  # Loki for log aggregation
+  # Loki — logs
   loki:
     image: grafana/loki:2.9.4
     container_name: rinco-loki
-    restart: unless-stopped
-    command: -config.file=/etc/loki/local-config.yaml
+    <<: *restart
+    command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "3100:3100"
     volumes:
       - loki_data:/loki
-      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
     networks:
-      - rinco-net
+      - rinco-network
 
-  # Jaeger for distributed tracing
+  # Promtail — log shipper
+  promtail:
+    image: grafana/promtail:2.9.4
+    container_name: rinco-promtail
+    <<: *restart
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./loki/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - rinco-network
+
+  # Tempo — traces
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: rinco-tempo
+    <<: *restart
+    command:
+      - "-config.file=/etc/tempo/tempo-config.yml"
+    ports:
+      - "3200:3200"   # Tempo HTTP
+      - "4317:4317"   # OTLP gRPC (also Jaeger)
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - tempo_data:/var/tempo
+      - ./tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 1G
+    networks:
+      - rinco-network
+
+  # Jaeger — distributed tracing UI (legacy, in addition to Tempo)
   jaeger:
     image: jaegertracing/all-in-one:1.58
     container_name: rinco-jaeger
-    restart: unless-stopped
+    <<: *restart
     environment:
       COLLECTOR_OTLP_ENABLED: "true"
+      <<: *common-env
     ports:
-      - "16686:16686"
-      - "14268:14268"
-      - "4317:4317"
-      - "4318:4318"
+      - "16686:16686" # Jaeger UI
+      - "14268:14268" # Jaeger collector (Thrift)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 512M
     networks:
-      - rinco-net
+      - rinco-network
+
+  # cAdvisor — container metrics
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: rinco-cadvisor
+    <<: *restart
+    privileged: true
+    devices:
+      - /dev/kmsg
+    command:
+      - "--housekeeping_interval=15s"
+      - "--docker_only=true"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    networks:
+      - rinco-network
+
+  # Node exporter — host metrics
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: rinco-node-exporter
+    <<: *restart
+    command:
+      - "--path.rootfs=/host"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|var/lib/docker/.+|var/lib/kubelet/.+)($|/)"
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      - "9100:9100"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
+    networks:
+      - rinco-network
 
   # OpenTelemetry Collector
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.102.0
+    image: otel/opentelemetry-collector-contrib:0.103.0
     container_name: rinco-otel-collector
-    restart: unless-stopped
-    command: ["--config=/etc/otel-collector-config.yaml"]
+    <<: *restart
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
-      - ./otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+      - ./otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     ports:
       - "1888:1888"   # pprof extension
       - "8888:8888"   # Prometheus metrics
       - "13133:13133" # health_check
       - "4317:4317"   # OTLP gRPC
       - "4318:4318"   # OTLP HTTP
+      - "14250:14250" # Jaeger gRPC
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
     networks:
-      - rinco-net
+      - rinco-network
+
+  # ============================================================
+  # TRAEFIK — API Gateway (development)
+  # ============================================================
+  traefik:
+    image: traefik:v3.0.4
+    container_name: rinco-traefik
+    <<: *restart
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.otlp.address=:4317"
+      - "--entrypoints.traefik.address=:8080"
+      - "--accesslog=true"
+      - "--metrics.prometheus=true"
+      - "--metrics.prometheus.addentrypointslabels=true"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "4317:4317"
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic:/etc/traefik/dynamic:ro
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - rinco-network
 
   # ============================================================
   # DEV UTILITIES
   # ============================================================
 
-  # MailHog for email testing
+  # MailHog — email testing
   mailhog:
-    image: mailhog/mailhog:latest
+    image: mailhog/mailhog:v1.0.1
     container_name: rinco-mailhog
-    restart: unless-stopped
+    <<: *restart
     ports:
       - "1025:1025"
       - "8025:8025"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: 128M
     networks:
-      - rinco-net
-
-  # WireGuard for admin VPN (Dark Admin)
-  wireguard:
-    image: lscr.io/linuxserver/wireguard:latest
-    container_name: rinco-wireguard
-    restart: unless-stopped
-    cap_add:
-      - NET_ADMIN
-      - SYS_MODULE
-    environment:
-      PUID: 1000
-      PGID: 1000
-      TZ: Asia/Ho_Chi_Minh
-      SERVERURL: wireguard.rinco.local
-      PEERS: admin1,admin2
-      PEERDNS: 1.1.1.1
-      INTERNAL_SUBNET: 10.13.13.0
-    ports:
-      - "51820:51820/udp"
-    volumes:
-      - wireguard_config:/config
-      - /lib/modules:/lib/modules
-    networks:
-      - rinco-net
+      - rinco-network
 
 volumes:
   postgres_data:
+  postgres_config:
+  pgbouncer_data:
   scylla_data:
   scylla_commitlog:
+  scylla_hints:
   clickhouse_data:
   mongodb_data:
   mongodb_config:
   valkey_data:
-  minio_data:
-  qdrant_data:
   meilisearch_data:
+  qdrant_data:
+  minio_data:
   nats_data:
   prometheus_data:
+  alertmanager_data:
   grafana_data:
   loki_data:
-  wireguard_config:
+  tempo_data:
 
 networks:
-  rinco-net:
+  rinco-network:
     driver: bridge
+    name: rinco-network
     ipam:
       config:
-        - subnet: 172.20.0.0/16
+        - subnet: 172.25.0.0/16

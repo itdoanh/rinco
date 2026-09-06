@@ -1,152 +1,93 @@
 # Notification Service
 
-Multi-channel notification service: Telegram, Slack, Discord, Webhook, SMS, Push.
+> **Phân hệ #7 — Multi-channel notifications** · In-app / Email / SMS / Push / FCM / Slack / Discord / Telegram / Webhook.
+> Priority matrix (high = in-app+email+push, normal = in-app+email, low = in-app only).
+> User preferences (per-type enable/disable + quiet hours + daily digest).
 
-## Tính năng
+## 1. Endpoints (10)
 
-- **Telegram**: Gửi tin nhắn qua Telegram Bot API
-- **Slack**: Slack Webhook URLs
-- **Discord**: Discord Webhooks
-- **Webhook**: Custom HTTP webhooks
-- **SMS**: Twilio, Vonage, MessageBird
-- **Push**: FCM (Firebase Cloud Messaging) cho mobile
-- **Email**: Delegate tới email-service
-- **Templates**: Multi-language template support
-- **Routing**: Route theo user preferences
-- **Priority**: High/normal/low với different delivery
-- **Retry**: Auto-retry với exponential backoff
+| Method | Path | Mô tả |
+|--------|------|-------|
+| GET | `/health` / `/ready` / `/metrics` | Health / Prometheus |
+| POST | `/v1/notifications/send` | Gửi cho 1 user, multi-channel |
+| POST | `/v1/notifications/broadcast` | Broadcast theo audience |
+| GET | `/v1/notifications` | List in-app store (filter `user_id`, `unread=1`) |
+| GET | `/v1/notifications/:id` | Retrieve single |
+| POST | `/v1/notifications/:id/read` | Mark as read |
+| POST | `/v1/notifications/preferences/:user_id` | Set user prefs |
+| GET | `/v1/notifications/preferences/:user_id` | Get user prefs |
+| POST | `/v1/notifications/subscriptions` | Register push endpoint (web/fcm) |
+| GET | `/v1/notifications/stats` | Counter snapshot |
 
-## Công nghệ
+## 2. Channels & Drivers
 
-- **Language**: Go 1.23+
-- **Framework**: Echo v4
-- **HTTP Client**: net/http với connection pooling
-- **Templates**: Go templates
+| Channel | Driver / Backend |
+|---------|------------------|
+| `in_app` | Internal store (proxy to chat-engine WS in production) |
+| `email`  | HTTP delegate → email-service |
+| `sms`    | Twilio (HTTP API, basic auth) |
+| `push`   | Web Push (subscription endpoint) |
+| `fcm`    | Firebase Cloud Messaging |
+| `slack`  | Incoming webhook |
+| `discord`| Incoming webhook |
+| `telegram` | Bot API |
+| `webhook` | Generic POST |
 
-## API Endpoints
+## 3. Priority matrix
 
-```
-POST   /v1/notify                        - Generic notify
-POST   /v1/notify/telegram               - Telegram
-POST   /v1/notify/slack                  - Slack
-POST   /v1/notify/discord                - Discord
-POST   /v1/notify/webhook                - Webhook
-POST   /v1/notify/sms                    - SMS
-POST   /v1/notify/push                   - Push notification
-POST   /v1/notify/email                  - Email (proxy)
-GET    /v1/notify/preferences/:user_id   - Get user preferences
-PATCH  /v1/notify/preferences/:user_id   - Update preferences
-GET    /health                           - Health check
-```
+| Priority | Default channels |
+|----------|------------------|
+| high   | in_app + email + push |
+| normal | in_app + email |
+| low    | in_app |
 
-## Generic Notify
+Có thể override qua `channels` array trong request.
+
+## 4. User Preferences
 
 ```json
-POST /v1/notify
 {
-  "user_id": "uuid",
-  "tenant_id": "uuid",
-  "channel": "telegram",  // telegram|slack|discord|webhook|sms|push|email
-  "template": "lead_assigned",
-  "data": {
-    "lead_name": "Nguyễn Văn A",
-    "assigned_by": "Manager X"
-  },
-  "priority": "high"
+  "channels": {"in_app": true, "email": true, "sms": false, "push": true},
+  "quiet_hours": [22, 7],
+  "daily_digest": false,
+  "types": {"lead_scored": true, "task_assigned": true}
 }
 ```
 
-## Telegram Example
+- `quiet_hours` [start, end] hỗ trợ qua đêm (vd `[22, 7]`)
+- Trong quiet hours, in-app vẫn được lưu; SMS/email/push bị skip
+- `types` map cho phép per-type enable
 
-```json
-POST /v1/notify/telegram
-{
-  "chat_id": "123456789",
-  "text": "🎉 Lead mới: Nguyễn Văn A (điểm: 92/100)",
-  "parse_mode": "HTML",
-  "reply_markup": {
-    "inline_keyboard": [
-      [
-        {"text": "Xem chi tiết", "url": "https://..."}
-      ]
-    ]
-  }
-}
-```
+## 5. ENV
 
-## Slack Example
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PORT` | `8088` | HTTP port |
+| `EMAIL_SERVICE_URL` | `http://email-service:8087` | Email upstream |
+| `PUSH_SERVICE_URL` | `http://push-worker:9000/send` | Web Push |
+| `TWILIO_ACCOUNT_SID` / `TWILIO_AUTH_TOKEN` / `TWILIO_FROM` | - | SMS |
+| `FCM_SERVER_KEY` | - | Firebase Cloud Messaging |
+| `TELEGRAM_BOT_TOKEN` | - | Telegram bot |
+| `SLACK_DEFAULT_WEBHOOK` | - | Default Slack channel |
 
-```json
-POST /v1/notify/slack
-{
-  "webhook_url": "https://hooks.slack.com/...",
-  "channel": "#sales",
-  "blocks": [
-    {
-      "type": "section",
-      "text": {
-        "type": "mrkdwn",
-        "text": "*New High-Value Lead*\nNguyễn Văn A - 100M VND"
-      }
-    }
-  ]
-}
-```
-
-## Push Notification
-
-```json
-POST /v1/notify/push
-{
-  "user_id": "uuid",
-  "title": "Lead mới",
-  "body": "Nguyễn Văn A vừa đăng ký",
-  "data": {
-    "lead_id": "uuid",
-    "deep_link": "rinco://leads/uuid"
-  },
-  "badge": 5,
-  "sound": "default"
-}
-```
-
-## Environment Variables
+## 6. Run
 
 ```bash
-NOTIFICATION_SERVICE_PORT=8091
-TELEGRAM_BOT_TOKEN=...
-SLACK_DEFAULT_WEBHOOK=...
-TWILIO_ACCOUNT_SID=...
-TWILIO_AUTH_TOKEN=...
-TWILIO_FROM_NUMBER=...
-FCM_SERVER_KEY=...
-MAX_RETRIES=3
-RETRY_BACKOFF=exponential
-QUEUE_SIZE=10000
-WORKERS=10
+cd services/notification-service
+go build ./cmd && ./notification-service
 ```
 
-## Development
+## 7. Ví dụ
 
 ```bash
-go build -o bin/notification-service ./cmd/main.go
-./bin/notification-service
+curl -X POST http://localhost:8088/v1/notifications/send \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "user_id": "u-123",
+    "type": "lead_scored",
+    "title": "Lead mới nóng",
+    "message": "Alice vừa đạt 92 điểm",
+    "priority": "high",
+    "data": {"lead_id": "L-001", "score": 92}
+  }'
 ```
-
-## User Preferences
-
-Users có thể config:
-- Kênh nào enable/disable
-- Quiet hours
-- Priority filters
-- Language
-
-## Routing Logic
-
-1. User receives notification
-2. Check user preferences
-3. Route to enabled channels
-4. Apply template + data
-5. Send via channel API
-6. Retry on failure
-7. Track delivery status

@@ -1,0 +1,28 @@
+defaults:
+  clusterName: rinco-cluster
+  dcName: datacenter1
+  rackName: rack1
+  seeds: 3
+persistence:
+  enabled: true
+  size: 200Gi
+  storageClass: longhorn
+resources:
+  requests:
+    cpu: 1
+    memory: 4Gi
+  limits:
+    cpu: 4
+    memory: 8Gi
+sysctls:
+  - name: fs.aio-max-nr
+    value: "1048576"
+  - name: vm.swappiness
+    value: "0"
+meshService:
+  type: Headless
+clientOptions:
+  consistency: "LOCAL_QUORUM"
+  defaultRetryPolicy:
+    maxRetries: 5
+  loadBalancingPolicy: "TokenAwareLoadBalancingPolicy"

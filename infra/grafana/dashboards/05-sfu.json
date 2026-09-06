@@ -1,0 +1,62 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active Meetings",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [{ "expr": "rinco_webrtc_active_meetings" }]
+    },
+    {
+      "id": 2,
+      "title": "Active Participants",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [{ "expr": "rinco_webrtc_active_participants" }]
+    },
+    {
+      "id": 3,
+      "title": "Bandwidth In/Out (Mbps)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "decmbytes" } },
+      "targets": [
+        { "expr": "rate(rinco_webrtc_bandwidth_in_bytes[5m])  / 1024 / 1024 * 8", "legendFormat": "in" },
+        { "expr": "rate(rinco_webrtc_bandwidth_out_bytes[5m]) / 1024 / 1024 * 8", "legendFormat": "out" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Packet Loss %",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{ "expr": "rinco_webrtc_packet_loss_ratio", "legendFormat": "loss" }]
+    },
+    {
+      "id": 5,
+      "title": "Recording Storage (GB)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [{ "expr": "rinco_recording_storage_bytes / 1024 / 1024 / 1024" }]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["rinco", "webrtc"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timezone": "browser",
+  "title": "RINCO — WebRTC / SFU",
+  "uid": "rinco-sfu",
+  "version": 1
+}

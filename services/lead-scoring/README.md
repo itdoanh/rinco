@@ -1,150 +1,122 @@
-# Lead Scoring Service
+# Lead Scoring Service (RINCO)
 
-ML-based lead scoring service sử dụng LightGBM, viết bằng Python.
+> **Phân hệ #11.3 — AI Predictive** · Ensemble ML scoring 0-100 với tier + recommended_action + SHAP explanations.
+> Multi-tenant (model per tenant + global fallback). Pull features từ PostgreSQL/ClickHouse/MongoDB, publish `lead.scored` qua NATS JetStream, writeback score vào PG.
 
-## Tính năng
+## 1. Endpoints (7)
 
-- **Multi-tenant Models**: Mỗi tenant có model riêng, fallback về default
-- **LightGBM**: Gradient boosting cho high accuracy
-- **Feature Engineering**: Auto-extract features từ lead data
-- **Real-time Scoring**: Single lead scoring < 50ms
-- **Batch Scoring**: Bulk scoring với throughput cao
-- **Model Retraining**: Auto-trigger retrain khi có data mới
-- **Feature Importance**: Explain tại sao lead có điểm cao/thấp
-- **GPU Support**: Optional CUDA acceleration
-- **A/B Testing**: Multiple model variants
+| Method | Path | Mô tả |
+|--------|------|-------|
+| POST | `/v1/score/{lead_id}` | Score 1 lead |
+| POST | `/v1/score` | Score 1 lead (no path id) |
+| POST | `/v1/score/batch` | Batch ≤ 1000 |
+| POST | `/v1/train` | Train lại (admin) |
+| GET  | `/v1/model/info` | Metrics hiện tại |
+| POST | `/v1/explain/{lead_id}` | SHAP top factors |
+| GET  | `/v1/health` / `/v1/metrics` | Self |
 
-## Công nghệ
-
-- **Language**: Python 3.11+
-- **Framework**: FastAPI
-- **ML**: LightGBM, scikit-learn, pandas, numpy
-- **Model Storage**: PostgreSQL (binary) + S3/MinIO
-- **API**: REST + GraphQL
-
-## Model Features
-
-```python
-FEATURES = [
-    "company_size",        # Number of employees
-    "industry",            # Encoded industry
-    "position_seniority",  # C-level, VP, Manager, IC
-    "email_quality",       # Free vs corporate domain
-    "phone_valid",         # Phone validation result
-    "utm_source_score",    # Historical conversion by source
-    "page_views_30d",      # Behavioral
-    "time_on_site_avg",    # Engagement
-    "previous_interactions",
-    "company_revenue",
-    "country",
-    "device_type",
-]
-```
-
-## API Endpoints
+## 2. Architecture
 
 ```
-POST   /score                  - Score single lead
-POST   /batch-score            - Score batch of leads
-POST   /retrain                - Trigger model retraining (admin)
-GET    /model/info             - Model metadata
-GET    /model/features         - Feature importance
-GET    /health                 - Health check
-GET    /metrics                - Prometheus metrics
+                 ┌────────────────────────────────────────────────────────┐
+                 │                  NATS JetStream                         │
+                 │   subscribe "lead.created"  → publish "lead.scored"     │
+                 └─────────────────────┬──────────────────────────────────┘
+                                       ▼
+   ┌──────────────────────────────────────────────────────────────────┐
+   │                    Lead Scoring Python                            │
+   │   ┌─────────────┐  ┌──────────────┐  ┌──────────────────────┐      │
+   │   │  Feature    │  │  Ensemble    │  │  Post-processing     │      │
+   │   │  Engineer   │─▶│  XGB + NN +  │─▶│  tier / action / SHAP │     │
+   │   │  (~40 cols) │  │  Fallback    │  │  writeback PG         │     │
+   │   └─────────────┘  └──────────────┘  └──────────────────────┘      │
+   └──────────────────────────────────────────────────────────────────┘
 ```
 
-## Scoring Output
+## 3. Features (40+)
 
-```json
-{
-  "lead_id": "uuid",
-  "score": 87,
-  "p_ltv": 15000.00,
-  "confidence": 0.92,
-  "features_importance": {
-    "email_quality": 0.28,
-    "company_size": 0.22,
-    "position_seniority": 0.18,
-    ...
-  },
-  "tier": "high",  // high/medium/low
-  "recommendation": "Prioritize immediate outreach"
-}
-```
+| Group         | Names |
+|---------------|-------|
+| Demographic   | `has_phone`, `has_email`, `country_vn/us`, `company_length` |
+| Behavioral    | `page_views`, `time_on_site_log`, `repeat_visits`, `fbclid_present` |
+| Engagement    | `email_opens`, `email_clicks`, `form_fills`, `open_rate`, `ctr` |
+| Firmographic  | `is_b2b`, `company_size_sm/md/lg`, `company_revenue_log` |
+| Source        | `source_paid/organic/direct/referral`, `source_quality`, `channel_conv_rate` |
+| Device        | `is_mobile/tablet/desktop` |
 
-## Model Training
+## 4. Models
 
-```python
-# Auto-retrain weekly via cron
-# Or manual trigger:
-POST /retrain
-{
-  "tenant_id": "uuid",
-  "lookback_days": 90,
-  "min_samples": 100
-}
-```
+1. **XGBoost** (primary) — `n_estimators=80, max_depth=4, lr=0.08`
+2. **Neural Net ONNX** — loaded via `onnxruntime` if available (share=0.3)
+3. **LogisticRegression fallback** — always trained (share=1 - sum(weights))
+4. Ensemble: weighted average of available model probabilities.
 
-Training pipeline:
-1. Fetch leads + outcomes (won/lost) from PostgreSQL
-2. Engineer features
-3. Train LightGBM model
-4. Validate on holdout set
-5. Save model to S3
-6. Update model registry
-7. Hot-swap model in production
+## 5. Tier + Action matrix
 
-## Performance
+| Score 0-100  | Tier      | recommended_action |
+|--------------|-----------|--------------------|
+| ≥ 85         | very-hot  | call-now           |
+| ≥ 60         | hot       | call-soon          |
+| ≥ 30         | warm      | email              |
+| < 30         | cold      | nurture            |
 
-- **Single scoring latency**: < 50ms p99
-- **Batch throughput**: 1000 leads/sec
-- **Model accuracy**: AUC > 0.85
-- **Training time**: < 30 minutes for 100K samples
+## 6. ENV
 
-## Environment Variables
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PORT` | `8092` | HTTP port |
+| `MODEL_DIR` | `/models` | dir chứa `<tenant>/model.pkl` |
+| `NATS_URL` | `nats://nats:4222` | NATS server |
+| `NATS_SUBJECT` | `lead.created` | listen subject |
+| `LOG_LEVEL` | `INFO` | - |
+| `ALLOW_PUBLIC_TRAIN` | `0` | set `1` để public train |
+
+## 7. Run
 
 ```bash
-LEAD_SCORING_PORT=8084
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/rinco?sslmode=disable
-MODEL_STORAGE_URL=s3://models/lead-scoring/
-MODEL_DEFAULT_PATH=/models/default_lgbm_v3.pkl
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-RETRAIN_CRON=0 0 * * 0  # Weekly
-GPU_ENABLED=false
+pip install -r services/lead-scoring/requirements.txt
+cd services/lead-scoring
+uvicorn main:app --host 0.0.0.0 --port 8092 --workers 2
 ```
 
-## Development
+Hoặc Docker:
+```bash
+docker build -t rinco/lead-scoring -f Dockerfile .
+```
+
+## 8. Examples
 
 ```bash
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8084 --reload
-
-# Test
-pytest test_main.py
+curl -X POST http://localhost:8092/v1/score/L-001 \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: apex' \
+  -d '{
+    "email": "alice@example.com",
+    "phone": "0981234567",
+    "source": "facebook_ads",
+    "page_views": 5,
+    "time_on_site_seconds": 240,
+    "has_phone": true,
+    "fbclid": "abc",
+    "country": "VN",
+    "device_type": "mobile",
+    "email_opens": 3,
+    "email_clicks": 1,
+    "form_fills": 1
+  }'
 ```
 
-## Architecture
-
+```bash
+# Train lại (super-admin only)
+curl -X POST http://localhost:8092/v1/train \
+  -H 'X-Is-Super-Admin: true' \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id": "apex", "notes": "Q3 retrain"}'
 ```
-┌─────────────┐
-│ Lead Created│
-└──────┬──────┘
-       │
-       ↓
-┌──────────────┐      ┌─────────────┐
-│ Feature Eng. │ ←──→ │ PostgreSQL  │
-└──────┬───────┘      └─────────────┘
-       │
-       ↓
-┌──────────────┐      ┌─────────────┐
-│ LightGBM     │ ←──→ │ S3/MinIO    │
-│ Inference    │      │ (Model)     │
-└──────┬───────┘      └─────────────┘
-       │
-       ↓
-┌──────────────┐
-│ Score + pLTV │
-└──────────────┘
+
+## 9. Tests
+
+```bash
+cd services/lead-scoring
+pytest -q
 ```

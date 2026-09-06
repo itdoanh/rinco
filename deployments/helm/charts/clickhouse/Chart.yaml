@@ -1,0 +1,10 @@
+apiVersion: v2
+name: clickhouse
+description: Subchart for ClickHouse
+type: application
+version: 0.1.0
+appVersion: "24.3.3.102"
+keywords: [clickhouse, olap, analytics, columnar]
+maintainers:
+  - name: RINCO Team
+    email: dev@rinco.app

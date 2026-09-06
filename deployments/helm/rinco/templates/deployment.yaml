@@ -1,0 +1,233 @@
+# ============================================================
+# Generic-service deployment template (one per component)
+# Rendered via `helm template` in a loop over services.* in values.yaml
+# ============================================================
+{{- $root := . -}}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $component := $name }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rinco.serviceName" (dict "Values" $root.Values "component" $component) }}
+  labels:
+    {{- include "rinco.labels" $root | nindent 4 }}
+    {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 4 }}
+    tier: {{ default "core" $svc.tier }}
+spec:
+  {{- if not $root.Values.autoscaling.enabled }}
+  replicas: {{ $svc.replicas }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rinco.labels" $root | nindent 8 }}
+        {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $svc.port }}"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: {{ include "rinco.fullname" $root }}-{{ $component }}
+      {{- with $root.Values.podSecurityContext }}
+      securityContext: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: {{ include "rinco.imageref" (dict "Values" $root.Values "component" $component) }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $svc.port }}
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "{{ $svc.port }}"
+            - name: SERVICE_NAME
+              value: {{ $component }}
+            {{- include "rinco.envCommon" $root | nindent 12 }}
+            - name: DB_HOST
+              value: {{ include "rinco.postgresql.host" $root }}
+            - name: DB_NAME
+              value: rinco
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rinco.fullname" $root }}-secrets
+                  key: db-user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rinco.fullname" $root }}-secrets
+                  key: db-password
+            {{- if eq $component "auth" }}
+            - name: PASETO_KEY_CURRENT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rinco.fullname" $root }}-secrets
+                  key: paseto-current
+            - name: PASETO_KEY_PREVIOUS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "rinco.fullname" $root }}-secrets
+                  key: paseto-previous
+            {{- end }}
+          livenessProbe:
+            {{- with $root.Values.probes.liveness }}
+            httpGet:
+              path: {{ .path }}
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: {{ .initialDelaySeconds }}
+            periodSeconds: {{ .periodSeconds }}
+            timeoutSeconds: 5
+            failureThreshold: 3
+            {{- end }}
+          readinessProbe:
+            {{- with $root.Values.probes.readiness }}
+            httpGet:
+              path: {{ .path }}
+              port: http
+              scheme: HTTP
+            initialDelaySeconds: {{ .initialDelaySeconds }}
+            periodSeconds: {{ .periodSeconds }}
+            timeoutSeconds: 3
+            failureThreshold: 3
+            {{- end }}
+          resources:
+            {{- toYaml $root.Values.resources | nindent 12 }}
+          {{- with $root.Values.containerSecurityContext }}
+          securityContext: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: cache
+              mountPath: /.cache
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if $root.Values.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "rinco.serviceName" (dict "Values" $root.Values "component" $component) }}
+  labels:
+    {{- include "rinco.labels" $root | nindent 4 }}
+    {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 4 }}
+spec:
+  minAvailable: {{ $root.Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 6 }}
+{{- end }}
+{{- if $root.Values.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "rinco.serviceName" (dict "Values" $root.Values "component" $component) }}
+  labels:
+    {{- include "rinco.labels" $root | nindent 4 }}
+    {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "rinco.serviceName" (dict "Values" $root.Values "component" $component) }}
+  minReplicas: {{ $root.Values.autoscaling.minReplicas }}
+  maxReplicas: {{ $root.Values.autoscaling.maxReplicas }}
+  metrics:
+    {{- if $root.Values.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $root.Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if $root.Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $root.Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+{{- if $root.Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $component }}
+  labels:
+    {{- include "rinco.labels" $root | nindent 4 }}
+    {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 4 }}
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ $root.Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ $root.Values.serviceMonitor.scrapeTimeout }}
+      honorLabels: {{ $root.Values.serviceMonitor.honorLabels }}
+{{- end }}
+{{- if $root.Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $component }}
+  labels:
+    {{- include "rinco.labels" $root | nindent 4 }}
+    {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "rinco.componentLabel" (dict "Values" $root.Values "component" $component) | nindent 5 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: traefik
+      ports:
+        - protocol: TCP
+          port: {{ $svc.port }}
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 5432
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 4222
+        - protocol: TCP
+          port: 9000
+        - protocol: TCP
+          port: 4317
+{{- end }}
+{{- end }}
+{{- end }}

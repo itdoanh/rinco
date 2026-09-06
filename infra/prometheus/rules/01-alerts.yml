@@ -1,0 +1,235 @@
+# ============================================================
+# Prometheus alert rules — RINCO
+# ============================================================
+groups:
+
+# ============================================================
+# 1. HTTP error rate
+# ============================================================
+- name: rinco.api.errors
+  rules:
+  - alert: HighErrorRate
+    expr: |
+      (
+        sum(rate(rinco_http_requests_total{status=~"5.."}[5m])) by (service, route)
+        /
+        sum(rate(rinco_http_requests_total[5m])) by (service, route)
+      ) > 0.01
+    for: 2m
+    labels:
+      severity: P1
+      team: sre
+      page: true
+    annotations:
+      summary: "Error rate > 1% on {{ $labels.service }}{{ $labels.route }}"
+      description: "Service {{ $labels.service }} is experiencing > 1% HTTP 5xx errors on route {{ $labels.route }}."
+      runbook: "https://wiki.rinco.app/runbooks/http-errors"
+
+  - alert: CriticalErrorRate
+    expr: |
+      (
+        sum(rate(rinco_http_requests_total{status=~"5.."}[5m])) by (service)
+        /
+        sum(rate(rinco_http_requests_total[5m])) by (service)
+      ) > 0.05
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: true
+    annotations:
+      summary: "Critical error rate > 5% on {{ $labels.service }}"
+
+# ============================================================
+# 2. Latency (p99)
+# ============================================================
+- name: rinco.api.latency
+  rules:
+  - alert: LatencyP99High
+    expr: |
+      histogram_quantile(
+        0.99,
+        sum(rate(rinco_http_request_duration_seconds_bucket[5m])) by (service, route, le)
+      ) > 0.5
+    for: 5m
+    labels:
+      severity: P1
+      team: sre
+    annotations:
+      summary: "p99 > 500ms on {{ $labels.service }}{{ $labels.route }}"
+
+  - alert: LatencyP99Critical
+    expr: |
+      histogram_quantile(
+        0.99,
+        sum(rate(rinco_http_request_duration_seconds_bucket[5m])) by (service, le)
+      ) > 1.5
+    for: 2m
+    labels:
+      severity: P0
+      team: sre
+      page: true
+    annotations:
+      summary: "p99 > 1.5s on {{ $labels.service }}"
+
+# ============================================================
+# 3. Database exhaustion
+# ============================================================
+- name: rinco.databases
+  rules:
+  - alert: PostgresConnectionsHigh
+    expr: pg_stat_activity_count > 80
+    for: 1m
+    labels:
+      severity: P2
+      team: sre
+    annotations:
+      summary: "Postgres active connections > 80 on {{ $labels.instance }}"
+
+  - alert: PostgresConnectionsExhausted
+    expr: pg_stat_activity_count >= 195
+    for: 30s
+    labels:
+      severity: P0
+      team: sre
+      page: true
+    annotations:
+      summary: "Postgres connections near max!"
+
+  - alert: PostgresReplicationLag
+    expr: pg_replication_lag_seconds > 30
+    for: 2m
+    labels:
+      severity: P1
+      team: sre
+    annotations:
+      summary: "PG replica lag > 30s on {{ $labels.instance }}"
+
+  - alert: ScyllaWriteTimeout
+    expr: rate(scylla_write_timeouts_total[5m]) > 0.1
+    for: 1m
+    labels:
+      severity: P1
+      team: sre
+    annotations:
+      summary: "Scylla write timeouts on {{ $labels.instance }}"
+
+  - alert: ScyllaHintsOutstanding
+    expr: scylla_hints_total > 10000
+    for: 5m
+    labels:
+      severity: P1
+      team: sre
+
+  - alert: ClickHouseReplicationQueue
+    expr: clickhouse_replication_queue_size > 1000
+    for: 5m
+    labels:
+      severity: P2
+      team: sre
+
+  - alert: MongoReplicationLag
+    expr: mongodb_ss_repl_secondary_delay_seconds > 30
+    for: 2m
+    labels:
+      severity: P1
+      team: sre
+
+  - alert: ValkeyMemoryHigh
+    expr: |
+      valkey_used_memory_bytes / valkey_max_memory_bytes > 0.9
+    for: 1m
+    labels:
+      severity: P1
+      team: sre
+
+  - alert: ValkeyConnectionsExhausted
+    expr: valkey_connected_clients > 9000
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: true
+
+# ============================================================
+# 4. Disk & resource saturation
+# ============================================================
+- name: rinco.resources
+  rules:
+  - alert: DiskSpaceFilling
+    expr: |
+      (
+        node_filesystem_avail_bytes{mountpoint="/"}
+        / node_filesystem_size_bytes{mountpoint="/"}
+      ) < 0.10
+    for: 5m
+    labels:
+      severity: P2
+      team: sre
+    annotations:
+      summary: "Disk < 10% free on {{ $labels.instance }}"
+
+  - alert: DiskSpaceCritical
+    expr: |
+      (
+        node_filesystem_avail_bytes{mountpoint="/"}
+        / node_filesystem_size_bytes{mountpoint="/"}
+      ) < 0.05
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: true
+
+  - alert: HighCPU
+    expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+    for: 5m
+    labels:
+      severity: P2
+      team: sre
+
+  - alert: HighMemoryUsage
+    expr: |
+      (
+        1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+      ) * 100 > 90
+    for: 2m
+    labels:
+      severity: P1
+      team: sre
+
+# ============================================================
+# 5. Circuit breakers & SLO
+# ============================================================
+- name: rinco.reliability
+  rules:
+  - alert: CircuitBreakerOpen
+    expr: rinco_circuit_breaker_state == 2
+    for: 0m
+    labels:
+      severity: P1
+      team: sre
+    annotations:
+      summary: "Circuit breaker OPEN for {{ $labels.name }}"
+
+  - alert: ChatBacklog
+    expr: rinco_nats_pending_messages > 50000
+    for: 5m
+    labels:
+      severity: P1
+      team: sre
+
+  - alert: SLO_BurnRateFast
+    expr: |
+      (
+        sum(rate(rinco_http_requests_total{status=~"5.."}[1h]))
+        /
+        sum(rate(rinco_http_requests_total[1h]))
+      ) > (1 - (0.99 * 0.998))
+    for: 5m
+    labels:
+      severity: P0
+      team: sre
+      page: true
+    annotations:
+      summary: "SLO burn rate > 14.4x on {{ $labels.service }}"

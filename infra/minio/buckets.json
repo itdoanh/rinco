@@ -1,0 +1,52 @@
+{
+  "buckets": [
+    {
+      "name": "rinco-uploads",
+      "purpose": "User-uploaded assets (images, attachments, PDFs) referenced from CRM records.",
+      "versioning": "enabled",
+      "lifecycle": { "retention_days": 365, "archive_after_days": null },
+      "cors": ["https://*.rinco.app"],
+      "public": false
+    },
+    {
+      "name": "rinco-recordings",
+      "purpose": "WebRTC meeting recordings (mp4/webm).",
+      "versioning": "enabled",
+      "lifecycle": { "retention_days": 365, "archive_after_days": 90 },
+      "cors": ["https://*.rinco.app"],
+      "public": false
+    },
+    {
+      "name": "rinco-avatars",
+      "purpose": "User and tenant avatars; CDN-cached.",
+      "versioning": "disabled",
+      "lifecycle": { "retention_days": 0, "archive_after_days": null },
+      "cors": ["*"],
+      "public": true
+    },
+    {
+      "name": "rinco-templates",
+      "purpose": "Landing page / email / document templates rendered server-side.",
+      "versioning": "enabled",
+      "lifecycle": { "retention_days": 0, "archive_after_days": null },
+      "cors": ["https://*.rinco.app"],
+      "public": false
+    },
+    {
+      "name": "rinco-ai-models",
+      "purpose": "Trained ML model artifacts (lead-scoring, embeddings cache).",
+      "versioning": "enabled",
+      "lifecycle": { "retention_days": 0, "archive_after_days": null },
+      "cors": ["https://*.rinco.app"],
+      "public": false
+    },
+    {
+      "name": "rinco-backups",
+      "purpose": "PostgreSQL / ScyllaDB snapshots & WAL segments.",
+      "versioning": "enabled",
+      "lifecycle": { "retention_days": 90, "archive_after_days": 30 },
+      "cors": [],
+      "public": false
+    }
+  ]
+}

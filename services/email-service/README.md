@@ -1,133 +1,103 @@
 # Email Service
 
-Service gửi transactional emails với template support.
+> **Phân hệ #6 — Email** · Multi-driver transactional email (SMTP / Resend / SendGrid / SES / Console).
+> Template engine (Go `text/template`) + Markdown→HTML + tracking pixel + click redirector + webhook.
 
-## Tính năng
+## 1. Endpoints (12+)
 
-- **SMTP Sending**: Gửi qua SMTP servers (Gmail, SendGrid, Mailgun, AWS SES)
-- **Template Engine**: Go templates với data binding
-- **Multi-language**: Hỗ trợ i18n templates
-- **Attachments**: Đính kèm files
-- **HTML & Plain Text**: Hỗ trợ cả 2 format
-- **Bulk Sending**: Gửi nhiều email cùng lúc
-- **Tracking**: Open tracking, click tracking
-- **Queue**: Background processing với retry
-- **Bounce Handling**: Xử lý bounce complaints
+| Method | Path                                 | Mô tả |
+|--------|--------------------------------------|-------|
+| GET    | `/health` / `/ready` / `/metrics`    | Liveness / readiness / Prometheus |
+| POST   | `/v1/email/send`                     | Send 1 email (text/html/markdown) |
+| POST   | `/v1/email/batch`                    | Bulk send tối đa 500 |
+| POST   | `/v1/email/templates`                | Create template |
+| GET    | `/v1/email/templates`                | List |
+| GET    | `/v1/email/templates/:id`            | Retrieve |
+| PUT    | `/v1/email/templates/:id`            | Update |
+| DELETE | `/v1/email/templates/:id`            | Delete |
+| POST   | `/v1/email/templates/:id/render`     | Render with variables (no-send) |
+| GET    | `/v1/email/logs`                     | Delivery log theo tenant |
+| GET    | `/v1/email/logs/:id`                 | Chi tiết 1 log |
+| GET    | `/v1/email/stats`                    | Tổng hợp open / click / bounce |
+| POST   | `/v1/email/webhooks/:provider`       | Bounce / complaint / delivery |
+| GET    | `/e/:msg_id.gif`                     | 1x1 tracking pixel |
+| GET    | `/c/:msg_id`                         | Click → redirect |
 
-## Công nghệ
+## 2. Drivers
 
-- **Language**: Go 1.23+
-- **Framework**: Echo v4
-- **SMTP**: go-mail
-- **Templates**: text/template, html/template
-- **Queue**: In-memory (single instance) hoặc Redis (multi-instance)
+| Driver    | ENV                                            | Notes                                |
+|-----------|------------------------------------------------|--------------------------------------|
+| `console` | `EMAIL_DRIVER=console`                         | Print to stdout — best for dev       |
+| `smtp`    | `SMTP_HOST/PORT/USER/PASSWORD/SMTP_FROM`       | Native smtp + gomail fallback        |
+| `resend`  | `RESEND_API_KEY`                               | HTTP POST `api.resend.com/emails`    |
+| `sendgrid`| `SENDGRID_API_KEY`                             | HTTP POST `api.sendgrid.com/v3/mail/send` |
+| `ses`     | `AWS_REGION` + `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` | Minimal SigV4 stub (production cần aws-sdk-go-v2) |
 
-## API Endpoints
+Driver per request: `X-Tenant-Driver: <driver>` (nếu không → default từ `EMAIL_DRIVER`).
 
+## 3. Template Engine
+
+Go `text/template` + custom funcs:
+- `upper`, `lower`, `escape`
+- `dateFormat "2006-01-02"`
+- `safeHTML "<...>"`
+- Biến truyền qua `Variables map[string]string`
+
+Ví dụ template body:
 ```
-POST   /v1/email/send              - Gửi email raw
-POST   /v1/email/send/template     - Gửi email với template
-POST   /v1/email/send/bulk         - Bulk send
-GET    /v1/email/templates         - List templates
-GET    /v1/email/templates/:name   - Get template
-POST   /v1/email/templates         - Create/update template
-GET    /v1/email/track/:id         - Track open/click
-GET    /health                     - Health check
-```
-
-## Send Email Request
-
-```json
-POST /v1/email/send
-{
-  "to": ["user@example.com"],
-  "cc": ["cc@example.com"],
-  "bcc": ["bcc@example.com"],
-  "from": "noreply@rinco.vn",
-  "from_name": "RINCO",
-  "subject": "Welcome to RINCO",
-  "html_body": "<h1>Hello!</h1>",
-  "text_body": "Hello!",
-  "attachments": [
-    {
-      "filename": "invoice.pdf",
-      "content_base64": "...",
-      "content_type": "application/pdf"
-    }
-  ],
-  "headers": {
-    "X-Campaign-ID": "welcome-2026"
-  },
-  "tags": ["welcome", "onboarding"]
-}
+<p>Hi <strong>{{.name}}</strong>,</p>
+<p>Your order #{{.order_id}} was placed on {{dateFormat "02 Jan 2006"}}.</p>
 ```
 
-## Template Send
+## 4. Markdown → HTML (built-in, no deps)
 
-```json
-POST /v1/email/send/template
-{
-  "to": ["user@example.com"],
-  "template_name": "welcome",
-  "language": "vi",
-  "data": {
-    "user_name": "Nguyễn Văn A",
-    "activation_link": "https://..."
-  }
-}
-```
+Supports: `# heading`, `**bold**`, `*italic*`, `[text](url)`.
 
-## Template Example
+## 5. Tracking
 
-```
-Subject: Welcome {{.user_name}}!
+- 1×1 GIF pixel tại `/e/:msg_id.gif` (no-cache)
+- Click rewriting: mọi `<a href="https://...">` được rewrite thành `/c/:msg_id?url=<encoded>`
+- Bounce / complaint từ provider webhook gọi `/v1/email/webhooks/:provider`
 
-Hi {{.user_name}},
+## 6. ENV
 
-Welcome to RINCO! Click the link below to activate your account:
-{{.activation_link}}
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `PORT` | `8087` | HTTP port |
+| `ENV` | `development` | - |
+| `EMAIL_DRIVER` | `console` | default fallback driver |
+| `EMAIL_TRACK_BASE` | `/` | base path cho tracking links |
+| `SMTP_HOST/PORT/USER/PASSWORD/SMTP_FROM` | - | SMTP fallback |
 
-Best regards,
-RINCO Team
-```
-
-## Environment Variables
+## 7. Run
 
 ```bash
-EMAIL_SERVICE_PORT=8090
-SMTP_HOST=smtp.mailgun.org
-SMTP_PORT=587
-SMTP_USERNAME=postmaster@mg.rinco.vn
-SMTP_PASSWORD=secret
-SMTP_FROM=noreply@rinco.vn
-SMTP_FROM_NAME=RINCO
-TEMPLATES_DIR=/templates
-TRACKING_DOMAIN=track.rinco.vn
-TRACKING_ENABLED=true
-MAX_RETRIES=3
-RETRY_DELAY=5s
+cd services/email-service
+go build ./cmd && ./email-service
 ```
 
-## Local Development
+Docker:
+```bash
+docker build -t rinco/email-service -f Dockerfile .
+```
+
+## 8. Ví dụ
 
 ```bash
-# Use MailHog
-SMTP_HOST=localhost
-SMTP_PORT=1025
-
-# Or MailSlurper, smtp4dev, etc.
+curl -X POST http://localhost:8087/v1/email/send \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant-Driver: console' \
+  -d '{
+    "to": ["alice@example.com"],
+    "subject": "Welcome",
+    "body": "# Hello **Alice**\nWelcome to RINCO!",
+    "body_type": "markdown"
+  }'
 ```
-
-## Development
 
 ```bash
-go build -o bin/email-service ./cmd/main.go
-./bin/email-service
+# Render template without sending
+curl -X POST http://localhost:8087/v1/email/templates/$ID/render \
+  -H 'Content-Type: application/json' \
+  -d '{"variables":{"name":"Alice"}}'
 ```
-
-## Deliverability
-
-- SPF, DKIM, DMARC configured
-- Dedicated IPs for high volume
-- Warm-up schedule cho domains mới
-- List unsubscribe (RFC 8058)

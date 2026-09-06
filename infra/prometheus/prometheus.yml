@@ -1,43 +1,271 @@
+# ============================================================
+# Prometheus configuration — RINCO
+# ============================================================
+# Scrape config for all 17 microservices + infrastructure
+# exporters and recording rules.
+# ============================================================
+
 global:
-  scrape_interval: 15s
+  scrape_interval:     15s
   evaluation_interval: 15s
+  external_labels:
+    cluster: rinco-local
+    env: development
+    region: ap-southeast-1
 
 scrape_configs:
+  # ============================================================
+  # Prometheus itself
+  # ============================================================
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+        labels:
+          component: metrics
 
-  - job_name: 'auth-service'
+  # ============================================================
+  # Node exporter (host machine)
+  # ============================================================
+  - job_name: 'node'
     static_configs:
-      - targets: ['host.docker.internal:8081']
+      - targets: ['node-exporter:9100']
+        labels:
+          component: host
 
-  - job_name: 'tenant-service'
+  # ============================================================
+  # cAdvisor (per-container metrics)
+  # ============================================================
+  - job_name: 'cadvisor'
     static_configs:
-      - targets: ['host.docker.internal:8082']
+      - targets: ['cadvisor:8080']
+        labels:
+          component: container
 
-  - job_name: 'crm-service'
+  # ============================================================
+  # PostgreSQL + PgBouncer
+  # ============================================================
+  - job_name: 'postgres'
     static_configs:
-      - targets: ['host.docker.internal:8083']
+      - targets: ['postgres-exporter:9187']
+        labels:
+          component: database
+          db: postgres
 
-  - job_name: 'dynamic-model-service'
+  - job_name: 'pgbouncer'
     static_configs:
-      - targets: ['host.docker.internal:8084']
+      - targets: ['pgbouncer-exporter:9127']
+        labels:
+          component: database
+          db: pgbouncer
 
-  - job_name: 'lead-service'
+  # ============================================================
+  # ScyllaDB
+  # ============================================================
+  - job_name: 'scylla'
     static_configs:
-      - targets: ['host.docker.internal:8085']
+      - targets: ['scylla-exporter:9185']
+        labels:
+          component: database
+          db: scylla
 
-  - job_name: 'landing-service'
+  # ============================================================
+  # ClickHouse
+  # ============================================================
+  - job_name: 'clickhouse'
     static_configs:
-      - targets: ['host.docker.internal:8086']
+      - targets: ['clickhouse-exporter:9363']
+        labels:
+          component: database
+          db: clickhouse
 
-  - job_name: 'ai-sre'
+  # ============================================================
+  # MongoDB
+  # ============================================================
+  - job_name: 'mongodb'
     static_configs:
-      - targets: ['host.docker.internal:8090']
+      - targets: ['mongodb-exporter:9216']
+        labels:
+          component: database
+          db: mongodb
 
+  # ============================================================
+  # Redis/Valkey
+  # ============================================================
+  - job_name: 'valkey'
+    static_configs:
+      - targets: ['valkey-exporter:9121']
+        labels:
+          component: cache
+          db: valkey
+
+  # ============================================================
+  # NATS
+  # ============================================================
+  - job_name: 'nats'
+    static_configs:
+      - targets: ['nats:8222']
+        labels:
+          component: broker
+
+  # ============================================================
+  # MinIO
+  # ============================================================
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+        labels:
+          component: storage
+
+  # ============================================================
+  # Traefik API gateway
+  # ============================================================
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8080']
+        labels:
+          component: gateway
+
+  # ============================================================
+  # OpenTelemetry Collector
+  # ============================================================
   - job_name: 'otel-collector'
     static_configs:
       - targets: ['otel-collector:8888']
+        labels:
+          component: collector
 
+  # ============================================================
+  # Go services (port convention 808X)
+  # ============================================================
+  - job_name: 'rinco-auth-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['auth-service:8081']
+        labels:
+          language: go
+          tier: edge
+    relabel_configs:
+      - source_labels: [__address__]
+        regex: '(.*):.*'
+        target_label: instance
+        replacement: '${1}'
+
+  - job_name: 'rinco-tenant-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['tenant-service:8082']
+        labels: { language: go, tier: edge }
+
+  - job_name: 'rinco-crm-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['crm-service:8083']
+        labels: { language: go, tier: core }
+
+  - job_name: 'rinco-dynamic-model-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['dynamic-model-service:8084']
+        labels: { language: go, tier: core }
+
+  - job_name: 'rinco-lead-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['lead-service:8085']
+        labels: { language: go, tier: core }
+
+  - job_name: 'rinco-landing-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['landing-service:8086']
+        labels: { language: go, tier: edge }
+
+  - job_name: 'rinco-email-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['email-service:8087']
+        labels: { language: go, tier: edge }
+
+  - job_name: 'rinco-notification-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['notification-service:8088']
+        labels: { language: go, tier: edge }
+
+  - job_name: 'rinco-observability-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['observability-service:8089']
+        labels: { language: go, tier: ops }
+
+  # ============================================================
+  # Rust services
+  # ============================================================
+  - job_name: 'rinco-chat-engine'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['chat-engine:8094']
+        labels: { language: rust, tier: realtime }
+
+  - job_name: 'rinco-webrtc-sfu'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['webrtc-sfu:8095']
+        labels: { language: rust, tier: realtime }
+
+  - job_name: 'rinco-recording-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['recording-service:8096']
+        labels: { language: rust, tier: worker }
+
+  # ============================================================
+  # Python services
+  # ============================================================
+  - job_name: 'rinco-lead-scoring'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['lead-scoring:8092']
+        labels: { language: python, tier: ai }
+
+  - job_name: 'rinco-ai-sre'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['ai-sre:8090']
+        labels: { language: python, tier: ai }
+
+  - job_name: 'rinco-rag-chatbot'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['rag-chatbot:8091']
+        labels: { language: python, tier: ai }
+
+  - job_name: 'rinco-stt-service'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['stt-service:8093']
+        labels: { language: python, tier: ai }
+
+# ============================================================
+# Rules & Alerts
+# ============================================================
 rule_files:
   - "/etc/prometheus/rules/*.yml"
+  - "/etc/prometheus/recording-rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+# ============================================================
+# Application instrumentation contract
+# ============================================================
+# All Rinco services must expose:
+#   * /metrics                Prometheus text format
+#   * /healthz                Plain text "ok"
+#   * /readyz                 Plain text "ok" when DB connections ready
+# Naming convention: rinco_<service>_<noun>_<unit>
+# e.g.  rinco_crm_leads_created_total
+#       rinco_chat_messages_sent_per_second
+# ============================================================

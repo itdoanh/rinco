@@ -1,0 +1,66 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Leads Created / min",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "sum(rate(rinco_crm_leads_created_total[5m])) by (source)", "legendFormat": "{{source}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Pipeline value",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyVND" } },
+      "targets": [{ "expr": "rinco_crm_pipeline_value_total" }]
+    },
+    {
+      "id": 3,
+      "title": "Leads by stage",
+      "type": "piechart",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 18, "y": 0 },
+      "targets": [
+        { "expr": "sum(rinco_crm_leads_by_stage) by (stage)", "legendFormat": "{{stage}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Deal Won Rate % (7d)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{ "expr": "rinco_crm_deal_won_ratio_7d" }]
+    },
+    {
+      "id": 5,
+      "title": "Top Sales Reps (Won Deals, 7d)",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "topk(10, sum by (user_id) (increase(rinco_crm_deals_won_total[7d])))", "format": "table", "instant": true }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["rinco", "crm"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timezone": "browser",
+  "title": "RINCO — CRM Activity",
+  "uid": "rinco-crm",
+  "version": 1
+}

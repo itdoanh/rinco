@@ -1,0 +1,12 @@
+id,name,parent_id,level
+google,cpc_paid,paid,2
+facebook,cpc_paid,paid,2
+tiktok,cpc_paid,paid,2
+zalo,cpc_paid,paid,2
+coccoc,cpc_paid,paid,2
+organic,organic_search,free,1
+direct,direct_traffic,direct,0
+referral,referral_traffic,referral,1
+email,email_marketing,owned,1
+social,social_organic,free,1
+none,unknown,unknown,99

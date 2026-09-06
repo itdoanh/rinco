@@ -1,0 +1,34 @@
+defaults:
+  logLevel: information
+  threads: 8
+  remoteServers:
+    rinco_cluster:
+      shards: 2
+      replicas: 2
+  macros:
+    shard: "01"
+    replica: "node1"
+  users:
+    rinco:
+      password: rinco_dev_password
+      quotas: 10737418240
+      profile: default
+  profiles:
+    default:
+      max_memory_usage: 10000000000
+      use_uncompressed_cache: 1
+      load_balancing: random
+keeper:
+  enabled: true
+  nodes: 3
+persistence:
+  enabled: true
+  size: 100Gi
+  storageClass: longhorn
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: 2
+    memory: 4Gi

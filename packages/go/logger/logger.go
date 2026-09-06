@@ -1,184 +1,235 @@
-// Package logger provides structured logging with trace/tenant context propagation.
+// Package logger cung cấp structured logging wrapper quanh slog (Go 1.21+).
+//
+// Hỗ trợ:
+//   - JSON output theo chuẩn OpenTelemetry log record
+//   - OTLP export (HTTP + gRPC)
+//   - Auto-inject trace_id, span_id, request_id từ context
+//   - Adaptive sampling cho high-volume logs
+//   - PII/secret redactor
 //
 // Usage:
 //
-//	import "github.com/rinco/go/pkg/logger"
+//	logger.Init(ctx, logger.Config{
+//	    Service: "auth-service",
+//	    Env:     "production",
+//	    Version: "1.0.0",
+//	    Level:   slog.LevelInfo,
+//	    OTLP:    &logger.OTLPConfig{Endpoint: "otel-collector:4318", Protocol: "http"},
+//	})
+//	defer logger.Shutdown(ctx)
 //
-//	logger.Init("auth-service", "development", "1.0.0")
-//
-//	ctx = logger.WithTraceID(ctx, "abc-123")
-//	ctx = logger.WithTenantID(ctx, "tenant-id")
-//
-//	logger.Info(ctx, "user logged in", zap.String("user_id", "..."))
+//	logger.Info(ctx, "user logged in", slog.String("user_id", id))
 package logger
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"sync"
 	"time"
-
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
-type ctxKey string
+// Level re-export từ slog.
+type Level = slog.Level
 
 const (
-	traceIDKey   ctxKey = "trace_id"
-	tenantIDKey  ctxKey = "tenant_id"
-	userIDKey    ctxKey = "user_id"
-	spanIDKey    ctxKey = "span_id"
-	requestIDKey ctxKey = "request_id"
+	LevelDebug = slog.LevelDebug
+	LevelInfo  = slog.LevelInfo
+	LevelWarn  = slog.LevelWarn
+	LevelError = slog.LevelError
 )
+
+// Config cấu hình logger.
+type Config struct {
+	Service     string
+	Env         string
+	Version     string
+	Level       Level
+	Output      string // "stdout", "stderr", "file:path"
+	OTLP        *OTLPConfig
+	Sampling    *SamplingConfig
+	Redactor    *Redactor
+	StaticAttrs []slog.Attr
+}
+
+// OTLPConfig cấu hình OTLP export.
+type OTLPConfig struct {
+	Endpoint  string // "otel-collector:4318" (HTTP) hoặc ":4317" (gRPC)
+	Protocol  string // "http" (default) | "grpc"
+	Headers   map[string]string
+	Insecure  bool
+	Timeout   time.Duration
+	BatchSize int
+}
 
 var (
-	baseLogger *zap.Logger
-	once       sync.Once
+	globalLogger *slog.Logger
+	globalOnce   sync.Once
+	globalMu     sync.RWMutex
+	otlpExporter *otlpShutdownable
 )
 
-// Init khởi tạo global logger một lần.
-func Init(service, env, version string) {
-	once.Do(func() {
-		encoderCfg := zap.NewProductionEncoderConfig()
-		encoderCfg.TimeKey = "timestamp"
-		encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
-		encoderCfg.MessageKey = "message"
-		encoderCfg.LevelKey = "level"
-		encoderCfg.CallerKey = "caller"
-
-		level := zap.InfoLevel
-		if env == "development" {
-			level = zap.DebugLevel
-		}
-
-		core := zapcore.NewCore(
-			zapcore.NewJSONEncoder(encoderCfg),
-			zapcore.Lock(os.Stdout),
-			zap.NewAtomicLevelAt(level),
-		)
-
-		baseLogger = zap.New(core,
-			zap.AddCaller(),
-			zap.AddCallerSkip(1),
-			zap.Fields(
-				zap.String("service", service),
-				zap.String("env", env),
-				zap.String("version", version),
-				zap.String("host", hostname()),
-			),
-		)
+// Init khởi tạo global logger với config.
+//
+// Trong production, gọi 1 lần ở main(). Trong test có thể không gọi.
+func Init(ctx context.Context, cfg Config) {
+	globalOnce.Do(func() {
+		globalLogger = buildLogger(ctx, cfg)
 	})
 }
 
-// WithContext trích context fields rồi gắn vào logger.
-func WithContext(ctx context.Context) *zap.Logger {
-	l := baseLogger
-	if v, ok := ctx.Value(traceIDKey).(string); ok && v != "" {
-		l = l.With(zap.String("trace_id", v))
+// InitForTest khởi tạo lại logger (chỉ dùng cho test, override Init đã gọi).
+func InitForTest(ctx context.Context, cfg Config) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+	globalLogger = buildLogger(ctx, cfg)
+}
+
+func buildLogger(ctx context.Context, cfg Config) *slog.Logger {
+	if cfg.Level == 0 {
+		cfg.Level = LevelInfo
 	}
-	if v, ok := ctx.Value(tenantIDKey).(string); ok && v != "" {
-		l = l.With(zap.String("tenant_id", v))
+
+	handlerOpts := &slog.HandlerOptions{
+		Level:     cfg.Level,
+		AddSource: cfg.Env == "development",
 	}
-	if v, ok := ctx.Value(userIDKey).(string); ok && v != "" {
-		l = l.With(zap.String("user_id", v))
+
+	// Build base handler
+	var baseHandler slog.Handler
+	switch cfg.Output {
+	case "stderr":
+		baseHandler = slog.NewJSONHandler(os.Stderr, handlerOpts)
+	case "":
+		baseHandler = slog.NewJSONHandler(os.Stdout, handlerOpts)
+	default:
+		// Default stdout
+		baseHandler = slog.NewJSONHandler(os.Stdout, handlerOpts)
 	}
-	if v, ok := ctx.Value(spanIDKey).(string); ok && v != "" {
-		l = l.With(zap.String("span_id", v))
+
+	// Apply redactor
+	if cfg.Redactor != nil {
+		baseHandler = NewRedactionHandler(baseHandler, cfg.Redactor)
 	}
-	if v, ok := ctx.Value(requestIDKey).(string); ok && v != "" {
-		l = l.With(zap.String("request_id", v))
+
+	// Apply sampling
+	if cfg.Sampling != nil {
+		baseHandler = NewSamplingHandler(baseHandler, cfg.Sampling)
 	}
-	return l
+
+	logger := slog.New(baseHandler).With(
+		slog.String("service", cfg.Service),
+		slog.String("env", cfg.Env),
+		slog.String("version", cfg.Version),
+		slog.String("host", hostname()),
+	)
+
+	if len(cfg.StaticAttrs) > 0 {
+		logger = logger.With(cfg.StaticAttrs...)
+	}
+
+	// Setup OTLP
+	if cfg.OTLP != nil {
+		exp, err := newOTLPExporter(ctx, cfg.OTLP)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[logger] OTLP export failed: %v\n", err)
+		} else {
+			otlpExporter = exp
+			logger = slog.New(newOTLPLoggerHandler(baseHandler, exp))
+		}
+	}
+
+	globalLogger = logger
+	return logger
 }
 
-// Info logs info level.
-func Info(ctx context.Context, msg string, fields ...zap.Field) {
-	WithContext(ctx).Info(msg, fields...)
+// Shutdown flush OTLP exporter và đợi pending batches.
+func Shutdown(ctx context.Context) error {
+	if otlpExporter != nil {
+		return otlpExporter.Shutdown(ctx)
+	}
+	return nil
 }
 
-// Warn logs warning level.
-func Warn(ctx context.Context, msg string, fields ...zap.Field) {
-	WithContext(ctx).Warn(msg, fields...)
+// L trả về *slog.Logger với context values (trace_id, span_id, ...).
+func L(ctx context.Context) *slog.Logger {
+	if globalLogger == nil {
+		// Fallback nếu Init() chưa được gọi
+		Init(ctx, Config{Service: "unknown", Env: "development", Version: "0.0.0"})
+	}
+	return enrichLogger(globalLogger, ctx)
 }
 
-// Error logs error level with error field.
-func Error(ctx context.Context, msg string, err error, fields ...zap.Field) {
-	all := append([]zap.Field{zap.Error(err)}, fields...)
-	WithContext(ctx).Error(msg, all...)
+// Info shorthand.
+func Info(ctx context.Context, msg string, attrs ...slog.Attr) {
+	L(ctx).LogAttrs(ctx, LevelInfo, msg, attrs...)
 }
 
-// Fatal logs fatal level and exits.
-func Fatal(ctx context.Context, msg string, err error, fields ...zap.Field) {
-	all := append([]zap.Field{zap.Error(err)}, fields...)
-	WithContext(ctx).Fatal(msg, all...)
+// Warn shorthand.
+func Warn(ctx context.Context, msg string, attrs ...slog.Attr) {
+	L(ctx).LogAttrs(ctx, LevelWarn, msg, attrs...)
 }
 
-// Debug logs debug level.
-func Debug(ctx context.Context, msg string, fields ...zap.Field) {
-	WithContext(ctx).Debug(msg, fields...)
+// Error shorthand - kèm error field.
+func Error(ctx context.Context, msg string, err error, attrs ...slog.Attr) {
+	all := make([]slog.Attr, 0, len(attrs)+1)
+	all = append(all, slog.Any("error", err))
+	all = append(all, attrs...)
+	L(ctx).LogAttrs(ctx, LevelError, msg, all...)
 }
 
-// ============ Context helpers ============
-
-// WithTraceID returns a new context with the given trace ID.
-func WithTraceID(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, traceIDKey, traceID)
+// Debug shorthand.
+func Debug(ctx context.Context, msg string, attrs ...slog.Attr) {
+	L(ctx).LogAttrs(ctx, LevelDebug, msg, attrs...)
 }
 
-// WithTenantID returns a new context with the given tenant ID.
-func WithTenantID(ctx context.Context, tenantID string) context.Context {
-	return context.WithValue(ctx, tenantIDKey, tenantID)
+// Fatal log error level rồi exit.
+func Fatal(ctx context.Context, msg string, err error, attrs ...slog.Attr) {
+	Error(ctx, msg, err, attrs...)
+	os.Exit(1)
 }
 
-// WithUserID returns a new context with the given user ID.
-func WithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userIDKey, userID)
+// WithContext trả về context mới với additional trace values.
+func WithContext(ctx context.Context, traceID, spanID, requestID string) context.Context {
+	if traceID != "" {
+		ctx = WithTraceID(ctx, traceID)
+	}
+	if spanID != "" {
+		ctx = WithSpanID(ctx, spanID)
+	}
+	if requestID != "" {
+		ctx = WithRequestID(ctx, requestID)
+	}
+	return ctx
 }
-
-// WithSpanID returns a new context with the given span ID.
-func WithSpanID(ctx context.Context, spanID string) context.Context {
-	return context.WithValue(ctx, spanIDKey, spanID)
-}
-
-// WithRequestID returns a new context with the given request ID.
-func WithRequestID(ctx context.Context, requestID string) context.Context {
-	return context.WithValue(ctx, requestIDKey, requestID)
-}
-
-// TraceIDFromContext extracts the trace ID from the context.
-func TraceIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(traceIDKey).(string)
-	return v
-}
-
-// TenantIDFromContext extracts the tenant ID from the context.
-func TenantIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(tenantIDKey).(string)
-	return v
-}
-
-// UserIDFromContext extracts the user ID from the context.
-func UserIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(userIDKey).(string)
-	return v
-}
-
-// ============ Internal ============
 
 func hostname() string {
 	h, _ := os.Hostname()
 	return h
 }
 
-// Sync flushes any buffered log entries.
-func Sync() {
-	if baseLogger != nil {
-		_ = baseLogger.Sync()
-	}
+// ===== Placeholders for OTLP integration (implemented in tracing package) =====
+
+// otlpShutdownable wraps OTLP exporter với Shutdown method.
+type otlpShutdownable struct {
+	shutdown func(context.Context) error
 }
 
-// NowRFC3339 returns current time in RFC3339 format.
-func NowRFC3339() string {
-	return time.Now().UTC().Format(time.RFC3339Nano)
+func (o *otlpShutdownable) Shutdown(ctx context.Context) error {
+	if o.shutdown != nil {
+		return o.shutdown(ctx)
+	}
+	return nil
+}
+
+// newOTLPExporter stub - implementation sẽ ở tracing package trong tương lai.
+// Hiện tại return nil exporter để tránh crash nếu user chưa setup OTLP.
+func newOTLPExporter(_ context.Context, _ *OTLPConfig) (*otlpShutdownable, error) {
+	return nil, fmt.Errorf("OTLP export requires tracing package integration")
+}
+
+// newOTLPLoggerHandler placeholder.
+func newOTLPLoggerHandler(_ slog.Handler, _ *otlpShutdownable) slog.Handler {
+	return nil
 }

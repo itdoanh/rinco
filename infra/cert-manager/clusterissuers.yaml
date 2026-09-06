@@ -1,0 +1,46 @@
+# ============================================================
+# cert-manager — production
+# ============================================================
+# Manifests applied via ArgoCD once K3s is up.
+# Reference: https://cert-manager.io/docs/
+# ============================================================
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+---
+# (Full install via setup-k3s.sh uses official manifests; this file
+#  only adds RINCO's own ClusterIssuers.)
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: rinco-ca
+spec:
+  ca:
+    secretName: rinco-ca-secret
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: rinco-ca-self-signed
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: rinco-internal-ca
+  secretName: rinco-ca-secret
+  subject:
+    organizations:
+      - RINCO
+  issuerRef:
+    name: selfsigned-issuer
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: selfsigned-issuer
+spec:
+  selfSigned: {}

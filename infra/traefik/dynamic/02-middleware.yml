@@ -1,0 +1,85 @@
+# ============================================================
+# RINCO Traefik — middleware (rate-limit, retry, compress, …)
+# ============================================================
+http:
+  middlewares:
+    # ----- Default chain: compress + 30s timeout -----
+    default-chain:
+      chain:
+        middlewares:
+          - compress
+          - timeout
+
+    compress:
+      compress: {}
+
+    timeout:
+      forwardauth:
+        address: "http://auth-service:8081/v1/auth/introspect"  # example
+      buffering:
+        maxRequestBodyBytes: 10485760  # 10 MiB
+        memRequestBodyBytes: 1048576
+      retry:
+        attempts: 3
+        initialInterval: 200ms
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        frameDeny: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+      rateLimit:
+        average: 200
+        burst: 400
+        period: 10s
+      buffering:
+        maxRequestBodyBytes: 10485760
+        memRequestBodyBytes: 1048576
+
+    timeout:
+      middlewares:
+        retry:
+          attempts: 3
+          initialInterval: "200ms"
+
+    # ----- Public tenant rate limit (100 RPS / tenant) -----
+    request-limiter:
+      rateLimit:
+        average: 100
+        burst: 150
+        period: 10s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+
+    request-limiter-large:
+      rateLimit:
+        average: 10
+        burst: 20
+        period: 10s
+
+    # ----- HMAC verification for inbound webhooks -----
+    hmac-verify:
+      forwardauth:
+        address: "http://landing-service:8086/v1/webhooks/verify"
+        trustForwardHeader: true
+
+    # ----- JWT strip: forwards bearer but strips cookies -----
+    jwt-strip:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-User: ""
+
+    # ----- Internal IP allow-list for ops endpoints -----
+    ip-allowlist:
+      ipWhiteList:
+        ipStrategy:
+          depth: 1
+        sourceRange:
+          - "127.0.0.1/32"
+          - "172.25.0.0/16"   # Docker network
+          - "10.13.13.0/24"   # WireGuard admin mesh

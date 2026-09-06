@@ -1,0 +1,15 @@
+# ============================================================
+# WireGuard per-tenant peer config (template)
+# ============================================================
+# Distributed to the tenant VPS during setup-mesh.sh.
+# ============================================================
+[Interface]
+PrivateKey = ${TENANT_PRIVATE_KEY}
+Address    = 10.13.13.${INDEX}/24
+DNS        = 1.1.1.1, 8.8.8.8
+
+[Peer]
+PublicKey  = ${SERVER_PUBLIC_KEY}
+Endpoint   = ${SERVER_ENDPOINT}:51820
+AllowedIPs = 10.13.13.0/24, 172.25.0.0/16, 10.42.0.0/16
+PersistentKeepalive = 25

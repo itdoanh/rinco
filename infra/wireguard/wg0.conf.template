@@ -1,0 +1,23 @@
+# ============================================================
+# WireGuard server config (RINCO control plane)
+# ============================================================
+# Each tenant VPS joins via its own unique peer block.
+# Setup-mesh.sh auto-fills the peers from a database table.
+# ============================================================
+[Interface]
+Address    = 10.13.13.1/24
+ListenPort = 51820
+PrivateKey = ${SERVER_PRIVATE_KEY}
+# Public key = ${SERVER_PUBLIC_KEY}
+PostUp     = iptables -t nat -A POSTROUTING -s 10.13.13.0/24 -o eth0 -j MASQUERADE; ip route add 172.25.0.0/16 via 10.0.0.1
+PostDown   = iptables -t nat -D POSTROUTING -s 10.13.13.0/24 -o eth0 -j MASQUERADE
+SaveConfig = false
+
+# ----- per-tenant peer blocks (auto-generated) -----
+# {{PEERS}}
+
+# peer: tenant-id stable identifier
+# [Peer]
+# PublicKey = ${TENANT_PUBLIC_KEY}
+# AllowedIPs = 10.13.13.${INDEX}/32,172.25.0.0/16
+# PersistentKeepalive = 25

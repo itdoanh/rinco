@@ -1,27 +1,36 @@
-// Package db cung cấp PostgreSQL connection với RLS enforcement.
+// Package db cung cấp PostgreSQL connection pool (pgxpool), RLS helpers,
+// transaction wrapper với retry, migration runner, và generic repository.
+//
+// Mọi service nên dùng:
+//   pool, _ := db.NewPool(ctx, db.Config{...})
+//   db.WithTx(ctx, pool, func(tx pgx.Tx) error { ... })
 package db
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"net/url"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ctxKey type for context values.
+// ctxKey định danh giá trị lưu trong context.
 type ctxKey string
 
 const (
-	TenantIDKey   ctxKey = "tenant_id"
-	UserIDKey     ctxKey = "user_id"
-	IsAdminKey    ctxKey = "is_super_admin"
-	IsAuthKey     ctxKey = "is_authenticated"
-	RequestIDKey  ctxKey = "request_id"
+	TenantIDKey  ctxKey = "tenant_id"
+	UserIDKey    ctxKey = "user_id"
+	IsAdminKey   ctxKey = "is_super_admin"
+	IsAuthKey    ctxKey = "is_authenticated"
+	RequestIDKey ctxKey = "request_id"
+	TraceIDKey   ctxKey = "trace_id"
+	BypassRLSKey ctxKey = "bypass_rls"
 )
 
-// Config chứa cấu hình database connection.
+// Config cấu hình pool.
 type Config struct {
 	Host            string
 	Port            int
@@ -29,124 +38,98 @@ type Config struct {
 	Password        string
 	Database        string
 	SSLMode         string
-	MaxOpenConns    int
-	MaxIdleConns    int
-	ConnMaxLifetime time.Duration
+	MaxConns        int32
+	MinConns        int32
+	MaxConnLifetime time.Duration
+	MaxConnIdleTime time.Duration
+	HealthCheckPeriod time.Duration
+	ApplicationName string
+	StatementCacheCapacity int
 }
 
 // DSN trả về connection string.
 func (c Config) DSN() string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.Host, c.Port, c.User, c.Password, c.Database, c.SSLMode,
-	)
+	host := c.Host
+	if c.Port > 0 {
+		host = fmt.Sprintf("%s:%d", c.Host, c.Port)
+	}
+	params := url.Values{}
+	params.Set("sslmode", c.SSLMode)
+	if c.ApplicationName != "" {
+		params.Set("application_name", c.ApplicationName)
+	}
+	if c.StatementCacheCapacity > 0 {
+		params.Set("statement_cache_capacity", fmt.Sprintf("%d", c.StatementCacheCapacity))
+	}
+	return fmt.Sprintf("postgres://%s:%s@%s/%s?%s",
+		url.QueryEscape(c.User), url.QueryEscape(c.Password), host, c.Database, params.Encode())
 }
 
-// New tạo connection pool mới.
-func New(cfg Config) (*sql.DB, error) {
-	if cfg.SSLMode == "" {
-		cfg.SSLMode = "disable"
+// WithDefaults điền defaults nếu field rỗng.
+func (c Config) WithDefaults() Config {
+	if c.SSLMode == "" {
+		c.SSLMode = "disable"
 	}
-	if cfg.MaxOpenConns == 0 {
-		cfg.MaxOpenConns = 25
+	if c.MaxConns == 0 {
+		c.MaxConns = 25
 	}
-	if cfg.MaxIdleConns == 0 {
-		cfg.MaxIdleConns = 5
+	if c.MinConns == 0 {
+		c.MinConns = 2
 	}
-	if cfg.ConnMaxLifetime == 0 {
-		cfg.ConnMaxLifetime = 5 * time.Minute
+	if c.MaxConnLifetime == 0 {
+		c.MaxConnLifetime = 30 * time.Minute
 	}
+	if c.MaxConnIdleTime == 0 {
+		c.MaxConnIdleTime = 5 * time.Minute
+	}
+	if c.HealthCheckPeriod == 0 {
+		c.HealthCheckPeriod = 30 * time.Second
+	}
+	return c
+}
 
-	db, err := sql.Open("pgx", cfg.DSN())
+// NewPool tạo pgxpool với config + metrics.
+func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
+	cfg = cfg.WithDefaults()
+	poolCfg, err := pgxpool.ParseConfig(cfg.DSN())
 	if err != nil {
-		return nil, fmt.Errorf("open db: %w", err)
+		return nil, fmt.Errorf("db: parse DSN: %w", err)
+	}
+	poolCfg.MaxConns = cfg.MaxConns
+	poolCfg.MinConns = cfg.MinConns
+	poolCfg.MaxConnLifetime = cfg.MaxConnLifetime
+	poolCfg.MaxConnIdleTime = cfg.MaxConnIdleTime
+	poolCfg.HealthCheckPeriod = cfg.HealthCheckPeriod
+	if cfg.ApplicationName != "" {
+		poolCfg.ConnConfig.RuntimeParams["application_name"] = cfg.ApplicationName
 	}
 
-	db.SetMaxOpenConns(cfg.MaxOpenConns)
-	db.SetMaxIdleConns(cfg.MaxIdleConns)
-	db.SetConnMaxLifetime(cfg.ConnMaxLifetime)
-
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping db: %w", err)
-	}
-
-	return db, nil
-}
-
-// WithRLS bắt đầu transaction với RLS context.
-func WithRLS(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
-	tx, err := db.BeginTx(ctx, nil)
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
+		return nil, fmt.Errorf("db: new pool: %w", err)
 	}
-
-	tenantID, _ := ctx.Value(TenantIDKey).(string)
-	userID, _ := ctx.Value(UserIDKey).(string)
-	isAdmin, _ := ctx.Value(IsAdminKey).(bool)
-
-	if tenantID != "" {
-		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf("SET LOCAL app.current_tenant_id = '%s'", escapeValue(tenantID))); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("set tenant: %w", err)
-		}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("db: ping: %w", err)
 	}
-	if userID != "" {
-		if _, err := tx.ExecContext(ctx,
-			fmt.Sprintf("SET LOCAL app.current_user_id = '%s'", escapeValue(userID))); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("set user: %w", err)
-		}
-	}
-	if isAdmin {
-		if _, err := tx.ExecContext(ctx, "SET LOCAL app.is_super_admin = 'true'"); err != nil {
-			tx.Rollback()
-			return nil, fmt.Errorf("set admin: %w", err)
-		}
-	}
-
-	return tx, nil
+	return pool, nil
 }
 
-// SetTenantContext gắn tenant_id vào context.
-func SetTenantContext(ctx context.Context, tenantID, userID string, isAdmin bool) context.Context {
-	ctx = context.WithValue(ctx, TenantIDKey, tenantID)
-	ctx = context.WithValue(ctx, UserIDKey, userID)
-	if isAdmin {
-		ctx = context.WithValue(ctx, IsAdminKey, true)
+// PoolStats trả về metrics cho Prometheus collector.
+type PoolStats struct {
+	Active int32 `json:"active"`
+	Idle   int32 `json:"idle"`
+	Total  int32 `json:"total"`
+	Max    int32 `json:"max"`
+}
+
+// Stats của pool.
+func Stats(pool *pgxpool.Pool) PoolStats {
+	s := pool.Stat()
+	return PoolStats{
+		Active: s.AcquiredConns(),
+		Idle:   s.IdleConns(),
+		Total:  s.TotalConns(),
+		Max:    s.MaxConns(),
 	}
-	ctx = context.WithValue(ctx, IsAuthKey, true)
-	return ctx
-}
-
-// TenantIDFromContext extracts tenant_id from context.
-func TenantIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(TenantIDKey).(string)
-	return v
-}
-
-// UserIDFromContext extracts user_id from context.
-func UserIDFromContext(ctx context.Context) string {
-	v, _ := ctx.Value(UserIDKey).(string)
-	return v
-}
-
-// IsSuperAdmin checks if context is super admin.
-func IsSuperAdmin(ctx context.Context) bool {
-	v, _ := ctx.Value(IsAdminKey).(bool)
-	return v
-}
-
-// escapeValue escapes single quotes for SQL safety (RLS context).
-func escapeValue(s string) string {
-	result := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '\'' {
-			result = append(result, '\'', '\'')
-		} else {
-			result = append(result, c)
-		}
-	}
-	return string(result)
 }

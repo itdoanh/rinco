@@ -1,0 +1,183 @@
+# ============================================================
+# RINCO Traefik — dynamic routers
+# Each Go service exposes HTTP on its own port; the gateway
+# routes public traffic accordingly.
+# ============================================================
+http:
+  routers:
+    # ----------------------------------------------------------------
+    # AUTH
+    # ----------------------------------------------------------------
+    - name: auth-router
+      rule: "PathPrefix(`/v1/auth`)"
+      service: auth-service
+      entryPoints: [websecure]
+      middlewares: [default-chain, jwt-strip]
+
+    # ----------------------------------------------------------------
+    # TENANT
+    # ----------------------------------------------------------------
+    - name: tenant-router
+      rule: "PathPrefix(`/v1/tenants`)"
+      service: tenant-service
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # CRM
+    # ----------------------------------------------------------------
+    - name: crm-router
+      rule: "PathPrefix(`/v1/crm`)"
+      service: crm-service
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # DYNAMIC MODEL
+    # ----------------------------------------------------------------
+    - name: dynamic-model-router
+      rule: "PathPrefix(`/v1/entities`)"
+      service: dynamic-model-service
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # LEADS
+    # ----------------------------------------------------------------
+    - name: lead-router
+      rule: "PathPrefix(`/v1/leads`)"
+      service: lead-service
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # LANDING (public)
+    # ----------------------------------------------------------------
+    - name: landing-router
+      rule: "PathPrefix(`/v1/landing`)"
+      service: landing-service
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # WORKFLOWS
+    # ----------------------------------------------------------------
+    - name: workflow-router
+      rule: "PathPrefix(`/v1/workflows`)"
+      service: workflow-service
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # CHAT (WS-friendly, allow long timeouts)
+    # ----------------------------------------------------------------
+    - name: chat-router
+      rule: "PathPrefix(`/v1/chat`) || PathPrefix(`/ws`)"
+      service: chat-engine
+      entryPoints: [websecure]
+      middlewares: [default-chain]
+
+    # ----------------------------------------------------------------
+    # WEBRTC signalling
+    # ----------------------------------------------------------------
+    - name: webrtc-router
+      rule: "PathPrefix(`/v1/webrtc`) || PathPrefix(`/rtc`)"
+      service: webrtc-sfu
+      entryPoints: [websecure]
+
+    # ----------------------------------------------------------------
+    # AI SERVICES
+    # ----------------------------------------------------------------
+    - name: rag-router
+      rule: "PathPrefix(`/v1/rag`)"
+      service: rag-chatbot
+      entryPoints: [websecure]
+    - name: lead-scoring-router
+      rule: "PathPrefix(`/v1/scoring`)"
+      service: lead-scoring
+      entryPoints: [websecure]
+    - name: stt-router
+      rule: "PathPrefix(`/v1/stt`)"
+      service: stt-service
+      entryPoints: [websecure]
+      middlewares: [request-limiter-large]
+    - name: ai-sre-router
+      rule: "PathPrefix(`/v1/aisre`)"
+      service: ai-sre
+      entryPoints: [websecure]
+      middlewares: [ip-allowlist]
+
+    # ----------------------------------------------------------------
+    # NOTIFICATIONS / EMAIL
+    # ----------------------------------------------------------------
+    - name: notification-router
+      rule: "PathPrefix(`/v1/notifications`)"
+      service: notification-service
+      entryPoints: [websecure]
+    - name: email-router
+      rule: "PathPrefix(`/v1/email`)"
+      service: email-service
+      entryPoints: [websecure]
+      middlewares: [request-limiter-large]
+
+    # ----------------------------------------------------------------
+    # WEBHOOKS (inbound from FB / TikTok / Zalo …)
+    # ----------------------------------------------------------------
+    - name: webhook-router
+      rule: "PathPrefix(`/webhooks`)"
+      service: landing-service
+      entryPoints: [websecure]
+      middlewares: [hmac-verify]
+
+    # ----------------------------------------------------------------
+    # OBSERVABILITY
+    # ----------------------------------------------------------------
+    - name: obs-router
+      rule: "PathPrefix(`/v1/obs`)"
+      service: observability-service
+      entryPoints: [websecure]
+      middlewares: [ip-allowlist]
+
+  services:
+    auth-service:
+      loadBalancer:
+        servers: [{ url: 'http://auth-service:8081' }]
+    tenant-service:
+      loadBalancer:
+        servers: [{ url: 'http://tenant-service:8082' }]
+    crm-service:
+      loadBalancer:
+        servers: [{ url: 'http://crm-service:8083' }]
+    dynamic-model-service:
+      loadBalancer:
+        servers: [{ url: 'http://dynamic-model-service:8084' }]
+    lead-service:
+      loadBalancer:
+        servers: [{ url: 'http://lead-service:8085' }]
+    landing-service:
+      loadBalancer:
+        servers: [{ url: 'http://landing-service:8086' }]
+    workflow-service:
+      loadBalancer:
+        servers: [{ url: 'http://crm-service:8083' }]   # CRM hosts /workflows
+    chat-engine:
+      loadBalancer:
+        servers: [{ url: 'http://chat-engine:8094' }]
+    webrtc-sfu:
+      loadBalancer:
+        servers: [{ url: 'http://webrtc-sfu:8095' }]
+    rag-chatbot:
+      loadBalancer:
+        servers: [{ url: 'http://rag-chatbot:8091' }]
+    lead-scoring:
+      loadBalancer:
+        servers: [{ url: 'http://lead-scoring:8092' }]
+    stt-service:
+      loadBalancer:
+        servers: [{ url: 'http://stt-service:8093' }]
+    ai-sre:
+      loadBalancer:
+        servers: [{ url: 'http://ai-sre:8090' }]
+    notification-service:
+      loadBalancer:
+        servers: [{ url: 'http://notification-service:8088' }]
+    email-service:
+      loadBalancer:
+        servers: [{ url: 'http://email-service:8087' }]
+    observability-service:
+      loadBalancer:
+        servers: [{ url: 'http://observability-service:8089' }]

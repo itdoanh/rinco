@@ -1,0 +1,10 @@
+apiVersion: v2
+name: scylladb
+description: Subchart for ScyllaDB
+type: application
+version: 0.1.0
+appVersion: "6.2.0"
+keywords: [scylla, scylladb, cassandra, database]
+maintainers:
+  - name: RINCO Team
+    email: dev@rinco.app

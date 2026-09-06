@@ -1,0 +1,80 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Tenant selector",
+      "type": "text",
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "options": { "content": "Use the `tenant` template variable below to drill down per tenant." }
+    },
+    {
+      "id": 2,
+      "title": "API Requests / sec (per tenant)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 3 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
+      "targets": [{ "expr": "sum(rate(rinco_http_requests_total{tenant_id=\"$tenant\"}[5m])) by (service)", "legendFormat": "{{service}}" }]
+    },
+    {
+      "id": 3,
+      "title": "Active Users (per tenant)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 3 },
+      "targets": [{ "expr": "rinco_active_users{tenant_id=\"$tenant\"}" }]
+    },
+    {
+      "id": 4,
+      "title": "Leads Created (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 3 },
+      "targets": [{ "expr": "increase(rinco_crm_leads_created_total{tenant_id=\"$tenant\"}[24h])" }]
+    },
+    {
+      "id": 5,
+      "title": "Lead Conversion %",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{ "expr": "rinco_crm_lead_conversion_ratio{tenant_id=\"$tenant\"}" }]
+    },
+    {
+      "id": 6,
+      "title": "Storage / Quota",
+      "type": "gauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 11 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0, "max": 100 } },
+      "targets": [
+        { "expr": "rinco_tenant_storage_bytes{tenant_id=\"$tenant\"} / rinco_tenant_storage_quota{tenant_id=\"$tenant\"} * 100" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["rinco", "tenants"],
+  "templating": {
+    "list": [
+      {
+        "name": "tenant",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(rinco_active_tenants, tenant_id)",
+        "refresh": 2,
+        "multi": false
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timezone": "browser",
+  "title": "RINCO — Per-Tenant Metrics",
+  "uid": "rinco-tenants",
+  "version": 1
+}

@@ -1,0 +1,65 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Messages / sec (sent)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        { "expr": "sum(rate(rinco_chat_messages_sent_total[1m])) by (tenant_id)", "legendFormat": "{{tenant_id}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Chat p99 Latency (ms)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum(rate(rinco_chat_message_send_seconds_bucket[5m])) by (le)) * 1000" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active Chat Users",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "targets": [{ "expr": "rinco_chat_active_users" }]
+    },
+    {
+      "id": 4,
+      "title": "Active Conversations",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "targets": [{ "expr": "rinco_chat_active_conversations" }]
+    },
+    {
+      "id": 5,
+      "title": "Chat MQ Backlog",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rinco_nats_pending_messages{stream=\"CHAT\"}", "legendFormat": "pending" }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["rinco", "chat"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timezone": "browser",
+  "title": "RINCO — Chat Metrics",
+  "uid": "rinco-chat",
+  "version": 1
+}

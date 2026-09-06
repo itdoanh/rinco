@@ -1,0 +1,64 @@
+# ============================================================
+# Traefik — RINCO API Gateway (development)
+# ============================================================
+# Composition:
+#   * `static/traefik.yml` : this file (entrypoints, providers)
+#   * `dynamic/01-routers.yml` : routing rules
+#   * `dynamic/02-middleware.yml` : rate-limit, retry, compress
+# ============================================================
+
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+api:
+  dashboard: true
+  insecure: true
+
+entryPoints:
+  web:
+    address: ':80'
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+
+  websecure:
+    address: ':443'
+    http:
+      tls: {}   # TLS disabled in dev; cert-manager handles prod
+
+  traefik:
+    address: ':8080'
+
+  otlp:
+    address: ':4317'
+
+log:
+  level: INFO
+  format: common
+
+accessLog:
+  enabled: true
+  filePath: '/data/access.log'
+  format: common
+
+providers:
+  docker:
+    endpoint: 'unix:///var/run/docker.sock'
+    exposedByDefault: false
+    network: rinco-network
+    swarmMode: false
+  file:
+    directory: '/etc/traefik/dynamic'
+    watch: true
+
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addRoutersLabels: true
+    addServicesLabels: true
+
+ping:
+  entryPoint: traefik

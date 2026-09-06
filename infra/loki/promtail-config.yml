@@ -1,0 +1,72 @@
+# ============================================================
+# Promtail configuration — ship Docker container logs to Loki
+# ============================================================
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+    batchsize: 1048576
+    timeout: 10s
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+
+# ============================================================
+# Scrape configs
+# ============================================================
+scrape_configs:
+  # All running containers
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: network
+            values: ['rinco_rinco-network', 'rinco-network']
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+      - source_labels: ['__meta_docker_compose_service']
+        target_label: 'service'
+      - source_labels: ['__meta_docker_container_label_com_docker_compose_project']
+        target_label: 'project'
+      - target_label: job
+        replacement: 'docker'
+      - target_label: cluster
+        replacement: 'rinco-local'
+      - target_label: env
+        replacement: 'development'
+    pipeline_stages:
+      # Drop noisy lines from health-check traffic
+      - match:
+          selector: '{job="docker"}'
+          stages:
+            - regex:
+                expression: '.*(?P<level>(DEBUG|INFO|WARN|WARNING|ERROR|FATAL|TRACE)).*'
+            - labels:
+                level:
+            - match:
+                selector: '{level=""}'
+                action: drop
+
+  # Static fallback (in case Docker labels are absent)
+  - job_name: system
+    static_configs:
+      - labels:
+          job: system
+          cluster: rinco-local
+          env: development
+        targets:
+          - localhost

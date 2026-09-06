@@ -1,0 +1,14 @@
+apiVersion: v2
+name: postgres
+description: Subchart for PostgreSQL (Bitnami)
+type: application
+version: 0.1.0
+appVersion: "16.4.0"
+keywords: [postgres, postgresql, database]
+maintainers:
+  - name: RINCO Team
+    email: dev@rinco.app
+dependencies:
+  - name: postgresql
+    version: "15.x.x"
+    repository: "https://charts.bitnami.com/bitnami"

@@ -1,0 +1,34 @@
+# ============================================================
+# Qdrant configuration (RINCO local-dev)
+# Reference: https://qdrant.tech/documentation/guides/configuration/
+# ============================================================
+
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  enable_cors: true
+  max_request_size_mb: 64
+  max_workers: 8
+
+storage:
+  storage_dir: /qdrant/storage
+  snapshots_dir: /qdrant/snapshots
+  on_disk_payload: true
+
+collection_manager:
+  default_collection:
+    vectors:
+      size: 1536                # matches OpenAI text-embedding-ada-002 / vn-3-small
+      distance: Cosine
+    optimizers_config:
+      default_segment_number: 2
+      max_segment_size_kb: 200000
+      memmap_threshold_kb: 50000
+      indexing_threshold_kb: 20000
+    replication_factor: 1
+    write_consistency_factor: 1
+
+telemetry_disabled: true
+
+log_level: INFO

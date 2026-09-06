@@ -1,150 +1,164 @@
 # Dynamic Model Service
 
-Service quản lý dynamic schemas - cho phép mỗi tenant định nghĩa fields riêng cho entities.
+> **Phân hệ #4 — Dynamic Model Engine** · Meta-Schema service cho phép mỗi
+> tenant tự định nghĩa entity types, fields, validation rules, workflow, và
+> record CRUD + CSV import/export. Multi-tenant qua PostgreSQL RLS.
 
-## Tính năng
+## 1. Tổng quan
 
-- **JSON Schema Generation**: Tự động tạo JSON Schema từ field definitions
-- **Per-tenant Schemas**: Mỗi tenant có schema riêng cho mỗi entity type
-- **Field Types**: string, number, boolean, date, enum, json, file, relation
-- **Validation Rules**: required, min/max, regex, custom
-- **Multi-language Labels**: Hỗ trợ i18n
-- **Display Order**: Configurable field ordering
-- **Default Values**: Set defaults cho fields
-- **Versioning**: Track schema changes
-- **Backward Compatibility**: Migrate old data to new schema
+- **Ngôn ngữ:** Go 1.23 + Echo + sql + Prometheus
+- **Database:** PostgreSQL 17 (mọi dynamic data trong JSONB + GIN index)
+- **Migrations:** `services/dynamic-model-service/migrations/*.sql`
+- **Validation engine:** JSON Schema lite + custom (email / phone-VN / tax-code / cccd)
+- **Schema generator:** JSON Schema 2020-12 + React JSON Schema Form (rjsf v5) UI hints
+- **Versioning:** immutable snapshots trong `model.model_versions`
+- **Multi-tenant:** RLS enforc `app.current_tenant_id` + `app.is_super_admin`
 
-## Công nghệ
+## 2. Endpoints (23)
 
-- **Language**: Go 1.23+
-- **Framework**: Echo v4
-- **Database**: PostgreSQL với JSONB
-- **Schema Engine**: Custom + JSON Schema draft-07
+Tất cả endpoint yêu cầu header `X-Tenant-ID`, `X-User-ID`, optional `X-Is-Super-Admin`.
 
-## API Endpoints
+| # | Method | Path                                          | Mô tả                                  |
+|---|--------|-----------------------------------------------|----------------------------------------|
+| 1 | POST   | `/v1/models`                                  | Tạo dynamic model                      |
+| 2 | GET    | `/v1/models`                                  | List + filter (`status`, `slug`)       |
+| 3 | GET    | `/v1/models/:id`                              | Retrieve schema metadata               |
+| 4 | PUT    | `/v1/models/:id`                              | Update name / description / status     |
+| 5 | DELETE | `/v1/models/:id`                              | Soft delete (`status=archived`)        |
+| 6 | POST   | `/v1/models/:id/duplicate`                    | Duplicate qua tenant khác              |
+| 7 | POST   | `/v1/models/:id/publish`                      | Publish + snapshot                     |
+| 8 | GET    | `/v1/models/:id/versions`                     | History versions                       |
+| 9 | POST   | `/v1/models/:id/fields`                       | Add field                              |
+|10 | DELETE | `/v1/models/:id/fields/:field_id`             | Delete field                           |
+|11 | GET    | `/v1/models/:id/fields`                       | List fields (helper)                   |
+|12 | POST   | `/v1/models/:id/records`                      | Create record (validate trước khi save) |
+|13 | GET    | `/v1/models/:id/records`                      | Query records (JSONB containment)      |
+|14 | GET    | `/v1/models/:id/records/:record_id`           | Retrieve record                        |
+|15 | PUT    | `/v1/models/:id/records/:record_id`           | Update record (validate lại)           |
+|16 | DELETE | `/v1/models/:id/records/:record_id`           | Delete record                          |
+|17 | POST   | `/v1/models/:id/import`                       | CSV import (multipart `file=`)         |
+|18 | GET    | `/v1/models/:id/export`                       | CSV export                             |
+|19 | POST   | `/v1/models/:id/validate`                     | Validate payload (no persistence)      |
+|20 | POST   | `/v1/models/:id/migrate`                      | Bump version + snapshot                |
+|21 | GET    | `/v1/models/:id/ui-schema`                    | UI hints (rjsf v5 + `ui:order`)        |
+|22 | GET    | `/v1/models/:id/json-schema`                  | JSON Schema 2020-12 output             |
+|23 | POST   | `/v1/models/:id/restore/:version`             | Khôi phục schema từ version cũ         |
 
-```
-POST   /v1/models/fields                      - Tạo field definition
-GET    /v1/models/fields                      - List fields (filterable)
-GET    /v1/models/fields/:id                  - Field details
-PATCH  /v1/models/fields/:id                  - Update field
-DELETE /v1/models/fields/:id                  - Delete field
+Plus: `/health`, `/ready`, `/metrics`.
 
-POST   /v1/models/workflows                   - Tạo workflow
-GET    /v1/models/workflows                   - List workflows
-GET    /v1/models/workflows/:id               - Workflow details
-PATCH  /v1/models/workflows/:id               - Update workflow
-DELETE /v1/models/workflows/:id               - Delete workflow
+## 3. Schema & Tables
 
-GET    /v1/models/schema/:entity_type         - Get JSON Schema
-POST   /v1/models/schema/validate             - Validate data
-```
+| Table | Purpose |
+|-------|---------|
+| `model.models` | Header metadata, status (`draft`/`published`/`archived`) |
+| `model.model_fields` | Per-field defs: name, type, required, default, validation_rules (JSONB), ui_config (JSONB) |
+| `model.model_records` | Records với `data JSONB` + GIN index |
+| `model.model_versions` | Immutable snapshots cho audit / rollback |
+| `model.model_import_jobs` | Theo dõi CSV import progress + errors |
 
-## Field Types
+Indexes:
+- `GIN (data)` cho JSONB search
+- `(model_id, name)` unique
+- `(tenant_id, slug, version)` unique
 
-- `string` - Text field
-- `number` - Numeric field (integer/float)
-- `boolean` - True/False
-- `date` - Date/datetime
-- `enum` - Single select from options
-- `multi_select` - Multiple values from options
-- `json` - JSON object/array
-- `file` - File upload
-- `relation` - Link to another entity
-- `formula` - Computed field
-- `lookup` - Reference to other entity's field
+## 4. Validation Rules (`validation_rules` JSONB)
 
-## Example: Field Definition
+| Field type  | Build-in checks                                            |
+|-------------|-------------------------------------------------------------|
+| `string`    | `min_length`, `max_length`, `pattern` (regex), `validator`  |
+| `number`    | `min`, `max`                                                |
+| `integer`   | `min`, `max`                                                |
+| `enum`      | `options` (array of strings)                                |
+| `email`     | Built-in regex                                              |
+| `phone`     | VN phone regex (`+84|0` prefix, 10-11 digits)                |
+| `url`       | http/https scheme                                           |
+| `color`     | `#RRGGBB`                                                   |
+| any         | `json_schema` (full JSON Schema block qua gojsonschema)     |
 
-```json
-{
-  "entity_type": "lead",
-  "field_name": "budget",
-  "field_label": "Ngân sách dự kiến",
-  "field_type": "number",
-  "is_required": true,
-  "is_searchable": true,
-  "validation_rules": {
-    "min": 0,
-    "max": 1000000000
-  },
-  "display_order": 5
-}
-```
+Custom validators: `email`, `phone-vn`, `tax-code`, `cccd`.
 
-## Example: Generated JSON Schema
+## 5. UI Config (`ui_config` JSONB)
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "properties": {
-    "full_name": {
-      "type": "string",
-      "title": "Họ và tên"
-    },
-    "email": {
-      "type": "string",
-      "format": "email"
-    },
-    "budget": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 1000000000
-    },
-    "industry": {
-      "type": "string",
-      "enum": ["tech", "finance", "healthcare", "other"]
-    }
-  },
-  "required": ["full_name", "email", "budget"],
-  "additionalProperties": false
-}
-```
+Các key thông dụng:
+- `placeholder`, `help_text`, `tooltip`
+- `section` (group nhiều field), `width` (`full`/`half`/`third`)
+- `show_in_list` (bool), `order`
+- `component` (vd `rjsf` widget: `textarea`, `select`, `date`)
+- `lookup_collection` (cho `relation`/`ref`)
 
-## Workflow Definition
+## 6. Env vars
 
-```json
-{
-  "name": "High-value Lead Auto-assign",
-  "trigger_type": "lead.created",
-  "trigger_config": {
-    "conditions": [
-      {"field": "budget", "operator": ">", "value": 100000000}
-    ]
-  },
-  "steps": [
-    {
-      "type": "assign",
-      "config": {"user_role": "sales_manager"}
-    },
-    {
-      "type": "notification",
-      "config": {
-        "channel": "telegram",
-        "template": "high_value_lead"
-      }
-    },
-    {
-      "type": "ai_score",
-      "config": {"priority": "high"}
-    }
-  ],
-  "is_active": true
-}
-```
+| Var                          | Default            | Purpose                          |
+|------------------------------|--------------------|----------------------------------|
+| `PORT`                       | `8084`             | HTTP listen port                 |
+| `ENV`                        | `development`      | `development` / `production`    |
+| `DB_HOST`                    | `localhost`        | PostgreSQL                       |
+| `DB_USER` / `DB_PASSWORD`    | `rinco` / dev pwd  |                                  |
+| `DB_NAME`                    | `rinco`            |                                  |
+| `DYNAMIC_MODEL_UPLOAD_DIR`   | *(unset)*          | Lưu lại CSV uploads              |
 
-## Environment Variables
+## 7. Run
 
 ```bash
-DYNAMIC_MODEL_SERVICE_PORT=8086
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/rinco?sslmode=disable
-SCHEMA_CACHE_TTL=300
+# 1. Migrate
+psql -U rinco -d rinco -f services/dynamic-model-service/migrations/000_init_dynamic_model.sql
+
+# 2. Run
+cd services/dynamic-model-service
+go build ./cmd && ./dynamic-model-service
 ```
 
-## Development
-
+Docker:
 ```bash
-go build -o bin/dynamic-model-service ./cmd/main.go
-./bin/dynamic-model-service
+docker build -t rinco/dynamic-model-service -f Dockerfile .
 ```
+
+## 8. Ví dụ
+
+### Tạo model + 2 fields
+```bash
+curl -X POST http://localhost:8084/v1/models \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: 00000000-0000-0000-0000-000000000000' \
+  -H 'X-User-ID:   00000000-0000-0000-0000-000000000000' \
+  -d '{"name":"Product","slug":"product","description":"Hàng hóa"}'
+# → id = 018f3a9b-...
+
+curl -X POST http://localhost:8084/v1/models/$ID/fields \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: ...' -H 'X-User-ID: ...' \
+  -d '{"name":"sku","label":"SKU","type":"string","required":true,
+       "validation_rules":{"pattern":"^[A-Z]{3}\\d{4}$","validator":"email"},
+       "ui_config":{"section":"main","width":"half"}}'
+```
+
+### Create record (auto-validated)
+```bash
+curl -X POST http://localhost:8084/v1/models/$ID/records \
+  -H 'Content-Type: application/json' \
+  -H 'X-Tenant-ID: ...' -H 'X-User-ID: ...' \
+  -d '{"data":{"sku":"ABC1234","name":"Áo sơ mi"}}'
+```
+
+### CSV export
+```bash
+curl "http://localhost:8084/v1/models/$ID/export" -o products.csv
+```
+
+### Build UI Schema (for RJSF / form-builder)
+```bash
+curl http://localhost:8084/v1/models/$ID/ui-schema | jq
+```
+
+## 9. Observability
+
+- Prometheus: `GET /metrics` (`rinco_http_requests_total`, `rinco_http_request_duration_seconds`)
+- Structured logs (zap JSON): mọi request kèm `trace_id`, `tenant_id`, `user_id`
+- `/health` (liveness), `/ready` (PostgreSQL ping)
+
+## 10. Liên kết
+
+- `docs/04-dynamic-model/README.md` — design doc đầy đủ (200+ tính năng)
+- `packages/go/db` — RLS context helper
+- `packages/go/logger` — structured logger
+- `packages/go/middleware` — Echo middleware (Trace / Logger / Metrics / Recovery / CORS)

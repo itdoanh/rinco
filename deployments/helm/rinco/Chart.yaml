@@ -1,16 +1,57 @@
 apiVersion: v2
 name: rinco
-description: RINCO Platform - Multi-tenant SaaS
+description: |
+  RINCO platform Helm chart — multi-tenant SaaS microservices
+  with polyglot persistence (PostgreSQL, ScyllaDB, ClickHouse,
+  MongoDB, Valkey, Meilisearch, Qdrant, MinIO, NATS).
+
 type: application
+
+# Chart version — bumped on any chart change
 version: 1.0.0
+
+# Application version — bumped on each product release
 appVersion: "1.0.0"
+
+kubeVersion: ">=1.25.0-0"
+
+home: https://github.com/itdoanh/rinco
+sources:
+  - https://github.com/itdoanh/rinco
+
 keywords:
   - saas
   - multi-tenant
   - microservices
-home: https://github.com/itdoanh/rinco
-sources:
-  - https://github.com/itdoanh/rinco
+  - postgresql
+  - scylladb
+  - clickhouse
+  - mongodb
+  - valkey
+
 maintainers:
   - name: RINCO Team
     email: dev@rinco.app
+  - name: Doanh
+    email: doanh@rinco.app
+
+dependencies:
+  - name: postgres
+    version: "15.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgres.enabled
+  - name: scylla
+    version: "1.x.x"
+    repository: "https://screwdriver-cd.github.io/scylla"
+    condition: scylla.enabled
+  - name: clickhouse
+    version: "0.x.x"
+    repository: "https://docs.altinity.com/clickhouse-operator/"
+    condition: clickhouse.enabled
+  - name: redis
+    version: "20.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: valkey.enabled
+    alias: valkey
+    # note: valkey is binary-compatible with redis; we use the
+    # redis chart but override image.repository

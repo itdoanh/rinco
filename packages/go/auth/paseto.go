@@ -1,4 +1,8 @@
-// Package auth cung cấp PASETO v4 token, FIDO2, Argon2 helpers.
+// Package auth cung cấp PASETO v4 token, FIDO2, Argon2, RBAC, OAuth2,
+// session management, và API key helpers.
+//
+// Mọi helper trong package này stateless và thread-safe. Key state nên được
+// wrap bởi KeyRing để hỗ trợ rotation, còn session thì dùng SessionStore.
 package auth
 
 import (
@@ -14,35 +18,56 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// ===== Errors =====
+
 var (
-	ErrExpired = errors.New("token expired")
-	ErrInvalid = errors.New("invalid token")
+	ErrExpired      = errors.New("auth: token expired")
+	ErrInvalid      = errors.New("auth: invalid token")
+	ErrUnsupported  = errors.New("auth: unsupported token format")
+	ErrKeyMismatch  = errors.New("auth: token signed with unknown key")
+	ErrSessionExist = errors.New("auth: session already exists")
 )
 
-// Claims represents PASETO v4 claims.
+// ===== PASETO v4 (Local + Public) =====
+
+// KeyPurpose phân biệt local/public key cho PASETO.
+type KeyPurpose int
+
+const (
+	LocalKey KeyPurpose = iota // symmetric (local)
+	PublicKey                  // asymmetric (public/private)
+)
+
+// Claims là JWT-style payload cho PASETO v4.
+// Mọi field dùng omitempty để tránh leak thông tin không cần thiết.
 type Claims struct {
-	Issuer      string    `json:"iss"`
-	Subject     string    `json:"sub"`
-	Audience    string    `json:"aud"`
-	ExpiresAt   time.Time `json:"exp"`
-	IssuedAt    time.Time `json:"iat"`
-	NotBefore   time.Time `json:"nbf"`
-	JTI         string    `json:"jti"`
+	Issuer      string    `json:"iss,omitempty"`
+	Subject     string    `json:"sub,omitempty"`
+	Audience    string    `json:"aud,omitempty"`
+	ExpiresAt   time.Time `json:"exp,omitempty"`
+	IssuedAt    time.Time `json:"iat,omitempty"`
+	NotBefore   time.Time `json:"nbf,omitempty"`
+	JTI         string    `json:"jti,omitempty"`
+	Kid         string    `json:"kid,omitempty"`
 	TenantID    string    `json:"tenant_id,omitempty"`
 	UserID      string    `json:"user_id,omitempty"`
+	Email       string    `json:"email,omitempty"`
 	Roles       []string  `json:"roles,omitempty"`
 	Permissions []string  `json:"perms,omitempty"`
 	Scope       string    `json:"scope,omitempty"`
+	SessionID   string    `json:"sid,omitempty"`
 }
 
-// Paseto wraps PASETO v4 operations.
+// Paseto wraps PASETO v4 local (symmetric) operations.
+// Key phải dài đúng chacha20poly1305.KeySize (32 bytes).
 type Paseto struct {
 	key       []byte
+	kid       string
 	clockSkew time.Duration
 }
 
 // NewPaseto tạo Paseto mới với key 32-byte (hex).
-func NewPaseto(hexKey string) (*Paseto, error) {
+func NewPaseto(hexKey, kid string) (*Paseto, error) {
 	key, err := hex.DecodeString(hexKey)
 	if err != nil {
 		return nil, fmt.Errorf("decode key: %w", err)
@@ -52,11 +77,18 @@ func NewPaseto(hexKey string) (*Paseto, error) {
 	}
 	return &Paseto{
 		key:       key,
+		kid:       kid,
 		clockSkew: 60 * time.Second,
 	}, nil
 }
 
-// Encrypt tạo token từ claims.
+// SetClockSkew cho phép override khoảng dung sai giờ giữa client/server.
+func (p *Paseto) SetClockSkew(d time.Duration) { p.clockSkew = d }
+
+// Kid trả về key identifier hiện tại.
+func (p *Paseto) Kid() string { return p.kid }
+
+// Encrypt tạo token từ claims, tự sinh JTI + IssuedAt nếu thiếu.
 func (p *Paseto) Encrypt(claims Claims) (string, error) {
 	if claims.JTI == "" {
 		claims.JTI = uuid.NewV7().String()
@@ -70,12 +102,15 @@ func (p *Paseto) Encrypt(claims Claims) (string, error) {
 	if claims.Audience == "" {
 		claims.Audience = "rinco-app"
 	}
+	if claims.Kid == "" {
+		claims.Kid = p.kid
+	}
 
 	pasetoObj := paseto.NewV4Local()
 	return pasetoObj.Encrypt(p.key, claims, nil)
 }
 
-// Decrypt giải mã và validate token.
+// Decrypt giải mã và validate token (exp + nbf trong clock-skew tolerance).
 func (p *Paseto) Decrypt(token string) (*Claims, error) {
 	pasetoObj := paseto.NewV4Local()
 	var claims Claims
@@ -94,65 +129,54 @@ func (p *Paseto) Decrypt(token string) (*Claims, error) {
 	return &claims, nil
 }
 
-// KeyRing hỗ trợ key rotation (overlap period).
+// KeyRing hỗ trợ key rotation với overlap period (current + previous).
+// Verify sẽ thử current trước, fallback previous.
 type KeyRing struct {
-	current  []byte
-	previous []byte
+	current  *Paseto
+	previous *Paseto
 }
 
-// NewKeyRing tạo key ring với 2 keys.
-func NewKeyRing(currentHex, previousHex string) (*KeyRing, error) {
-	current, err := hex.DecodeString(currentHex)
+// NewKeyRing tạo key ring. previous có thể rỗng.
+func NewKeyRing(currentHex, previousHex, currentKid, previousKid string) (*KeyRing, error) {
+	current, err := NewPaseto(currentHex, currentKid)
 	if err != nil {
-		return nil, fmt.Errorf("decode current key: %w", err)
+		return nil, fmt.Errorf("current key: %w", err)
 	}
-	if len(current) != chacha20poly1305.KeySize {
-		return nil, errors.New("invalid current key size")
-	}
-
-	var previous []byte
+	ring := &KeyRing{current: current}
 	if previousHex != "" {
-		previous, err = hex.DecodeString(previousHex)
+		previous, err := NewPaseto(previousHex, previousKid)
 		if err != nil {
-			return nil, fmt.Errorf("decode previous key: %w", err)
+			return nil, fmt.Errorf("previous key: %w", err)
 		}
-		if len(previous) != chacha20poly1305.KeySize {
-			return nil, errors.New("invalid previous key size")
-		}
+		ring.previous = previous
 	}
-
-	return &KeyRing{current: current, previous: previous}, nil
+	return ring, nil
 }
 
 // Encrypt luôn dùng current key.
 func (k *KeyRing) Encrypt(claims Claims) (string, error) {
-	p := paseto.NewV4Local()
-	if claims.JTI == "" {
-		claims.JTI = uuid.NewV7().String()
-	}
-	return p.Encrypt(k.current, claims, nil)
+	claims.Kid = k.current.Kid()
+	return k.current.Encrypt(claims)
 }
 
-// Decrypt thử current key trước, sau đó previous.
+// Decrypt thử current key trước, fallback previous.
 func (k *KeyRing) Decrypt(token string) (*Claims, error) {
-	p := paseto.NewV4Local()
-	var claims Claims
-
-	if err := p.Decrypt(token, k.current, &claims, nil); err == nil {
-		return &claims, nil
+	if claims, err := k.current.Decrypt(token); err == nil {
+		return claims, nil
 	}
-
 	if k.previous != nil {
-		var prevClaims Claims
-		if err := p.Decrypt(token, k.previous, &prevClaims, nil); err == nil {
-			return &prevClaims, nil
+		if claims, err := k.previous.Decrypt(token); err == nil {
+			return claims, nil
 		}
 	}
-
 	return nil, ErrInvalid
 }
 
-// GenerateSecureToken tạo random token hex (cho refresh tokens).
+// CurrentKid trả về kid hiện tại (dùng cho JWKS endpoint).
+func (k *KeyRing) CurrentKid() string { return k.current.Kid() }
+
+// GenerateSecureToken tạo random token hex với N bytes entropy.
+// Dùng cho refresh token, session ID, idempotency key.
 func GenerateSecureToken(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -170,21 +194,21 @@ func GeneratePASETOKey() (string, error) {
 	return hex.EncodeToString(key), nil
 }
 
-// ============ Argon2 helpers ============
+// ===== Argon2id password hashing =====
 
-// Argon2Params cho password hashing.
+// Argon2Params cho password hashing. Tuned theo OWASP 2024.
 type Argon2Params struct {
-	Memory      uint32
-	Iterations  uint32
-	Parallelism uint8
-	SaltLength  uint32
-	KeyLength   uint32
+	Memory      uint32 // KB
+	Iterations  uint32 // t
+	Parallelism uint8  // p
+	SaltLength  uint32 // bytes
+	KeyLength   uint32 // bytes
 }
 
-// DefaultArgon2Params trả về params mạnh.
+// DefaultArgon2Params trả về params mạnh (OWASP baseline).
 func DefaultArgon2Params() *Argon2Params {
 	return &Argon2Params{
-		Memory:      64 * 1024, // 64MB
+		Memory:      64 * 1024, // 64 MB
 		Iterations:  3,
 		Parallelism: 2,
 		SaltLength:  16,
@@ -192,17 +216,18 @@ func DefaultArgon2Params() *Argon2Params {
 	}
 }
 
-// HashPassword hash password với Argon2id.
+// HashPassword hash password với Argon2id. Trả về encoded PHC-format string.
 func HashPassword(password string) (string, error) {
-	p := DefaultArgon2Params()
+	return HashPasswordWithParams(password, DefaultArgon2Params())
+}
+
+// HashPasswordWithParams cho phép custom params (vd test/dev).
+func HashPasswordWithParams(password string, p *Argon2Params) (string, error) {
 	salt := make([]byte, p.SaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-
 	hash := argon2.IDKey([]byte(password), salt, p.Iterations, p.Memory, p.Parallelism, p.KeyLength)
-
-	// Format: $argon2id$v=19$m=memory,t=iter,p=parallelism$salt$hash
 	encoded := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s",
 		19, p.Memory, p.Iterations, p.Parallelism,
 		hex.EncodeToString(salt),
@@ -211,7 +236,7 @@ func HashPassword(password string) (string, error) {
 	return encoded, nil
 }
 
-// VerifyPassword so sánh password với hash.
+// VerifyPassword so sánh password với hash, dùng constant-time comparison.
 func VerifyPassword(password, encoded string) (bool, error) {
 	parts := splitEncoded(encoded)
 	if len(parts) != 6 {
@@ -243,7 +268,6 @@ func VerifyPassword(password, encoded string) (bool, error) {
 
 	keyLen := uint32(len(expected))
 	computed := argon2.IDKey([]byte(password), salt, iterations, memory, parallelism, keyLen)
-
 	return constantTimeEqual(expected, computed), nil
 }
 

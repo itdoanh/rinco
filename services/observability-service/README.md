@@ -1,163 +1,89 @@
 # Observability Service
 
-Centralized health check và observability aggregation service.
+> **Phân hệ #8 — Self-hosted Observability API** · Aggregates logs (Loki),
+> traces (Jaeger/Tempo), metrics (Prometheus), audit (ClickHouse) vào 1
+> unified REST surface.  Built-in dashboards (Grafana JSON), alert
+> aggregation từ AlertManager webhook.
 
-## Tính năng
+## 1. Endpoints (13)
 
-- **Health Aggregation**: Check health của tất cả services
-- **Service Registry**: Biết được services nào đang chạy
-- **Metrics Aggregation**: Aggregate metrics từ nhiều services
-- **Status Dashboard**: Single endpoint cho overall status
-- **Dependency Tracking**: Map service dependencies
-- **Custom Checks**: Health checks với custom logic
-- **SLA Tracking**: Uptime %, response time
-- **Incident Correlation**: Liên kết related incidents
+| Method | Path | Mô tả |
+|--------|------|-------|
+| GET | `/health` / `/ready` / `/metrics` | Self health |
+| GET | `/v1/observability/logs` | Query logs (Loki passthrough) |
+| GET | `/v1/observability/traces/:trace_id` | Query trace (Jaeger) |
+| GET | `/v1/observability/metrics` | Query PromQL (`?query=...`) |
+| GET | `/v1/observability/services` | List all services' health (probes `/health` trên 15 service) |
+| GET | `/v1/observability/services/:service` | Health check 1 service |
+| GET | `/v1/observability/alerts/active` | Active alerts |
+| POST | `/v1/observability/alerts/ack/:id` | Ack 1 alert |
+| GET | `/v1/observability/audit/logs` | ClickHouse audit query |
+| POST | `/v1/observability/webhook/alertmanager` | AlertManager webhook receiver |
+| GET | `/v1/observability/dashboards` | List auto-generated Grafana dashboards |
+| GET | `/v1/observability/dashboards/:name` | Dashboard JSON (`overview`, `service-latency`, `ai-sre`, ...) |
 
-## Công nghệ
+## 2. Upstream backends
 
-- **Language**: Go 1.23+
-- **Framework**: Echo v4
-- **HTTP Client**: net/http với timeouts
-- **Caching**: In-memory với TTL
+| Backend   | URL env var           | Default                  |
+|-----------|-----------------------|--------------------------|
+| Loki      | `LOKI_URL`            | `http://loki:3100`       |
+| Jaeger    | `JAEGER_URL`          | `http://jaeger:16686`    |
+| Prometheus| `PROM_URL`            | `http://prometheus:9090` |
+| ClickHouse| `CLICKHOUSE_URL`      | `http://clickhouse:8123` |
 
-## API Endpoints
+Service URL overrides: `AUTH_URL`, `CRM_URL`, `DMS_URL`, ...
 
-```
-GET    /v1/observability/health/all         - Health của tất cả services
-GET    /v1/observability/health/:service    - Health của service cụ thể
-GET    /v1/observability/services           - List registered services
-POST   /v1/observability/services/register  - Register service
-DELETE /v1/observability/services/:id       - Deregister
-GET    /v1/observability/metrics            - Aggregated metrics
-GET    /v1/observability/dependencies       - Service dependency graph
-GET    /v1/observability/sla                - SLA report
-GET    /health                              - Service self-health
-```
+## 3. AlertManager Integration
 
-## Health Check
+Register AlertManager webhook tới `/v1/observability/webhook/alertmanager` →
+service sẽ tự dedupe theo `service + alertname` và emit "firing/resolved"
+events.  POST `/v1/observability/alerts/ack/:id` để ack.
 
-```json
-GET /v1/observability/health/all
+## 4. Examples
 
-{
-  "status": "healthy",  // healthy, degraded, unhealthy
-  "timestamp": "2026-09-07T10:30:00Z",
-  "services": {
-    "auth-service": {
-      "status": "healthy",
-      "response_time_ms": 12,
-      "last_checked": "2026-09-07T10:30:00Z",
-      "version": "0.1.0",
-      "uptime_seconds": 86400
-    },
-    "tenant-service": {
-      "status": "healthy",
-      "response_time_ms": 8,
-      ...
-    },
-    "postgresql": {
-      "status": "healthy",
-      "response_time_ms": 3,
-      "connections": 45
-    },
-    "scylladb": {
-      "status": "healthy",
-      "response_time_ms": 5
-    }
-  },
-  "summary": {
-    "total_services": 16,
-    "healthy": 16,
-    "degraded": 0,
-    "unhealthy": 0
-  }
-}
+### Logs
+```bash
+curl 'http://localhost:8089/v1/observability/logs?service=auth-service&limit=50&filter=login' | jq
 ```
 
-## Service Registration
-
-```json
-POST /v1/observability/services/register
-{
-  "service_name": "auth-service",
-  "version": "0.1.0",
-  "health_endpoint": "http://auth-service:8081/health",
-  "metrics_endpoint": "http://auth-service:8081/metrics",
-  "dependencies": ["postgresql", "redis"],
-  "tags": ["core", "auth"]
-}
+### Trace
+```bash
+curl 'http://localhost:8089/v1/observability/traces/018f3a9b-7c1e-7000-...'
 ```
 
-## Dependency Graph
-
-```json
-GET /v1/observability/dependencies
-
-{
-  "nodes": [
-    {"id": "auth-service", "type": "service"},
-    {"id": "crm-service", "type": "service"},
-    {"id": "postgresql", "type": "database"},
-    {"id": "scylladb", "type": "database"}
-  ],
-  "edges": [
-    {"from": "auth-service", "to": "postgresql"},
-    {"from": "crm-service", "to": "postgresql"},
-    {"from": "chat-engine", "to": "scylladb"}
-  ]
-}
+### Metric (PromQL)
+```bash
+curl 'http://localhost:8089/v1/observability/metrics?query=up' | jq .data.result
 ```
 
-## SLA Report
-
-```json
-GET /v1/observability/sla?period=30d
-
-{
-  "period": "30d",
-  "services": {
-    "auth-service": {
-      "uptime_percent": 99.99,
-      "avg_response_time_ms": 15,
-      "p99_response_time_ms": 45,
-      "total_requests": 5000000,
-      "error_rate": 0.01
-    }
-  },
-  "overall_uptime": 99.95
-}
+### Services
+```bash
+curl http://localhost:8089/v1/observability/services | jq
 ```
 
-## Environment Variables
+### Alert ack
+```bash
+curl -X POST http://localhost:8089/v1/observability/alerts/ack/auth-service%2FHighErrorRate \
+  -H 'Content-Type: application/json' -d '{"user_id":"u-1"}'
+```
+
+### Grafana Dashboard JSON
+```bash
+curl http://localhost:8089/v1/observability/dashboards/service-latency > /tmp/dash.json
+# import vào Grafana qua HTTP API hoặc file mount.
+```
+
+## 5. ENV
+
+| Var | Default |
+|-----|---------|
+| `PORT` | `8089` |
+| `LOKI_URL` / `JAEGER_URL` / `PROM_URL` / `CLICKHOUSE_URL` | Docker service names |
+| `AUTH_URL` / `CRM_URL` / `DMS_URL` / `LANDING_URL` / `EMAIL_URL` / `NOTIF_URL` / `LEAD_SCORE_URL` / `AI_SRE_URL` / `RAG_URL` / `STT_URL` / `REC_URL` / `CHAT_URL` / `SFU_URL` / `TENANT_URL` | per-service probe URLs |
+
+## 6. Run
 
 ```bash
-OBSERVABILITY_SERVICE_PORT=8092
-HEALTH_CHECK_INTERVAL=30     # seconds
-HEALTH_CHECK_TIMEOUT=5       # seconds
-CACHE_TTL=10                 # seconds
-SERVICES_CONFIG=/config/services.json
-```
-
-## Development
-
-```bash
-go build -o bin/observability-service ./cmd/main.go
-./bin/observability-service
-```
-
-## Architecture
-
-```
-┌─────────────────┐
-│ Observability   │
-│ Service         │
-│                 │      ┌──────────┐
-│  - Aggregator  │ ←──→ │ Service A │
-│  - Cache        │      └──────────┘
-│  - Registry     │      ┌──────────┐
-│                 │ ←──→ │ Service B │
-└─────────────────┘      └──────────┘
-       │                  ┌──────────┐
-       └─────────────────→│ Service C│
-                          └──────────┘
+cd services/observability-service
+go build ./cmd && ./observability-service
 ```

@@ -1,0 +1,80 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Node CPU (top 10)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{ "expr": "topk(10, rinco:node:cpu:utilization)" }]
+    },
+    {
+      "id": 2,
+      "title": "Node Memory (top 10)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent" } },
+      "targets": [{ "expr": "topk(10, rinco:node:memory:utilization)" }]
+    },
+    {
+      "id": 3,
+      "title": "Disk Used (top 10)",
+      "type": "bargauge",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "percent", "thresholds": { "steps": [
+        { "value": null, "color": "green" }, { "value": 70, "color": "yellow" }, { "value": 90, "color": "red" }
+      ] } } },
+      "targets": [{ "expr": "topk(10, rinco:node:disk:utilization)" }]
+    },
+    {
+      "id": 4,
+      "title": "Network RX/TX (per node)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "Bps" } },
+      "targets": [
+        { "expr": "sum(rate(node_network_receive_bytes_total[5m])) by (instance)", "legendFormat": "rx {{instance}}" },
+        { "expr": "sum(rate(node_network_transmit_bytes_total[5m])) by (instance)", "legendFormat": "tx {{instance}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "DB Saturation",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "expr": "pg_stat_activity_count / 200 * 100", "legendFormat": "postgres %" },
+        { "expr": "valkey_used_memory_bytes / valkey_max_memory_bytes * 100", "legendFormat": "valkey %" },
+        { "expr": "mongodb_ss_connections{conntype=\"current\"} / 1000 * 100", "legendFormat": "mongo %" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Container Restart Count (24h)",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "expr": "increase(kube_pod_container_status_restarts_total[24h])", "format": "table", "instant": true }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["rinco", "infrastructure"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timezone": "browser",
+  "title": "RINCO — Infrastructure",
+  "uid": "rinco-infra",
+  "version": 1
+}

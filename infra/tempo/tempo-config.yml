@@ -1,0 +1,68 @@
+# ============================================================
+# Tempo configuration — single-process, file storage (dev)
+# Reference: https://grafana.com/docs/tempo/latest/configuration/
+# ============================================================
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+    jaeger:
+      protocols:
+        thrift_http:
+          endpoint: 0.0.0.0:14268
+        grpc:
+          endpoint: 0.0.0.0:14250
+
+ingester:
+  trace_idle_period: 10s
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 168h        # 7 days
+  ring:
+    kvstore:
+      store: inmemory
+
+metrics_generator:
+  registry:
+    external_labels:
+      cluster: rinco-local
+  storage:
+    path: /var/tempo/generator/wal
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/traces
+    wal:
+      path: /var/tempo/wal
+  metrics:
+    backend: local
+    local:
+      path: /var/tempo/metrics
+
+# ============================================================
+# Search
+# ============================================================
+search:
+  max_concurrent_queries: 8
+  max_result_ttl: 24h
+
+# ============================================================
+# Sampling
+# ============================================================
+# Dev: tail-based at 100% via overrides in service configs.
+# Production: override per service via "support-trace-sampling"
+
+usage_report:
+  reporting_enabled: false
