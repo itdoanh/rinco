@@ -1,0 +1,29 @@
+# APEX Admin - Bảo mật thư mục admin
+# Chỉ chặn truy cập includes, không dùng HTTP Basic Auth (gây lỗi trên shared hosting)
+
+# Chặn truy cập trực tiếp vào /admin/includes/
+RedirectMatch 403 ^/admin/includes/.*$
+
+# Chặn listing file
+Options -Indexes
+
+# Chặn truy cập các file nhạy cảm
+<FilesMatch "^(\.htaccess|\.htpasswd|config\.php|db\.php|auth\.php|queries\.php)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Security Headers
+<IfModule mod_headers.c>
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set X-Content-Type-Options "nosniff"
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Default charset
+AddDefaultCharset UTF-8

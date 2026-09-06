@@ -1,0 +1,54 @@
+# ============================================
+# APEX FINTECH - APACHE CONFIG
+# Tối ưu performance + bảo mật
+# ============================================
+
+# ===== GZIP (tiết kiệm băng thông) =====
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/javascript application/javascript application/json text/xml application/xml image/svg+xml
+</IfModule>
+
+# ===== Cache tĩnh =====
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/webp "access plus 30 days"
+  ExpiresByType image/jpeg "access plus 30 days"
+  ExpiresByType image/png "access plus 30 days"
+  ExpiresByType image/svg+xml "access plus 30 days"
+  ExpiresByType text/css "access plus 7 days"
+  ExpiresByType application/javascript "access plus 7 days"
+  ExpiresByType font/woff2 "access plus 1 year"
+</IfModule>
+
+# ===== Keep-Alive =====
+<IfModule mod_headers.c>
+  Header set Connection keep-alive
+</IfModule>
+
+# ===== Security Headers =====
+<IfModule mod_headers.c>
+  Header always set X-Frame-Options "SAMEORIGIN"
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set Referrer-Policy "strict-origin-when-cross-origin"
+  Header always set Permissions-Policy "geolocation=(), microphone=()"
+</IfModule>
+
+# ===== Protect sensitive files =====
+<FilesMatch "^(\.htaccess|\.htpasswd|config\.php|\.env|composer\.json|composer\.lock|.*\.md)$">
+  Require all denied
+</FilesMatch>
+
+# Block includes folder from direct access
+RedirectMatch 403 ^/includes/.*$
+
+# ===== Disable PHP errors display =====
+php_flag display_errors off
+php_flag log_errors on
+
+# ===== Custom 404 (KHÔNG redirect về landing) =====
+# Trước đây: ErrorDocument 404 /index.html  → GÂY NHẦM LẪN
+# vì khi login.php lỗi (fatal error) Apache trả về 404 → trỏ về landing.
+ErrorDocument 404 "Không tìm thấy trang (404). Vui lòng kiểm tra URL."
+
+# ===== Custom 500 - hiển thị cho admin khi debug =====
+ErrorDocument 500 "Server đang gặp sự cố. Vui lòng thử lại sau ít phút."
