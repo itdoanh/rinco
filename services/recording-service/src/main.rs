@@ -1,250 +1,559 @@
-//! Recording Service - thu recording từ SFU, upload lên MinIO/S3.
-
-use std::sync::Arc;
-
+use anyhow::Result;
+use async_graphql::{EmptySubscription, Object, Schema, SimpleObject, InputObject};
+use async_graphql_axum::GraphQL;
 use axum::{
-    extract::{Multipart, State},
-    http::StatusCode,
+    body::Body,
+    extract::{DefaultBodyLimit, Multipart, Path, State},
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
+    Router,
 };
-use chrono::Utc;
-use dashmap::DashMap;
+use aws_sdk_s3::presigning::presigned_get;
+use aws_sdk_s3::{primitives::ByteStream, Client as S3Client};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use tower_http::trace::TraceLayer;
+use tracing::{error, info, Level};
+use tracing_subscriber::FmtSubscriber;
 use uuid::Uuid;
 
+// ============================================
+// S3/MinIO Client
+// ============================================
+
 #[derive(Clone)]
-pub struct AppState {
-    pub recordings: Arc<DashMap<String, Recording>>,
-    pub s3_client: aws_sdk_s3::Client,
-    pub bucket: String,
+pub struct StorageClient {
+    s3: S3Client,
+    bucket: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Recording {
-    pub recording_id: String,
-    pub session_id: String,
-    pub tenant_id: String,
-    pub started_at: i64,
-    pub ended_at: Option<i64>,
-    pub status: String,
-    pub size_bytes: u64,
-    pub s3_key: String,
-    pub download_url: Option<String>,
-}
+impl StorageClient {
+    pub async fn new(
+        endpoint: Option<String>,
+        region: String,
+        access_key: String,
+        secret_key: String,
+        bucket: String,
+    ) -> Result<Self> {
+        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(region.clone()))
+            .credentials_provider(aws_config::Credentials::new(
+                access_key,
+                secret_key,
+                None,
+                None,
+                "env",
+            ))
+            .endpoint_resolver(aws_config::endpoint::IdentityResolver::new());
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .json()
-        .init();
+        let mut cfg = aws_sdk_s3::Config::builder()
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .region(aws_config::Region::new(region));
 
-    info!("starting recording service");
+        if let Some(ep) = endpoint {
+            cfg = cfg.endpoint_url(ep);
+        }
 
-    // Init S3 (MinIO)
-    let endpoint = std::env::var("S3_ENDPOINT").unwrap_or_else(|_| "http://localhost:9000".into());
-    let access_key = std::env::var("S3_ACCESS_KEY").unwrap_or_else(|_| "rinco".into());
-    let secret_key = std::env::var("S3_SECRET_KEY").unwrap_or_else(|_| "rinco_dev_password".into());
-    let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "recordings".into());
+        let s3 = Client::from_conf(cfg.build());
+        
+        Ok(Self { s3, bucket })
+    }
 
-    let creds = aws_credential_types::Credentials::new(access_key, secret_key, None, None, "static");
-    let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .endpoint_url(endpoint)
-        .region(aws_config::Region::new("us-east-1"))
-        .credentials_provider(creds)
-        .load()
-        .await;
-    let s3_client = aws_sdk_s3::Client::new(&config);
+    pub async fn upload_file(&self, key: &str, data: Vec<u8>, content_type: &str) -> Result<String> {
+        let body = ByteStream::from(data);
+        
+        self.s3
+            .put_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(body)
+            .send()
+            .await?;
 
-    let state = AppState {
-        recordings: Arc::new(DashMap::new()),
-        s3_client,
-        bucket,
-    };
+        Ok(format!("s3://{}/{}", self.bucket, key))
+    }
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/metrics", get(metrics_handler))
-        .route("/v1/recordings", post(upload_recording))
-        .route("/v1/recordings/:id", get(get_recording))
-        .route("/v1/recordings/:id/url", get(get_download_url))
-        .with_state(state);
+    pub async fn get_presigned_url(&self, key: &str, expires_in_secs: i64) -> Result<String> {
+        let presigning_config = aws_sdk_s3::presigning::PresigningConfig::builder()
+            .expires_in(std::time::Duration::from_secs(expires_in_secs as u64))
+            .build()?;
 
-    let listener = tokio::net::TcpListener::bind(&format!(
-        "0.0.0.0:{}",
-        std::env::var("PORT").unwrap_or_else(|_| "8096".into())
-    ))
-    .await?;
+        let presigned = self.s3
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .presigned(presigning_config)
+            .await?;
 
-    info!("recording service listening on {}", listener.local_addr()?);
-    axum::serve(listener, app).await?;
-    Ok(())
-}
+        Ok(presigned.uri().to_string())
+    }
 
-async fn health() -> &'static str {
-    "ok"
-}
+    pub async fn delete_file(&self, key: &str) -> Result<()> {
+        self.s3
+            .delete_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .send()
+            .await?;
+        Ok(())
+    }
 
-async fn metrics_handler() -> impl IntoResponse {
-    let metrics = prometheus::gather();
-    let encoder = prometheus::TextEncoder::new();
-    match encoder.encode_to_string(&metrics) {
-        Ok(s) => (StatusCode::OK, s).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    pub async fn list_recordings(&self, prefix: &str) -> Result<Vec<RecordingMetadata>> {
+        let output = self.s3
+            .list_objects_v2()
+            .bucket(&self.bucket)
+            .prefix(prefix)
+            .send()
+            .await?;
+
+        let mut recordings = Vec::new();
+        if let Some(contents) = output.contents() {
+            for obj in contents {
+                if let Some(key) = obj.key() {
+                    recordings.push(RecordingMetadata {
+                        key: key.to_string(),
+                        size: obj.size() as u64,
+                        last_modified: obj.last_modified().cloned(),
+                    });
+                }
+            }
+        }
+        Ok(recordings)
     }
 }
 
-#[derive(Debug, Deserialize)]
-pub struct UploadMetadata {
-    pub session_id: String,
-    pub tenant_id: String,
-    pub started_at: i64,
-    pub ended_at: i64,
+// ============================================
+// Models
+// ============================================
+
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct Recording {
+    pub id: Uuid,
+    pub room_id: Uuid,
+    pub tenant_id: Uuid,
+    pub user_id: Uuid,
+    pub filename: String,
+    pub storage_key: String,
+    pub content_type: String,
+    pub size_bytes: u64,
+    pub duration_seconds: u32,
+    pub status: RecordingStatus,
+    pub created_at: DateTime<Utc>,
+    pub completed_at: Option<DateTime<Utc>>,
 }
 
-async fn upload_recording(
-    State(state): State<AppState>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, async_graphql::Enum)]
+pub enum RecordingStatus {
+    Pending,
+    Recording,
+    Processing,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingMetadata {
+    pub key: String,
+    pub size: u64,
+    pub last_modified: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct UploadResult {
+    pub success: bool,
+    pub recording_id: Option<Uuid>,
+    pub error: Option<String>,
+    pub download_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SimpleObject)]
+pub struct RecordingInfo {
+    pub id: Uuid,
+    pub room_id: Uuid,
+    pub filename: String,
+    pub size_bytes: u64,
+    pub duration_seconds: u32,
+    pub status: RecordingStatus,
+    pub created_at: DateTime<Utc>,
+    pub download_url: Option<String>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+// ============================================
+// In-Memory Store (Replace with PostgreSQL/MongoDB in production)
+// ============================================
+
+use parking_lot::RwLock;
+use std::collections::HashMap;
+
+#[derive(Clone)]
+pub struct RecordingStore {
+    recordings: Arc<RwLock<HashMap<Uuid, Recording>>>,
+}
+
+impl RecordingStore {
+    pub fn new() -> Self {
+        Self {
+            recordings: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn save(&self, recording: Recording) {
+        let mut recordings = self.recordings.write();
+        recordings.insert(recording.id, recording);
+    }
+
+    pub fn get(&self, id: Uuid) -> Option<Recording> {
+        let recordings = self.recordings.read();
+        recordings.get(&id).cloned()
+    }
+
+    pub fn get_by_room(&self, room_id: Uuid) -> Vec<Recording> {
+        let recordings = self.recordings.read();
+        recordings.values()
+            .filter(|r| r.room_id == room_id)
+            .cloned()
+            .collect()
+    }
+
+    pub fn update_status(&self, id: Uuid, status: RecordingStatus) -> bool {
+        let mut recordings = self.recordings.write();
+        if let Some(recording) = recordings.get_mut(&id) {
+            recording.status = status;
+            if status == RecordingStatus::Completed {
+                recording.completed_at = Some(Utc::now());
+            }
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for RecordingStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================
+// GraphQL Schema
+// ============================================
+
+pub struct QueryRoot;
+
+#[Object]
+impl QueryRoot {
+    async fn recording(&self, id: Uuid, ctx: &async_graphql::Context<'_>) -> Option<RecordingInfo> {
+        let store = ctx.data::<RecordingStore>().ok()?;
+        let storage = ctx.data::<StorageClient>().ok()?;
+        
+        let recording = store.get(id)?;
+        
+        let download_url = if recording.status == RecordingStatus::Completed {
+            storage.get_presigned_url(&recording.storage_key, 3600).await.ok()
+        } else {
+            None
+        };
+        
+        Some(RecordingInfo {
+            id: recording.id,
+            room_id: recording.room_id,
+            filename: recording.filename,
+            size_bytes: recording.size_bytes,
+            duration_seconds: recording.duration_seconds,
+            status: recording.status,
+            created_at: recording.created_at,
+            download_url,
+            expires_at: None,
+        })
+    }
+
+    async fn room_recordings(&self, room_id: Uuid, ctx: &async_graphql::Context<'_>) -> Vec<RecordingInfo> {
+        let store = ctx.data::<RecordingStore>().ok().cloned().unwrap_or_default();
+        let storage = ctx.data::<StorageClient>().ok().cloned().unwrap_or_default();
+        
+        store.get_by_room(room_id)
+            .into_iter()
+            .map(|r| {
+                let download_url = if r.status == RecordingStatus::Completed {
+                    futures::executor::block_on(storage.get_presigned_url(&r.storage_key, 3600)).ok()
+                } else {
+                    None
+                };
+                
+                RecordingInfo {
+                    id: r.id,
+                    room_id: r.room_id,
+                    filename: r.filename,
+                    size_bytes: r.size_bytes,
+                    duration_seconds: r.duration_seconds,
+                    status: r.status,
+                    created_at: r.created_at,
+                    download_url,
+                    expires_at: None,
+                }
+            })
+            .collect()
+    }
+}
+
+pub struct MutationRoot;
+
+#[MutationRoot]
+impl MutationRoot {
+    async fn create_recording(&self, ctx: &async_graphql::Context<'_>, input: CreateRecordingInput) -> RecordingInfo {
+        let store = ctx.data::<RecordingStore>().cloned().unwrap_or_default();
+        
+        let id = Uuid::new_v4();
+        let storage_key = format!("recordings/{}/{}/{}/{}", input.tenant_id, input.room_id, id, input.filename);
+        
+        let recording = Recording {
+            id,
+            room_id: input.room_id,
+            tenant_id: input.tenant_id,
+            user_id: input.user_id,
+            filename: input.filename,
+            storage_key,
+            content_type: input.content_type,
+            size_bytes: 0,
+            duration_seconds: 0,
+            status: RecordingStatus::Pending,
+            created_at: Utc::now(),
+            completed_at: None,
+        };
+        
+        store.save(recording.clone());
+        
+        RecordingInfo {
+            id: recording.id,
+            room_id: recording.room_id,
+            filename: recording.filename,
+            size_bytes: 0,
+            duration_seconds: 0,
+            status: recording.status,
+            created_at: recording.created_at,
+            download_url: None,
+            expires_at: None,
+        }
+    }
+
+    async fn update_recording(&self, ctx: &async_graphql::Context<'_>, id: Uuid, size_bytes: u64, duration_seconds: u32) -> bool {
+        let store = ctx.data::<RecordingStore>().ok().cloned().unwrap_or_default();
+        
+        let mut recordings = store.recordings.write();
+        if let Some(recording) = recordings.get_mut(&id) {
+            recording.size_bytes = size_bytes;
+            recording.duration_seconds = duration_seconds;
+            recording.status = RecordingStatus::Completed;
+            recording.completed_at = Some(Utc::now());
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(InputObject)]
+pub struct CreateRecordingInput {
+    pub room_id: Uuid,
+    pub tenant_id: Uuid,
+    pub user_id: Uuid,
+    pub filename: String,
+    pub content_type: String,
+}
+
+pub type RecordingSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+
+// ============================================
+// HTTP Handlers
+// ============================================
+
+#[derive(Clone)]
+pub struct AppState {
+    pub storage: StorageClient,
+    pub store: RecordingStore,
+}
+
+async fn graphql_handler(schema: GraphQL<RecordingSchema>) -> impl IntoResponse {
+    schema
+}
+
+async fn upload_handler(
+    State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> impl IntoResponse {
-    let mut metadata: Option<UploadMetadata> = None;
-    let mut file_data: Option<Vec<u8>> = None;
-    let mut filename = String::new();
+    let mut recording_id: Option<Uuid> = None;
+    let mut filename: Option<String> = None;
+    let mut room_id: Option<Uuid> = None;
+    let mut tenant_id: Option<Uuid> = None;
+    let mut data: Vec<u8> = Vec::new();
 
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
         let name = field.name().unwrap_or("").to_string();
+        
         match name.as_str() {
-            "metadata" => {
-                let text = field.text().await.unwrap_or_default();
-                metadata = serde_json::from_str(&text).ok();
+            "recording_id" => {
+                if let Ok(text) = field.text().await {
+                    recording_id = Uuid::parse_str(&text).ok();
+                }
+            }
+            "filename" => {
+                if let Ok(text) = field.text().await {
+                    filename = Some(text);
+                }
+            }
+            "room_id" => {
+                if let Ok(text) = field.text().await {
+                    room_id = Uuid::parse_str(&text).ok();
+                }
+            }
+            "tenant_id" => {
+                if let Ok(text) = field.text().await {
+                    tenant_id = Uuid::parse_str(&text).ok();
+                }
             }
             "file" => {
-                filename = field.file_name().unwrap_or("recording.webm").to_string();
                 let bytes = field.bytes().await.unwrap_or_default();
-                file_data = Some(bytes.to_vec());
+                data.extend_from_slice(&bytes);
             }
             _ => {}
         }
     }
 
-    let meta = match metadata {
-        Some(m) => m,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "metadata required"})),
-            )
-        }
-    };
+    if data.is_empty() {
+        return axum::Json(serde_json::json!({
+            "success": false,
+            "error": "No file data received"
+        }));
+    }
 
-    let data = match file_data {
-        Some(d) => d,
-        None => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": "file required"})),
-            )
-        }
-    };
+    let rec_id = recording_id.unwrap_or_else(Uuid::new_v4);
+    let fname = filename.unwrap_or_else(|| format!("{}.webm", rec_id));
+    let r_id = room_id.unwrap_or_else(Uuid::nil);
+    let t_id = tenant_id.unwrap_or_else(Uuid::nil);
 
-    let recording_id = Uuid::now_v7().to_string();
-    let s3_key = format!(
-        "{}/{}/{}-{}",
-        meta.tenant_id, meta.session_id, recording_id, filename
-    );
-
-    // Upload to S3
-    use aws_sdk_s3::types::ByteStream;
-    let body = ByteStream::from(data.clone());
-
-    match state
-        .s3_client
-        .put_object()
-        .bucket(&state.bucket)
-        .key(&s3_key)
-        .body(body)
-        .content_type("video/webm")
-        .send()
-        .await
-    {
+    let storage_key = format!("recordings/{}/{}/{}/{}", t_id, r_id, rec_id, fname);
+    
+    // Upload to S3/MinIO
+    match state.storage.upload_file(&storage_key, data.clone(), "video/webm").await {
         Ok(_) => {
-            let recording = Recording {
-                recording_id: recording_id.clone(),
-                session_id: meta.session_id.clone(),
-                tenant_id: meta.tenant_id.clone(),
-                started_at: meta.started_at,
-                ended_at: Some(meta.ended_at),
-                status: "uploaded".into(),
-                size_bytes: data.len() as u64,
-                s3_key: s3_key.clone(),
-                download_url: None,
-            };
-            state.recordings.insert(recording_id.clone(), recording.clone());
-
-            info!("recording uploaded: {} ({} bytes)", recording_id, data.len());
-            (StatusCode::CREATED, Json(recording))
+            info!("Recording {} uploaded successfully", rec_id);
+            
+            // Update recording status
+            state.store.update_status(rec_id, RecordingStatus::Completed);
+            
+            // Get presigned download URL
+            let download_url = state.storage.get_presigned_url(&storage_key, 3600).await.ok();
+            
+            axum::Json(UploadResult {
+                success: true,
+                recording_id: Some(rec_id),
+                error: None,
+                download_url,
+            })
         }
         Err(e) => {
-            error!("S3 upload failed: {}", e);
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": e.to_string()})),
-            )
+            error!("Failed to upload recording: {}", e);
+            axum::Json(UploadResult {
+                success: false,
+                recording_id: Some(rec_id),
+                error: Some(e.to_string()),
+                download_url: None,
+            })
         }
     }
 }
 
-async fn get_recording(
-    State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<String>,
+async fn download_handler(
+    State(state): State<Arc<AppState>>,
+    Path(recording_id): Path<Uuid>,
 ) -> impl IntoResponse {
-    match state.recordings.get(&id) {
-        Some(r) => (StatusCode::OK, Json(r.clone())),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "not found"})),
-        ),
-    }
-}
-
-async fn get_download_url(
-    State(state): State<AppState>,
-    axum::extract::Path(id): axum::extract::Path<String>,
-) -> impl IntoResponse {
-    let recording = match state.recordings.get(&id) {
-        Some(r) => r.clone(),
+    let recording = state.store.get(recording_id);
+    
+    match recording {
+        Some(rec) => {
+            match state.storage.get_presigned_url(&rec.storage_key, 3600).await {
+                Ok(url) => {
+                    axum::Json(serde_json::json!({
+                        "download_url": url,
+                        "expires_in": 3600
+                    }))
+                }
+                Err(e) => {
+                    axum::Json(serde_json::json!({
+                        "error": e.to_string()
+                    }))
+                }
+            }
+        }
         None => {
-            return (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "not found"})),
-            )
+            axum::Json(serde_json::json!({
+                "error": "Recording not found"
+            }))
         }
-    };
-
-    // Generate presigned URL (valid 1 hour)
-    use aws_sdk_s3::presigning::PresigningConfig;
-    let presign_config = PresigningConfig::expires_in(std::time::Duration::from_secs(3600));
-
-    match state
-        .s3_client
-        .get_object()
-        .bucket(&state.bucket)
-        .key(&recording.s3_key)
-        .presigned(presign_config)
-        .await
-    {
-        Ok(presigned) => (
-            StatusCode::OK,
-            Json(serde_json::json!({
-                "url": presigned.uri().to_string(),
-                "expires_in": 3600,
-            })),
-        ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": e.to_string()})),
-        ),
     }
+}
+
+async fn health() -> impl IntoResponse {
+    axum::Json(serde_json::json!({
+        "status": "healthy",
+        "service": "recording-service",
+        "timestamp": Utc::now().to_rfc3339()
+    }))
+}
+
+// ============================================
+// Main Entry Point
+// ============================================
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize logging
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .with_target(false)
+        .init();
+    
+    info!("Starting Recording Service...");
+    
+    // Initialize S3/MinIO client
+    let endpoint = std::env::var("MINIO_ENDPOINT").ok();
+    let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".to_string());
+    let access_key = std::env::var("MINIO_ACCESS_KEY").unwrap_or_else(|_| "minioadmin".to_string());
+    let secret_key = std::env::var("MINIO_SECRET_KEY").unwrap_or_else(|_| "minioadmin".to_string());
+    let bucket = std::env::var("MINIO_BUCKET").unwrap_or_else(|_| "recordings".to_string());
+    
+    let storage = StorageClient::new(endpoint, region, access_key, secret_key, bucket).await?;
+    let store = RecordingStore::new();
+    
+    let state = Arc::new(AppState { storage, store });
+    
+    // Build GraphQL schema
+    let schema = Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+        .data(state.clone())
+        .finish();
+    
+    // Build router
+    let app = Router::new()
+        .route("/graphql", get(graphql_handler).post(graphql_handler))
+        .route("/upload", post(upload_handler))
+        .route("/download/:recording_id", get(download_handler))
+        .route("/health", get(health))
+        .layer(TraceLayer::new_for_http())
+        .layer(DefaultBodyLimit::max(1024 * 1024 * 1024)) // 1GB limit
+        .with_state(state);
+    
+    let addr: SocketAddr = "0.0.0.0:8083".parse()?;
+    info!("Recording Service listening on {}", addr);
+    
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    
+    Ok(())
 }

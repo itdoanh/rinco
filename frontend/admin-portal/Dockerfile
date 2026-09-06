@@ -1,15 +1,33 @@
-FROM oven/bun:1.1 AS builder
+# Admin portal frontend
+FROM oven/bun:1.1 AS base
 WORKDIR /app
-COPY frontend/admin-portal/package.json ./
+
+# Install dependencies
+FROM base AS deps
+COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
-COPY frontend/admin-portal/ ./
+
+# Build
+FROM base AS builder
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
 RUN bun run build
 
-FROM node:20-alpine
+# Production
+FROM oven/bun:1.1-slim AS runner
 WORKDIR /app
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-EXPOSE 3002
-ENV PORT 3002
-ENV HOSTNAME 0.0.0.0
-CMD ["node", "server.js"]
+
+ENV NODE_ENV=production
+ENV PORT=3001
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3001
+
+CMD ["bun", "run", "server.js"]

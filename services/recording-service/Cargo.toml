@@ -1,6 +1,6 @@
 [package]
 name = "recording-service"
-version = "1.0.0"
+version = "0.1.0"
 edition = "2021"
 
 [[bin]]
@@ -9,22 +9,22 @@ path = "src/main.rs"
 
 [dependencies]
 tokio = { version = "1.40", features = ["full"] }
-axum = { version = "0.7", features = ["ws", "macros"] }
-tower = "0.5"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1.0"
-prometheus = "0.13"
-aws-sdk-s3 = "1.55"
-aws-config = { version = "1.5", features = ["behavior-version-latest"] }
-minio = "0.3"
-dashmap = "6.1"
-hyper = "1.4"
-
-[profile.release]
-opt-level = 3
-lto = "thin"
+thiserror = "2.0"
+aws-config = "1.5"
+aws-sdk-s3 = "1.5"
+aws-sdk-s3output = "1.5"
+aws-smithy-http = "0.60"
+hyper = { version = "1.4", features = ["client", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+tower = "0.4"
+futures = "0.3"

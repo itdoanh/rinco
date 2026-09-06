@@ -1,253 +1,243 @@
-'use client';
-
-import { useEffect, useState } from 'react';
 import LeadForm from '@/components/LeadForm';
 
-declare global {
-  interface Window {
-    fbq?: (...args: any[]) => void;
-    gtag?: (...args: any[]) => void;
-  }
-}
-
 export default function HomePage() {
-  const [scrollY, setScrollY] = useState(0);
-  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
-
-  useEffect(() => {
-    // Scroll listener for parallax
-    const handleScroll = () => setScrollY(window.scrollY);
-    window.addEventListener('scroll', handleScroll);
-
-    // Countdown timer
-    const target = new Date();
-    target.setDate(target.getDate() + 7); // 7 days from now
-    const tick = () => {
-      const now = new Date();
-      const diff = target.getTime() - now.getTime();
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-      setTimeLeft({ days, hours, minutes, seconds });
-    };
-    const interval = setInterval(tick, 1000);
-    tick();
-
-    // Initialize AOS
-    if (typeof window !== 'undefined') {
-      import('aos').then((AOS) => {
-        AOS.init({ duration: 800, once: true });
-      });
-    }
-
-    // Initialize Facebook Pixel (replace with real pixel ID in prod)
-    if (typeof window !== 'undefined' && !window.fbq) {
-      const fbPixelId = process.env.NEXT_PUBLIC_FB_PIXEL_ID;
-      if (fbPixelId) {
-        const script = document.createElement('script');
-        script.innerHTML = `
-          !function(f,b,e,v,n,t,s)
-          {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-          n.callMethod.apply(n,arguments):n.queue.push(arguments)};
-          if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
-          n.queue=[];t=b.createElement(e);t.async=!0;
-          t.src=v;s=b.getElementsByTagName(e)[0];
-          s.parentNode.insertBefore(t,s)}(window, document,'script',
-          'https://connect.facebook.net/en_US/fbevents.js');
-          fbq('init', '${fbPixelId}');
-          fbq('track', 'PageView');
-        `;
-        document.head.appendChild(script);
-      }
-    }
-
-    // Track page view
-    if (typeof window !== 'undefined' && window.fbq) {
-      window.fbq('track', 'PageView');
-    }
-
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      clearInterval(interval);
-    };
-  }, []);
-
   return (
-    <main className="min-h-screen bg-navy-900">
-      {/* HERO SECTION */}
-      <section className="relative min-h-screen flex items-center justify-center overflow-hidden px-4 py-16">
-        {/* Background gradient */}
-        <div
-          className="absolute inset-0 opacity-30"
-          style={{
-            background:
-              'radial-gradient(circle at 50% 50%, rgba(245,166,35,0.15) 0%, transparent 60%)',
-            transform: `translateY(${scrollY * 0.3}px)`,
-          }}
-        />
-
-        <div className="relative max-w-6xl mx-auto grid lg:grid-cols-2 gap-12 items-center">
-          {/* Left content */}
-          <div className="space-y-6" data-aos="fade-right">
-            <div className="inline-flex items-center gap-2 bg-gold/10 border border-gold/30 rounded-full px-4 py-2">
-              <span className="w-2 h-2 bg-gold rounded-full animate-pulse"></span>
-              <span className="text-gold text-sm font-medium">Webinar Miễn Phí - 100 NĐT Đầu Tiên</span>
-            </div>
-
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-display font-extrabold leading-tight">
-              Tối Ưu <span className="text-gold">Dòng Tiền 2026</span> Với Hàng Hóa Phái Sinh
-            </h1>
-
-            <p className="text-lg md:text-xl text-gray-300 leading-relaxed">
-              Giải mã cơ chế <strong className="text-gold">T+0</strong> & sinh lời 2 chiều. Cùng{' '}
-              <strong>Chuyên gia MXV</strong> chia sẻ bí quyết từ những trader hàng đầu Việt Nam.
-            </p>
-
-            <div className="flex flex-wrap gap-4 pt-4">
-              <div className="flex items-center gap-2">
-                <span className="text-gold text-2xl">✓</span>
-                <span>Live Q&A với chuyên gia</span>
+    <div>
+      {/* Hero Section */}
+      <section className="relative overflow-hidden bg-gradient-to-br from-cyan-50 via-white to-blue-50 py-20 lg:py-32">
+        <div className="absolute inset-0 bg-grid-pattern opacity-5"></div>
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div className="animate-fade-in">
+              <div className="inline-block px-4 py-2 bg-cyan-100 text-cyan-700 rounded-full text-sm font-medium mb-6">
+                CRM thông minh cho doanh nghiệp Việt
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-gold text-2xl">✓</span>
-                <span>Tặng 10 Ebook Thực Chiến</span>
+              <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-6 leading-tight">
+                Quản lý khách hàng
+                <span className="block bg-gradient-to-r from-cyan-500 to-blue-600 bg-clip-text text-transparent">
+                  thông minh hơn với AI
+                </span>
+              </h1>
+              <p className="text-lg text-gray-600 mb-8 max-w-lg">
+                RINCO giúp doanh nghiệp tăng 3x tỷ lệ chuyển đổi, giảm 60% thời gian nhập liệu với
+                AI tự động, tích hợp đa kênh và bảo mật zero-trust.
+              </p>
+              <div className="flex flex-wrap gap-4">
+                <a
+                  href="#contact"
+                  className="px-8 py-4 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-semibold rounded-lg shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all duration-200"
+                >
+                  Dùng thử miễn phí
+                </a>
+                <a
+                  href="#features"
+                  className="px-8 py-4 bg-white text-gray-700 font-semibold rounded-lg border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all duration-200"
+                >
+                  Xem tính năng
+                </a>
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-gold text-2xl">✓</span>
-                <span>Hoàn toàn miễn phí</span>
-              </div>
-            </div>
-          </div>
 
-          {/* Right form */}
-          <div data-aos="fade-left">
-            <LeadForm />
-          </div>
-        </div>
-      </section>
-
-      {/* COUNTDOWN SECTION */}
-      <section className="bg-navy-800 py-12 px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          <h3 className="text-2xl md:text-3xl font-bold mb-2">Webinar diễn ra trong</h3>
-          <p className="text-gray-400 mb-8">Đừng bỏ lỡ cơ hội tham gia cùng chuyên gia</p>
-
-          <div className="grid grid-cols-4 gap-3 md:gap-6 max-w-2xl mx-auto">
-            {[
-              { value: timeLeft.days, label: 'Ngày' },
-              { value: timeLeft.hours, label: 'Giờ' },
-              { value: timeLeft.minutes, label: 'Phút' },
-              { value: timeLeft.seconds, label: 'Giây' },
-            ].map((item, i) => (
-              <div key={i} className="bg-navy-700 border border-gold/20 rounded-xl p-4 md:p-6">
-                <div className="text-3xl md:text-5xl font-bold text-gold">
-                  {String(item.value).padStart(2, '0')}
+              <div className="mt-12 grid grid-cols-3 gap-6">
+                <div>
+                  <div className="text-3xl font-bold text-gray-900">1000+</div>
+                  <div className="text-sm text-gray-600">Doanh nghiệp</div>
                 </div>
-                <div className="text-xs md:text-sm text-gray-400 mt-2">{item.label}</div>
+                <div>
+                  <div className="text-3xl font-bold text-gray-900">50M+</div>
+                  <div className="text-sm text-gray-600">Khách hàng</div>
+                </div>
+                <div>
+                  <div className="text-3xl font-bold text-gray-900">99.99%</div>
+                  <div className="text-sm text-gray-600">Uptime</div>
+                </div>
               </div>
-            ))}
+            </div>
+
+            <div className="relative animate-slide-up">
+              <div className="absolute -inset-4 bg-gradient-to-r from-cyan-400 to-blue-500 rounded-3xl blur-3xl opacity-20"></div>
+              <div className="relative bg-white rounded-2xl shadow-2xl p-6 border border-gray-100">
+                <div className="flex items-center space-x-2 mb-4">
+                  <div className="w-3 h-3 rounded-full bg-red-400"></div>
+                  <div className="w-3 h-3 rounded-full bg-yellow-400"></div>
+                  <div className="w-3 h-3 rounded-full bg-green-400"></div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-3 bg-cyan-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-cyan-500 rounded-full flex items-center justify-center text-white font-bold">
+                        A
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">Anh Nguyễn Văn A</div>
+                        <div className="text-sm text-gray-500">vừa đăng ký dùng thử</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-400">2 phút trước</div>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-blue-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center text-white font-bold">
+                        B
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">Chị Trần Thị B</div>
+                        <div className="text-sm text-gray-500">đã tạo hợp đồng mới</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-400">5 phút trước</div>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-green-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center text-white font-bold">
+                        C
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">Anh Lê Văn C</div>
+                        <div className="text-sm text-gray-500">AI đã chấm điểm lead: 92/100</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-400">8 phút trước</div>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-purple-50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-purple-500 rounded-full flex items-center justify-center text-white font-bold">
+                        D
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">Chị Phạm Thị D</div>
+                        <div className="text-sm text-gray-500">đã hoàn thành onboarding</div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-400">12 phút trước</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* FEATURES SECTION */}
-      <section className="py-20 px-4">
-        <div className="max-w-6xl mx-auto">
-          <h2 className="text-3xl md:text-5xl font-display font-bold text-center mb-4">
-            Bạn Sẽ Học Được Gì?
-          </h2>
-          <p className="text-center text-gray-400 mb-16 max-w-2xl mx-auto">
-            4 nội dung chi tiết được chia sẻ bởi các chuyên gia từ MXV và APEX Fintech
-          </p>
+      {/* Features Section */}
+      <section id="features" className="py-20 lg:py-32 bg-white">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center max-w-3xl mx-auto mb-16">
+            <div className="inline-block px-4 py-2 bg-cyan-100 text-cyan-700 rounded-full text-sm font-medium mb-4">
+              Tính năng nổi bật
+            </div>
+            <h2 className="text-3xl lg:text-5xl font-bold text-gray-900 mb-4">
+              Mọi thứ bạn cần để phát triển kinh doanh
+            </h2>
+            <p className="text-lg text-gray-600">
+              Từ quản lý khách hàng, tự động hóa marketing đến phân tích AI - tất cả trong một nền tảng
+            </p>
+          </div>
 
-          <div className="grid md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[
+              {
+                icon: '🤖',
+                title: 'AI Lead Scoring',
+                description: 'Tự động chấm điểm lead bằng machine learning, ưu tiên lead chất lượng cao',
+              },
               {
                 icon: '📊',
-                title: 'Cơ chế T+0 & Sinh lời 2 chiều',
-                desc: 'Hiểu rõ cách thức giao dịch hàng hóa phái sinh với cơ chế thanh toán trong ngày.',
+                title: 'Real-time Analytics',
+                description: 'Dashboard phân tích thời gian thực với dữ liệu từ mọi kênh',
               },
               {
-                icon: '💰',
-                title: 'Quản lý vốn thông minh',
-                desc: 'Chiến lược phân bổ vốn, quản lý rủi ro và tối ưu lợi nhuận bền vững.',
+                icon: '🔄',
+                title: 'Workflow Automation',
+                description: 'Tự động hóa quy trình bán hàng, marketing và chăm sóc khách hàng',
               },
               {
-                icon: '🎯',
-                title: 'Phân tích kỹ thuật chuyên sâu',
-                desc: 'Ứng dụng các chỉ báo kỹ thuật vào thị trường hàng hóa phái sinh Việt Nam.',
+                icon: '💬',
+                title: 'Multi-channel',
+                description: 'Email, SMS, Zalo, Facebook - tất cả trong một hộp thư thống nhất',
               },
               {
-                icon: '📚',
-                title: 'Bộ 10 Ebook Thực Chiến',
-                desc: 'Tài liệu độc quyền tổng hợp kinh nghiệm từ các trader chuyên nghiệp.',
+                icon: '🔒',
+                title: 'Bảo mật Zero-trust',
+                description: 'FIDO2, PASETO, Argon2 PoW - bảo mật cấp doanh nghiệp',
               },
-            ].map((f, i) => (
+              {
+                icon: '⚡',
+                title: 'Hiệu năng cao',
+                description: 'Microservices với Rust/Go, latency < 50ms cho mọi tác vụ',
+              },
+            ].map((feature, idx) => (
               <div
-                key={i}
-                data-aos="fade-up"
-                data-aos-delay={i * 100}
-                className="bg-navy-800 border border-gray-700 hover:border-gold rounded-2xl p-8 transition-all hover:scale-105"
+                key={idx}
+                className="group p-6 bg-white border border-gray-100 rounded-2xl hover:border-cyan-200 hover:shadow-lg transition-all duration-200"
               >
-                <div className="text-5xl mb-4">{f.icon}</div>
-                <h3 className="text-xl font-bold mb-3 text-gold">{f.title}</h3>
-                <p className="text-gray-300 leading-relaxed">{f.desc}</p>
+                <div className="text-4xl mb-4">{feature.icon}</div>
+                <h3 className="text-xl font-semibold text-gray-900 mb-2">{feature.title}</h3>
+                <p className="text-gray-600">{feature.description}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* EXPERT SECTION */}
-      <section className="bg-navy-800 py-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl md:text-5xl font-display font-bold mb-4">
-            Diễn Giả <span className="text-gold">Uy Tín</span>
-          </h2>
-          <p className="text-gray-400 mb-12">Chuyên gia hàng đầu từ MXV & APEX Fintech</p>
+      {/* Contact Section */}
+      <section id="contact" className="py-20 lg:py-32 bg-gray-50">
+        <div className="container mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+            <div>
+              <div className="inline-block px-4 py-2 bg-cyan-100 text-cyan-700 rounded-full text-sm font-medium mb-4">
+                Liên hệ với chúng tôi
+              </div>
+              <h2 className="text-3xl lg:text-5xl font-bold text-gray-900 mb-4">
+                Sẵn sàng bắt đầu?
+              </h2>
+              <p className="text-lg text-gray-600 mb-8">
+                Đăng ký để nhận 14 ngày dùng thử miễn phí. Đội ngũ của chúng tôi sẽ hỗ trợ bạn
+                triển khai và tối ưu cho doanh nghiệp của bạn.
+              </p>
 
-          <div className="grid md:grid-cols-2 gap-8">
-            {[
-              { name: 'Nguyễn Văn A', role: 'Chuyên gia MXV', exp: '15+ năm kinh nghiệm' },
-              { name: 'Trần Thị B', role: 'CEO APEX Fintech', exp: '10+ năm đào tạo' },
-            ].map((p, i) => (
-              <div key={i} data-aos="zoom-in" data-aos-delay={i * 150} className="bg-navy-700 rounded-2xl p-8">
-                <div className="w-24 h-24 bg-gradient-to-br from-gold to-orange rounded-full mx-auto mb-4 flex items-center justify-center text-4xl">
-                  👤
+              <div className="space-y-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-cyan-100 rounded-lg flex items-center justify-center">
+                    <svg className="w-5 h-5 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Email</div>
+                    <div className="font-medium text-gray-900">contact@rinco.vn</div>
+                  </div>
                 </div>
-                <h3 className="text-2xl font-bold mb-1">{p.name}</h3>
-                <p className="text-gold mb-2">{p.role}</p>
-                <p className="text-gray-400 text-sm">{p.exp}</p>
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-cyan-100 rounded-lg flex items-center justify-center">
+                    <svg className="w-5 h-5 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Hotline</div>
+                    <div className="font-medium text-gray-900">1900 6868</div>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 bg-cyan-100 rounded-lg flex items-center justify-center">
+                    <svg className="w-5 h-5 text-cyan-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Địa chỉ</div>
+                    <div className="font-medium text-gray-900">Hà Nội, Việt Nam</div>
+                  </div>
+                </div>
               </div>
-            ))}
+            </div>
+
+            <div>
+              <LeadForm />
+            </div>
           </div>
         </div>
       </section>
-
-      {/* CTA SECTION */}
-      <section className="py-20 px-4">
-        <div className="max-w-3xl mx-auto text-center" data-aos="fade-up">
-          <h2 className="text-3xl md:text-5xl font-display font-bold mb-4">
-            Sẵn sàng bắt đầu hành trình đầu tư?
-          </h2>
-          <p className="text-gray-300 mb-8 text-lg">
-            Đăng ký ngay để giữ vé Webinar Zoom miễn phí + nhận Bộ 10 Ebook Thực Chiến
-          </p>
-          <a
-            href="#lead-form"
-            className="inline-block bg-gradient-to-r from-gold to-orange text-navy-900 font-bold text-xl px-12 py-5 rounded-full hover:scale-105 transition-transform shadow-2xl animate-pulse-glow"
-          >
-            🚀 ĐĂNG KÝ NGAY - MIỄN PHÍ
-          </a>
-        </div>
-      </section>
-
-      {/* FOOTER */}
-      <footer className="bg-navy-900 border-t border-gray-800 py-8 px-4 text-center text-gray-500 text-sm">
-        <p>© 2026 APEX Fintech. All rights reserved.</p>
-        <p className="mt-2">Đầu tư hàng hóa phái sinh có rủi ro. Vui lòng tìm hiểu kỹ trước khi tham gia.</p>
-      </footer>
-    </main>
+    </div>
   );
 }
