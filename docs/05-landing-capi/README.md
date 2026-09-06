@@ -4140,4 +4140,2810 @@ Roadmap 12 tuần (3 tháng) để migration xong `chiase_cu/` + nâng cấp.
 
 ---
 
+## 31. Implementation Roadmap chi tiết (bổ sung §29)
+
+Phần này tái cấu trúc roadmap thành 12 tuần (3 tháng) với owner rõ ràng, acceptance gate cho mỗi tuần, và risk register.
+
+### 31.1. Phase tổng quan
+
+```
+Phase 1 (Tuần 1-4): MVP Core           → FCP < 0.5s, 1 landing template
+Phase 2 (Tuần 5-8): Pixel + CAPI       → EMQ ≥ 7, bot detection 95%
+Phase 3 (Tuần 9-12): Scale + Admin     → 10 tenants, full observability
+```
+
+### 31.2. Tuần 1-2: Setup Next.js + Migrate Base Layout
+
+**Tuần 1:**
+- [ ] **Day 1-2:** Setup monorepo + Next.js 15 + Bun + Tailwind v4
+  - Owner: Frontend Lead
+  - Output: Repo chạy được với `bun dev`
+- [ ] **Day 2-3:** Migrate design tokens (colors, fonts, spacing) từ `chiase_cu/index.html`
+  - `tailwind.config.ts` với theme: navy, gold, orange
+  - Fonts: Inter, Plus Jakarta Sans
+- [ ] **Day 3-4:** Setup `tenants` config loader (dynamic per tenant)
+- [ ] **Day 4-5:** Hero section component (giữ 100% nội dung)
+
+**Tuần 2:**
+- [ ] **Day 1-2:** Trust badges + Diễn giả section
+- [ ] **Day 2-3:** Market context (4 trụ cột) section
+- [ ] **Day 3-4:** Footer + Top bar + Sticky CTA
+- [ ] **Day 4-5:** Migration verification với Playwright snapshot test
+
+**Acceptance:**
+- ✅ Lighthouse Performance ≥ 90 (chưa optimize)
+- ✅ Visual regression 100% match với `chiase_cu/`
+- ✅ Page render < 200ms trên local
+
+### 31.3. Tuần 3-4: Migrate Form Sections + Tracking SDK
+
+**Tuần 3:**
+- [ ] **Day 1-2:** LeadForm component với React Hook Form + Zod
+  - Inline form (Hero) + Modal form + Section form (3 variants)
+- [ ] **Day 2-3:** MultiStepForm component (Step 1: chọn kênh, Step 2: nhập info)
+- [ ] **Day 3-4:** Modal popup component (Radix Dialog)
+- [ ] **Day 4-5:** Form validation errors + success animation
+
+**Tuần 4:**
+- [ ] **Day 1-2:** Tracking SDK (`lib/tracking/rinco-tracker.ts`)
+  - Replace `chiase_cu/assets/js/tracker.js`
+  - PageView, ViewContent, ScrollDepth, TimeOnPage, CTA_Click
+- [ ] **Day 2-3:** Form interaction tracking (form_start, field_focus, submit)
+- [ ] **Day 3-4:** UTM persistence + URL params parsing
+- [ ] **Day 4-5:** Cookie consent banner (GDPR/PDPA compliant)
+
+**Acceptance:**
+- ✅ Form submit < 500ms (client side validation)
+- ✅ Tracking events gửi được cả client + server
+- ✅ UTM persist 30 ngày trong cookie
+- ✅ Cookie consent lưu localStorage + httpOnly cookie
+
+### 31.4. Tuần 5-6: Backend Ingestion API + HMAC
+
+**Tuần 5:**
+- [ ] **Day 1-2:** Setup `landing-ingest` service (Go + Echo + Huma)
+- [ ] **Day 2-3:** PostgreSQL `ingest_logs` table + ScyllaDB `raw_leads` table
+- [ ] **Day 3-4:** NATS producer `lead.created.{tenant_id}`
+- [ ] **Day 4-5:** Basic validation (Zod schema)
+
+**Tuần 6:**
+- [ ] **Day 1-2:** HMAC middleware verify signature
+- [ ] **Day 2-3:** Idempotency key check (Valkey)
+- [ ] **Day 3-4:** Rate limiting (60 req/min per IP)
+- [ ] **Day 4-5:** NATS JetStream consumer (analytics, AI scoring)
+
+**Acceptance:**
+- ✅ Submit lead → ScyllaDB write < 50ms (p95)
+- ✅ HMAC verify 100% (no false negative)
+- ✅ Idempotent: submit 2x → 1 record
+- ✅ Rate limit: spam 100x → 429 sau lần thứ 60
+
+### 31.5. Tuần 7-8: CAPI Integration + EMQ Optimization
+
+**Tuần 7:**
+- [ ] **Day 1-2:** Setup `meta-capi` service (Go + gobreaker)
+- [ ] **Day 2-3:** SHA-256 normalization (email, phone, name)
+- [ ] **Day 3-4:** UserData payload builder
+- [ ] **Day 4-5:** Meta Graph API client với retry
+
+**Tuần 8:**
+- [ ] **Day 1-2:** Circuit breaker (open after 5 failures, half-open after 30s)
+- [ ] **Day 2-3:** DLQ (dead-letter queue) cho events fail cuối cùng
+- [ ] **Day 3-4:** EMQ tracking + dashboard (ClickHouse aggregation)
+- [ ] **Day 4-5:** Test Event Code integration
+
+**Acceptance:**
+- ✅ CAPI success rate ≥ 99%
+- ✅ EMQ score ≥ 7 (verified via Meta Test Events)
+- ✅ Circuit breaker mở khi Meta fail → không block ingest
+- ✅ DLQ capture 100% events fail
+
+### 31.6. Tuần 9-10: Bot Protection (Wasm + Argon2)
+
+**Tuần 9:**
+- [ ] **Day 1-2:** Setup Wasm module (Rust → wasm32-wasi)
+  - Verify browser không phải Headless
+  - Mouse movement analysis
+- [ ] **Day 2-3:** Wasm loader trong Next.js (`/public/attestation.wasm`)
+- [ ] **Day 3-4:** Server-side attestation verify (Go)
+- [ ] **Day 4-5:** Token issue (X-RINCO-Attestation JWT)
+
+**Tuần 10:**
+- [ ] **Day 1-2:** Argon2 PoW challenge generator (Go)
+- [ ] **Day 2-3:** Argon2 PoW solver (TypeScript + wasm-bindgen)
+- [ ] **Day 3-4:** Adaptive challenge (issue PoW khi traffic spike)
+- [ ] **Day 4-5:** Bot scoring dashboard (ClickHouse)
+
+**Acceptance:**
+- ✅ Bot detection rate ≥ 99% (test với Selenium, Puppeteer)
+- ✅ Wasm attestation token TTL 1h
+- ✅ Argon2 PoW compute < 20ms (real browser)
+- ✅ False positive rate < 0.5%
+
+### 31.7. Tuần 11-12: Admin Panel + Analytics
+
+**Tuần 11:**
+- [ ] **Day 1-2:** Tenant Landing Pages list (Table với filters)
+- [ ] **Day 2-3:** Page editor (CMS cho content blocks)
+- [ ] **Day 3-4:** Pixel ID management UI
+- [ ] **Day 4-5:** CAPI token management UI
+
+**Tuần 12:**
+- [ ] **Day 1-2:** Analytics dashboard (Chart: traffic, conversion, EMQ)
+- [ ] **Day 2-3:** Funnel visualization (page_view → form_submit → qualified)
+- [ ] **Day 3-4:** A/B test creator + variant editor
+- [ ] **Day 4-5:** Webhook config + test event helper
+
+**Acceptance:**
+- ✅ Admin load < 200ms
+- ✅ Analytics query < 1s (ClickHouse)
+- ✅ A/B test traffic split exact 50/50
+- ✅ Webhook delivery 100% với retry
+
+### 31.8. Risk Register
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| Pixel ID bị leak | Medium | High | Tenant-scoped + RLS + audit |
+| Meta API rate-limit | Medium | Medium | Queue + retry + circuit breaker |
+| Wasm module quá nặng (>100KB) | Medium | Medium | Code-splitting, lazy-load |
+| Argon2 PoW làm user chậm trên mobile | Low | High | Adaptive (chỉ issue khi traffic spike) |
+| GDPR/PDPA non-compliance | Medium | Critical | Cookie consent default "essential", audit |
+| Asset migration lost (chiase_cu → MinIO) | Medium | High | SHA-256 verify + backup |
+| Form submit spam vượt PoW | Low | Medium | hCaptcha fallback |
+| EMQ score < 6 (Meta giảm match rate) | Medium | High | Audit user_data fields per event |
+| CAPI Poisoning (fake event) | Low | Critical | HMAC verify + IP allowlist |
+| Lighthouse regression sau optimize | Medium | Medium | CI Lighthouse check |
+
+### 31.9. Team Assignments
+
+- **Frontend Lead (1):** Next.js setup, components, animations
+- **Frontend Dev (1):** Forms, tracking SDK, modal
+- **Backend Lead (1):** landing-ingest, HMAC, NATS
+- **Backend Dev (1):** CAPI worker, ScyllaDB
+- **Bot/Security (1):** Wasm module, Argon2 PoW
+- **DevOps (0.5):** K8s, monitoring, observability
+- **QA (0.5):** E2E tests, load tests, Lighthouse
+
+Total: 5 FTE × 12 tuần = 60 person-weeks.
+
+---
+
+## 32. Code Examples bổ sung (chi tiết production-ready)
+
+### 32.1. Next.js page.tsx hoàn chỉnh cho landing
+
+```typescript
+// apps/landing-renderer/app/[tenant]/[slug]/page.tsx
+import { notFound } from 'next/navigation';
+import { Metadata } from 'next';
+import Script from 'next/script';
+import { HeroSection } from '@/components/hero/HeroSection';
+import { LogoCloud } from '@/components/logo-cloud/LogoCloud';
+import { MarketContext } from '@/components/market-context/MarketContext';
+import { SpeakerSection } from '@/components/speaker/SpeakerSection';
+import { TrustSection } from '@/components/trust/TrustSection';
+import { RegistrationForm } from '@/components/registration-form/RegistrationForm';
+import { RiskWarning } from '@/components/risk/RiskWarning';
+import { Footer } from '@/components/footer/Footer';
+import { StickyCTA } from '@/components/sticky-cta/StickyCTA';
+import { CookieConsent } from '@/components/cookie/CookieConsent';
+import { getLandingPageBySlug, getTenantConfig } from '@/lib/api/landing';
+import { generateSchemaOrg } from '@/lib/seo/schema-org';
+
+interface PageProps {
+  params: { tenant: string; slug: string };
+  searchParams: { [key: string]: string | string[] | undefined };
+}
+
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const page = await getLandingPageBySlug(params.tenant, params.slug);
+  const tenant = await getTenantConfig(params.tenant);
+
+  return {
+    title: page.seo.title || `${page.content.hero.headline.line1} | ${tenant.name}`,
+    description: page.seo.description || page.content.hero.subheadline,
+    keywords: page.seo.keywords,
+    alternates: {
+      canonical: page.seo.canonical || `https://${tenant.domain}/${params.slug}`,
+    },
+    openGraph: {
+      title: page.content.hero.headline.line1,
+      description: page.content.hero.subheadline,
+      url: `https://${tenant.domain}/${params.slug}`,
+      siteName: tenant.name,
+      images: [
+        {
+          url: page.content.hero.heroImage,
+          width: 1200,
+          height: 630,
+          alt: page.content.hero.headline.line1,
+        },
+      ],
+      locale: 'vi_VN',
+      type: 'website',
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: page.content.hero.headline.line1,
+      description: page.content.hero.subheadline,
+      images: [page.content.hero.heroImage],
+    },
+    robots: {
+      index: true,
+      follow: true,
+      googleBot: {
+        index: true,
+        follow: true,
+        'max-snippet': -1,
+        'max-image-preview': 'large',
+        'max-video-preview': -1,
+      },
+    },
+  };
+}
+
+export default async function LandingPage({ params, searchParams }: PageProps) {
+  const page = await getLandingPageBySlug(params.tenant, params.slug);
+  const tenant = await getTenantConfig(params.tenant);
+
+  if (!page || !tenant) {
+    notFound();
+  }
+
+  // Extract UTM from URL
+  const utm = {
+    source: searchParams.utm_source as string,
+    medium: searchParams.utm_medium as string,
+    campaign: searchParams.utm_campaign as string,
+    content: searchParams.utm_content as string,
+    term: searchParams.utm_term as string,
+    fbclid: searchParams.fbclid as string,
+    gclid: searchParams.gclid as string,
+    ttclid: searchParams.ttclid as string,
+  };
+
+  const schemaOrg = generateSchemaOrg(page, tenant);
+
+  return (
+    <>
+      {/* Schema.org structured data */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schemaOrg) }}
+      />
+
+      {/* Meta Pixel (client-side) */}
+      {tenant.pixel_id && (
+        <Script id="fb-pixel" strategy="afterInteractive">
+          {`
+            !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+            n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
+            n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);
+            t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];
+            s.parentNode.insertBefore(t,s)}(window, document,'script',
+            'https://connect.facebook.net/en_US/fbevents.js');
+            fbq('init', '${tenant.pixel_id}');
+            fbq('track', 'PageView');
+          `}
+        </Script>
+      )}
+
+      {/* Critical CSS inline */}
+      <style dangerouslySetInnerHTML={{ __html: CRITICAL_CSS }} />
+
+      <main className="bg-white text-gray-900 antialiased">
+        {/* Top Bar */}
+        <TopBar
+          hotline={tenant.hotline}
+          companyName={tenant.name}
+          ctaTrigger="topbar"
+        />
+
+        {/* Hero */}
+        <HeroSection
+          tenant={tenant}
+          content={page.content.hero}
+          formConfig={page.form_config}
+          utm={utm}
+        />
+
+        {/* Logo Cloud */}
+        {page.content.logoCloud && (
+          <LogoCloud logos={page.content.logoCloud.logos} title={page.content.logoCloud.title} />
+        )}
+
+        {/* Market Context */}
+        {page.content.marketContext && (
+          <MarketContext content={page.content.marketContext} />
+        )}
+
+        {/* Speaker */}
+        {page.content.speaker && (
+          <SpeakerSection speaker={page.content.speaker} />
+        )}
+
+        {/* Trust */}
+        {page.content.trust && (
+          <TrustSection content={page.content.trust} />
+        )}
+
+        {/* Registration Form */}
+        {page.content.registrationForm && (
+          <RegistrationForm config={page.content.registrationForm} tenant={tenant} utm={utm} />
+        )}
+
+        {/* Risk Warning */}
+        {page.content.riskWarning && (
+          <RiskWarning content={page.content.riskWarning} />
+        )}
+
+        {/* Footer */}
+        <Footer tenant={tenant} />
+
+        {/* Sticky CTA */}
+        <StickyCTA ctaText={page.content.hero.cta_text} formConfig={page.form_config} />
+
+        {/* Cookie Consent */}
+        <CookieConsent tenantConfig={tenant} />
+      </main>
+    </>
+  );
+}
+
+// Critical CSS extracted by PurgeCSS
+const CRITICAL_CSS = `
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .btn-cta { background: linear-gradient(to right, #FF6B00, #F5A623); }
+  .gradient-text { background: linear-gradient(to right, #FF6B00, #F5A623); -webkit-background-clip: text; }
+  /* ... */
+`;
+```
+
+### 32.2. React Hook Form + Zod Schema chi tiết
+
+```typescript
+// apps/landing-renderer/components/form/LeadFormSchema.ts
+import { z } from 'zod';
+
+// Phone regex VN
+const phoneRegex = /^(\+84|0)\d{9,10}$/;
+
+// Base schema (dùng cho inline form)
+export const inlineLeadSchema = z.object({
+  name: z.string()
+    .trim()
+    .min(1, 'Vui lòng nhập họ tên')
+    .max(255, 'Họ tên không quá 255 ký tự'),
+
+  phone: z.string()
+    .trim()
+    .regex(phoneRegex, 'Số điện thoại không hợp lệ (VD: 0987654321 hoặc +84987654321)'),
+
+  consent: z.literal(true, {
+    errorMap: () => ({ message: 'Vui lòng đồng ý điều khoản' }),
+  }),
+
+  // Honeypot - phải empty
+  website: z.string().max(0).optional(),
+
+  // Hidden fields từ URL params
+  utm_source: z.string().optional(),
+  utm_medium: z.string().optional(),
+  utm_campaign: z.string().optional(),
+  utm_content: z.string().optional(),
+  utm_term: z.string().optional(),
+  fbclid: z.string().optional(),
+  gclid: z.string().optional(),
+  ttclid: z.string().optional(),
+  fbp: z.string().optional(),
+  fbc: z.string().optional(),
+
+  // Tenant context
+  tenant_id: z.string(),
+  campaign_id: z.string().optional(),
+
+  // Event ID (UUIDv7) - matching client + server
+  event_id: z.string().uuid(),
+
+  // Bot scores
+  bot_score: z.number().min(0).max(1).optional(),
+  attestation_token: z.string().optional(),
+
+  // Pow (if needed)
+  pow_nonce: z.string().optional(),
+  pow_hash: z.string().optional(),
+  pow_ts: z.number().optional(),
+});
+
+export type InlineLeadFormData = z.infer<typeof inlineLeadSchema>;
+
+// Multi-step form schema
+export const multistepLeadSchema = z.object({
+  // Step 1
+  channel: z.enum(['zalo', 'phone'], {
+    errorMap: () => ({ message: 'Vui lòng chọn kênh nhận vé' }),
+  }),
+
+  // Step 2
+  name: z.string().trim().min(1).max(255),
+  phone: z.string().trim().regex(phoneRegex),
+  consent: z.literal(true),
+
+  // Hidden + context
+  website: z.string().max(0).optional(),
+  utm_source: z.string().optional(),
+  utm_medium: z.string().optional(),
+  utm_campaign: z.string().optional(),
+  fbclid: z.string().optional(),
+  fbc: z.string().optional(),
+  fbp: z.string().optional(),
+  event_id: z.string().uuid(),
+  tenant_id: z.string(),
+  campaign_id: z.string().optional(),
+  bot_score: z.number().min(0).max(1).optional(),
+  attestation_token: z.string().optional(),
+});
+
+export type MultistepLeadFormData = z.infer<typeof multistepLeadSchema>;
+
+// Form data preparation function
+export function prepareFormData(
+  data: InlineLeadFormData | MultistepLeadFormData,
+  context: { userAgent: string; referrer: string; currentUrl: string }
+) {
+  return {
+    ...data,
+    user_agent: context.userAgent,
+    referrer: context.referrer,
+    current_url: context.currentUrl,
+    timestamp: Date.now(),
+  };
+}
+```
+
+### 32.3. Tracking SDK (TypeScript)
+
+```typescript
+// apps/landing-renderer/lib/tracking/rinco-tracker.ts
+import { v7 as uuidv7 } from 'uuid';
+
+export type TrackingEvent =
+  | 'page_view'
+  | 'view_content'
+  | 'scroll_depth'
+  | 'time_on_page'
+  | 'cta_click'
+  | 'form_start'
+  | 'form_field_focus'
+  | 'form_field_complete'
+  | 'form_submit'
+  | 'form_submit_success'
+  | 'form_submit_error'
+  | 'lead_qualified'
+  | 'video_play'
+  | 'video_pause'
+  | 'video_complete'
+  | 'outbound_click'
+  | 'chat_open'
+  | 'phone_click'
+  | 'email_click'
+  | 'social_click'
+  | 'share'
+  | 'exit_intent';
+
+export interface TrackingPayload {
+  // Identifiers
+  event_id: string;
+  session_id: string;
+  anonymous_id: string;
+  user_id?: string;
+
+  // Source
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  utm_content?: string;
+  utm_term?: string;
+  fbclid?: string;
+  fbp?: string;
+  fbc?: string;
+  gclid?: string;
+  ttclid?: string;
+
+  // Device
+  ip_address?: string; // Set server-side
+  user_agent: string;
+  screen_resolution: string;
+  viewport_size: string;
+  language: string;
+  timezone: string;
+
+  // Page
+  referrer: string;
+  landing_page: string;
+  current_page: string;
+  page_title: string;
+
+  // Engagement
+  scroll_depth?: number;
+  time_on_page?: number;
+  click_count?: number;
+
+  // Custom
+  event_name: string;
+  properties?: Record<string, any>;
+
+  // Meta
+  timestamp: number;
+  tenant_id: string;
+  campaign_id?: string;
+}
+
+class RincoTracker {
+  private sessionId: string;
+  private anonymousId: string;
+  private userId?: string;
+  private endpoint: string;
+  private queue: TrackingPayload[] = [];
+  private isFlushing = false;
+  private scrollDepthSent = new Set<number>();
+  private timeOnPageSent = new Set<number>();
+
+  constructor(config: { tenantId: string; endpoint: string; pixelId?: string }) {
+    this.sessionId = this.getOrCreateCookie('__rinco_session', uuidv7(), 30); // 30 days
+    this.anonymousId = this.getOrCreateCookie('__rinco_anon', uuidv7(), 365); // 1 year
+    this.endpoint = config.endpoint;
+    this.initAutoTracking();
+  }
+
+  private getOrCreateCookie(name: string, defaultValue: string, days: number): string {
+    const existing = this.readCookie(name);
+    if (existing) return existing;
+
+    const value = defaultValue;
+    const expires = new Date(Date.now() + days * 86400000).toUTCString();
+    document.cookie = `${name}=${value}; expires=${expires}; path=/; SameSite=Lax`;
+    return value;
+  }
+
+  private readCookie(name: string): string | null {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+    return match ? match[1] : null;
+  }
+
+  setUserId(userId: string) {
+    this.userId = userId;
+  }
+
+  track(eventName: TrackingEvent, properties: Record<string, any> = {}) {
+    const payload: TrackingPayload = {
+      event_id: uuidv7(),
+      session_id: this.sessionId,
+      anonymous_id: this.anonymousId,
+      user_id: this.userId,
+
+      utm_source: this.getQueryParam('utm_source'),
+      utm_medium: this.getQueryParam('utm_medium'),
+      utm_campaign: this.getQueryParam('utm_campaign'),
+      utm_content: this.getQueryParam('utm_content'),
+      utm_term: this.getQueryParam('utm_term'),
+      fbclid: this.getQueryParam('fbclid'),
+      fbp: this.readCookie('_fbp') || '',
+      fbc: this.readCookie('_fbc') || this.generateFbc(),
+      gclid: this.getQueryParam('gclid'),
+      ttclid: this.getQueryParam('ttclid'),
+
+      user_agent: navigator.userAgent,
+      screen_resolution: `${screen.width}x${screen.height}`,
+      viewport_size: `${window.innerWidth}x${window.innerHeight}`,
+      language: navigator.language,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+
+      referrer: document.referrer,
+      landing_page: document.referrer || window.location.href,
+      current_page: window.location.href,
+      page_title: document.title,
+
+      event_name: eventName,
+      properties,
+
+      timestamp: Date.now(),
+      tenant_id: '', // Set by useTracker hook
+    };
+
+    this.queue.push(payload);
+    this.scheduleFlush();
+  }
+
+  private getQueryParam(name: string): string | undefined {
+    const url = new URL(window.location.href);
+    return url.searchParams.get(name) || undefined;
+  }
+
+  private generateFbc(): string | undefined {
+    const fbclid = this.getQueryParam('fbclid');
+    if (!fbclid) return undefined;
+    return `fb.1.${Date.now()}.${fbclid}`;
+  }
+
+  private scheduleFlush() {
+    if (this.isFlushing) return;
+    if (this.queue.length >= 10) {
+      this.flush();
+    } else {
+      setTimeout(() => this.flush(), 5000);
+    }
+  }
+
+  async flush() {
+    if (this.isFlushing || this.queue.length === 0) return;
+    this.isFlushing = true;
+
+    const events = [...this.queue];
+    this.queue = [];
+
+    try {
+      await fetch(`${this.endpoint}/api/ingest/v1/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ events }),
+        keepalive: true,
+      });
+    } catch (err) {
+      // Re-queue if fail
+      this.queue.unshift(...events);
+      // Limit queue size
+      if (this.queue.length > 100) {
+        this.queue = this.queue.slice(-100);
+      }
+    } finally {
+      this.isFlushing = false;
+    }
+  }
+
+  private initAutoTracking() {
+    // Scroll depth tracking
+    let maxScroll = 0;
+    window.addEventListener('scroll', () => {
+      const scrollPercent = Math.floor(
+        (window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100
+      );
+      maxScroll = Math.max(maxScroll, scrollPercent);
+
+      // Send at 25%, 50%, 75%, 100%
+      [25, 50, 75, 100].forEach(milestone => {
+        if (maxScroll >= milestone && !this.scrollDepthSent.has(milestone)) {
+          this.scrollDepthSent.add(milestone);
+          this.track('scroll_depth', { depth: milestone });
+        }
+      });
+    }, { passive: true });
+
+    // Time on page tracking
+    const pageLoadTime = Date.now();
+    [30, 60, 120, 300].forEach(seconds => {
+      setTimeout(() => {
+        if (!this.timeOnPageSent.has(seconds)) {
+          this.timeOnPageSent.add(seconds);
+          this.track('time_on_page', { seconds, total: Math.floor((Date.now() - pageLoadTime) / 1000) });
+        }
+      }, seconds * 1000);
+    });
+
+    // Exit intent
+    document.addEventListener('mouseleave', (e) => {
+      if (e.clientY < 0) {
+        this.track('exit_intent');
+      }
+    });
+
+    // Flush on page unload
+    window.addEventListener('beforeunload', () => {
+      navigator.sendBeacon(`${this.endpoint}/api/ingest/v1/events`, JSON.stringify({
+        events: this.queue,
+      }));
+      this.queue = [];
+    });
+
+    // Auto-click tracking for outbound links
+    document.addEventListener('click', (e) => {
+      const link = (e.target as HTMLElement).closest('a');
+      if (!link) return;
+
+      const href = link.getAttribute('href');
+      if (!href) return;
+
+      // Outbound
+      if (href.startsWith('http') && !href.includes(window.location.hostname)) {
+        this.track('outbound_click', { url: href, text: link.textContent });
+      }
+      // Phone
+      if (href.startsWith('tel:')) {
+        this.track('phone_click', { phone: href.replace('tel:', '') });
+      }
+      // Email
+      if (href.startsWith('mailto:')) {
+        this.track('email_click', { email: href.replace('mailto:', '') });
+      }
+    });
+  }
+}
+
+let globalTracker: RincoTracker | null = null;
+
+export function getTracker(config?: { tenantId: string; endpoint: string; pixelId?: string }): RincoTracker {
+  if (!globalTracker && config) {
+    globalTracker = new RincoTracker(config);
+  }
+  return globalTracker!;
+}
+
+export { RincoTracker };
+```
+
+### 32.4. Go Ingestion API Handler chi tiết
+
+```go
+// services/landing-ingest/internal/api/handler.go
+package api
+
+import (
+    "context"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "net/http"
+    "time"
+
+    "github.com/danielgtaylor/huma/v2"
+    "github.com/google/uuid"
+    "github.com/nats-io/nats.go"
+    "github.com/sony/gobreaker"
+    "github.com/valkey/go-valkey"
+
+    "rinco/landing-ingest/internal/domain"
+    "rinco/landing-ingest/internal/repository"
+    "rinco/landing-ingest/internal/service"
+    "rinco/landing-ingest/internal/validation"
+)
+
+type IngestHandler struct {
+    repo          *repository.LeadRepository
+    valkey        *valkey.Client
+    publisher     *nats.Conn
+    validator     *validation.Validator
+    cb            *gobreaker.CircuitBreaker
+    rateLimiter   *service.RateLimiter
+    botDetector   *service.BotDetector
+    hmacVerifier  *service.HMACVerifier
+    powVerifier   *service.PoWVerifier
+}
+
+func NewIngestHandler(
+    repo *repository.LeadRepository,
+    valkey *valkey.Client,
+    publisher *nats.Conn,
+) *IngestHandler {
+    return &IngestHandler{
+        repo:         repo,
+        valkey:       valkey,
+        publisher:    publisher,
+        validator:    validation.New(),
+        cb:           gobreaker.NewCircuitBreaker(gobreaker.Settings{Name: "fb-capi", MaxRequests: 5, Interval: 30 * time.Second, Timeout: 60 * time.Second, ReadyToTrip: countsToTrip(5)}),
+        rateLimiter:  service.NewRateLimiter(valkey),
+        botDetector:  service.NewBotDetector(),
+        hmacVerifier: service.NewHMACVerifier(),
+        powVerifier:  service.NewPoWVerifier(),
+    }
+}
+
+type SubmitLeadRequest struct {
+    Body struct {
+        // Form data
+        Name    string `json:"name" required:"true"`
+        Phone   string `json:"phone" required:"true"`
+        Email   string `json:"email,omitempty"`
+        Consent bool   `json:"consent" required:"true"`
+
+        // Honeypot
+        Website string `json:"website,omitempty"`
+
+        // Tracking metadata
+        UTM          domain.UTMParams `json:"utm,omitempty"`
+        FBCLID       string           `json:"fbclid,omitempty"`
+        FBP          string           `json:"fbp,omitempty"`
+        FBC          string           `json:"fbc,omitempty"`
+        GCLID        string           `json:"gclid,omitempty"`
+        TTCLID       string           `json:"ttclid,omitempty"`
+
+        // Event matching
+        EventID      string `json:"event_id" required:"true" format:"uuid"`
+
+        // Context
+        TenantID    string `json:"tenant_id" required:"true"`
+        CampaignID  string `json:"campaign_id,omitempty"`
+        UserAgent   string `json:"user_agent" required:"true"`
+        Referrer    string `json:"referrer,omitempty"`
+        CurrentURL  string `json:"current_url" required:"true"`
+
+        // Bot defense
+        BotScore         *float64 `json:"bot_score,omitempty"`
+        AttestationToken string   `json:"attestation_token,omitempty"`
+        PoWNonce         string   `json:"pow_nonce,omitempty"`
+        PoWHash          string   `json:"pow_hash,omitempty"`
+        PoWTS            int64    `json:"pow_ts,omitempty"`
+
+        // Idempotency
+        IdempotencyKey string `json:"idempotency_key,omitempty"`
+    }
+}
+
+type SubmitLeadResponse struct {
+    Body struct {
+        LeadID  string `json:"lead_id"`
+        EventID string `json:"event_id"`
+        Status  string `json:"status"`
+    }
+}
+
+func (h *IngestHandler) SubmitLead(ctx context.Context, req *SubmitLeadRequest) (*SubmitLeadResponse, error) {
+    body := req.Body
+    traceID := getTraceID(ctx)
+
+    // 1. Honeypot check
+    if body.Website != "" {
+        // Silent reject (don't tell bot it's detected)
+        return &SubmitLeadResponse{
+            Body: struct {
+                LeadID  string `json:"lead_id"`
+                EventID string `json:"event_id"`
+                Status  string `json:"status"`
+            }{
+                LeadID:  "fake-" + uuid.New().String(),
+                EventID: body.EventID,
+                Status:  "accepted",
+            },
+        }, nil
+    }
+
+    // 2. Rate limit check
+    ip := getIPFromContext(ctx)
+    if !h.rateLimiter.Allow(ip, body.TenantID) {
+        return nil, huma.Error429TooManyRequests("Too many requests", nil)
+    }
+
+    // 3. Bot detection (if attestation token provided)
+    if body.AttestationToken != "" {
+        if !h.botDetector.VerifyAttestation(body.AttestationToken) {
+            // Don't tell bot it's detected, just silently drop
+            return nil, huma.Error403Forbidden("Browser verification failed", nil)
+        }
+    } else if body.BotScore != nil && *body.BotScore > 0.7 {
+        return nil, huma.Error403Forbidden("Bot detected", nil)
+    }
+
+    // 4. PoW verification (if PoW provided)
+    if body.PoWNonce != "" {
+        if !h.powVerifier.Verify(body.PoWNonce, body.PoWHash, body.PoWTS, ip) {
+            return nil, huma.Error403Forbidden("PoW verification failed", nil)
+        }
+    }
+
+    // 5. Validate payload
+    lead := domain.NewLead(body)
+    if err := h.validator.Validate(lead); err != nil {
+        return nil, huma.Error422UnprocessableEntity("Validation failed", err)
+    }
+
+    // 6. Idempotency check
+    idemKey := body.IdempotencyKey
+    if idemKey == "" {
+        idemKey = fmt.Sprintf("%s:%s:%s", body.TenantID, body.Phone, body.EventID)
+    }
+    if existing, err := h.repo.GetByIdempotencyKey(ctx, idemKey); err == nil && existing != nil {
+        return &SubmitLeadResponse{
+            Body: struct {
+                LeadID  string `json:"lead_id"`
+                EventID string `json:"event_id"`
+                Status  string `json:"status"`
+            }{
+                LeadID:  existing.LeadID,
+                EventID: existing.EventID,
+                Status:  "duplicate",
+            },
+        }, nil
+    }
+
+    // 7. Generate HMAC signature for CAPI worker
+    hmacSig := h.hmacVerifier.Generate(body.EventID, body.FBCLID, fmt.Sprintf("%d", time.Now().Unix()), lead)
+
+    // 8. Persist to ScyllaDB (async, fire-and-forget)
+    lead.HMACSignature = hmacSig
+    lead.TraceID = traceID
+    lead.IPAddress = ip
+
+    if err := h.repo.Insert(ctx, lead); err != nil {
+        return nil, huma.Error500InternalServerError("Failed to insert lead", err)
+    }
+
+    // 9. Emit NATS event (async)
+    event := domain.NewLeadCreatedEvent(lead, hmacSig)
+    if err := h.publisher.Publish("lead.created."+body.TenantID, event); err != nil {
+        // Log but don't fail request
+        log.Error("failed to publish event", "error", err, "lead_id", lead.LeadID)
+    }
+
+    return &SubmitLeadResponse{
+        Body: struct {
+            LeadID  string `json:"lead_id"`
+            EventID string `json:"event_id"`
+            Status  string `json:"status"`
+        }{
+            LeadID:  lead.LeadID,
+            EventID: body.EventID,
+            Status:  "accepted",
+        },
+    }, nil
+}
+
+// Helper to detect circuit breaker trip
+func countsToTrip(threshold int) func(counts gobreaker.Counts) bool {
+    return func(counts gobreaker.Counts) bool {
+        return counts.ConsecutiveFailures >= uint32(threshold)
+    }
+}
+```
+
+### 32.5. HMAC Signing Function chi tiết
+
+```go
+// services/landing-ingest/internal/service/hmac.go
+package service
+
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "fmt"
+    "os"
+    "time"
+
+    "github.com/google/uuid"
+)
+
+type HMACVerifier struct {
+    secretKey []byte
+}
+
+func NewHMACVerifier() *HMACVerifier {
+    secret := os.Getenv("RINCO_HMAC_SECRET")
+    if secret == "" {
+        secret = "default-dev-secret-CHANGE-IN-PROD"
+    }
+    return &HMACVerifier{secretKey: []byte(secret)}
+}
+
+// Generate tạo HMAC signature cho event
+// Format: SHA256(lead_id || fbclid || timestamp || canonical_payload_json)
+func (h *HMACVerifier) Generate(leadID, fbclid, timestamp string, payload interface{}) string {
+    canonical, err := canonicalizeJSON(payload)
+    if err != nil {
+        // Log error, use empty string
+        canonical = []byte("")
+    }
+
+    mac := hmac.New(sha256.New, h.secretKey)
+    mac.Write([]byte(leadID))
+    mac.Write([]byte(fbclid))
+    mac.Write([]byte(timestamp))
+    mac.Write(canonical)
+    return hex.EncodeToString(mac.Sum(nil))
+}
+
+// VerifySignature dùng cho CAPI worker trước khi gửi Meta
+func (h *HMACVerifier) VerifySignature(eventID, fbclid, timestamp string, payload interface{}, signature string) bool {
+    expected := h.Generate(eventID, fbclid, timestamp, payload)
+    return hmac.Equal([]byte(expected), []byte(signature))
+}
+
+// GenerateForTestEvent tạo signature cho Meta Test Events
+func (h *HMACVerifier) GenerateForTestEvent(testCode, eventID string) string {
+    mac := hmac.New(sha256.New, h.secretKey)
+    mac.Write([]byte("test_event_code:"))
+    mac.Write([]byte(testCode))
+    mac.Write([]byte(":event_id:"))
+    mac.Write([]byte(eventID))
+    return hex.EncodeToString(mac.Sum(nil))
+}
+
+// canonicalizeJSON đảm bảo JSON bytes deterministic cho HMAC
+// Sắp xếp keys alphabetically, không có whitespace
+func canonicalizeJSON(v interface{}) ([]byte, error) {
+    // Use json.Marshal với sorted map (via reflection)
+    // Or use a dedicated library like github.com/iancoleman/orderedjson
+
+    // Implementation:
+    m, err := json.Marshal(v)
+    if err != nil {
+        return nil, err
+    }
+
+    // Parse and reorder keys
+    var raw interface{}
+    if err := json.Unmarshal(m, &raw); err != nil {
+        return nil, err
+    }
+
+    return json.Marshal(sortJSONKeys(raw))
+}
+
+func sortJSONKeys(v interface{}) interface{} {
+    switch v := v.(type) {
+    case map[string]interface{}:
+        sorted := make(map[string]interface{})
+        for k, val := range v {
+            sorted[k] = sortJSONKeys(val)
+        }
+        return sorted
+    case []interface{}:
+        for i, val := range v {
+            v[i] = sortJSONKeys(val)
+        }
+        return v
+    default:
+        return v
+    }
+}
+```
+
+### 32.6. SHA-256 Normalization Function chi tiết (Meta Standard)
+
+```go
+// services/meta-capi/internal/normalization/normalizer.go
+package normalization
+
+import (
+    "crypto/sha256"
+    "encoding/hex"
+    "regexp"
+    "strings"
+)
+
+// NormalizeEmail theo Meta spec:
+// 1. Trim whitespace
+// 2. Lowercase
+// 3. SHA-256 hash
+func NormalizeEmail(email string) string {
+    normalized := strings.ToLower(strings.TrimSpace(email))
+    return sha256Hex(normalized)
+}
+
+// NormalizePhone theo Meta spec:
+// 1. Remove all non-digit characters
+// 2. Nếu không bắt đầu bằng country code (mặc định 84 cho VN), thêm vào
+// 3. SHA-256 hash
+func NormalizePhone(phone string, countryCode string) string {
+    if countryCode == "" {
+        countryCode = "84" // Vietnam default
+    }
+
+    // Remove all non-digits
+    digits := regexp.MustCompile(`\D`).ReplaceAllString(phone, "")
+
+    // Remove leading 0 if present, prepend country code
+    digits = strings.TrimPrefix(digits, "0")
+    if !strings.HasPrefix(digits, countryCode) {
+        digits = countryCode + digits
+    }
+
+    return sha256Hex(digits)
+}
+
+// NormalizeName:
+// 1. Trim, lowercase
+// 2. SHA-256 hash
+func NormalizeName(name string) string {
+    normalized := strings.ToLower(strings.TrimSpace(name))
+    return sha256Hex(normalized)
+}
+
+// NormalizeCity:
+func NormalizeCity(city string) string {
+    return sha256Hex(strings.ToLower(strings.TrimSpace(city)))
+}
+
+// NormalizeZip:
+func NormalizeZip(zip string) string {
+    return sha256Hex(strings.ToLower(strings.TrimSpace(zip)))
+}
+
+// NormalizeCountry: ISO 3166-1 alpha-2 lowercase
+func NormalizeCountry(country string) string {
+    return sha256Hex(strings.ToLower(strings.TrimSpace(country)))
+}
+
+// NormalizeExternalID: chỉ lowercase + trim + hash
+func NormalizeExternalID(id string) string {
+    return sha256Hex(strings.ToLower(strings.TrimSpace(id)))
+}
+
+func sha256Hex(s string) string {
+    h := sha256.Sum256([]byte(s))
+    return hex.EncodeToString(h[:])
+}
+
+// NormalizeUserData batch normalize cho 1 UserData object
+func NormalizeUserData(ud *UserData) *UserData {
+    normalized := &UserData{}
+
+    if ud.Email != "" {
+        normalized.Email = []string{NormalizeEmail(ud.Email)}
+    }
+    if ud.Phone != "" {
+        normalized.Phone = []string{NormalizePhone(ud.Phone, ud.CountryCode)}
+    }
+    if ud.FirstName != "" {
+        normalized.FirstName = []string{NormalizeName(ud.FirstName)}
+    }
+    if ud.LastName != "" {
+        normalized.LastName = []string{NormalizeName(ud.LastName)}
+    }
+    if ud.City != "" {
+        normalized.City = []string{NormalizeCity(ud.City)}
+    }
+    if ud.State != "" {
+        normalized.State = []string{NormalizeName(ud.State)}
+    }
+    if ud.ZipCode != "" {
+        normalized.ZipCode = []string{NormalizeZip(ud.ZipCode)}
+    }
+    if ud.Country != "" {
+        normalized.Country = []string{NormalizeCountry(ud.Country)}
+    }
+    if ud.ExternalID != "" {
+        normalized.ExternalID = []string{NormalizeExternalID(ud.ExternalID)}
+    }
+
+    // Pass-through un-hashed fields
+    normalized.ClientIP = ud.ClientIP
+    normalized.ClientUA = ud.ClientUA
+    normalized.FBC = ud.FBC
+    normalized.FBP = ud.FBP
+    normalized.SubscriptionID = ud.SubscriptionID
+
+    return normalized
+}
+```
+
+### 32.7. CAPI Worker với Circuit Breaker chi tiết
+
+```go
+// services/meta-capi/internal/worker/worker.go
+package worker
+
+import (
+    "context"
+    "encoding/json"
+    "fmt"
+    "log/slog"
+    "net/http"
+    "time"
+
+    "github.com/nats-io/nats.go"
+    "github.com/sony/gobreaker"
+
+    "rinco/meta-capi/internal/normalization"
+    "rinco/meta-capi/internal/repository"
+    "rinco/meta-capi/internal/service"
+)
+
+type Worker struct {
+    nc           *nats.Conn
+    metaClient   *MetaGraphClient
+    repo         *repository.CAPIRepository
+    hmacVerifier *service.HMACVerifier
+    cb           *gobreaker.CircuitBreaker
+    logger       *slog.Logger
+}
+
+func NewWorker(nc *nats.Conn, repo *repository.CAPIRepository) *Worker {
+    settings := gobreaker.Settings{
+        Name:        "fb-capi",
+        MaxRequests: 3,
+        Interval:    30 * time.Second,
+        Timeout:     60 * time.Second,
+        ReadyToTrip: func(counts gobreaker.Counts) bool {
+            failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+            return counts.Requests >= 5 && failureRatio >= 0.6
+        },
+        OnStateChange: func(name string, from gobreaker.State, to gobreaker.State) {
+            slog.Warn("circuit breaker state changed",
+                "name", name, "from", from.String(), "to", to.String())
+        },
+    }
+
+    return &Worker{
+        nc:           nc,
+        metaClient:   NewMetaGraphClient(os.Getenv("META_ACCESS_TOKEN")),
+        repo:         repo,
+        hmacVerifier: service.NewHMACVerifier(),
+        cb:           gobreaker.NewCircuitBreaker(settings),
+        logger:       slog.Default(),
+    }
+}
+
+func (w *Worker) Start(ctx context.Context) error {
+    sub, err := w.nc.Subscribe("lead.created.>", w.handleMessage)
+    if err != nil {
+        return fmt.Errorf("subscribe: %w", err)
+    }
+    defer sub.Unsubscribe()
+
+    slog.Info("CAPI worker started")
+    <-ctx.Done()
+    return nil
+}
+
+type CAPIPayload struct {
+    TenantID    string `json:"tenant_id"`
+    LeadID      string `json:"lead_id"`
+    EventID     string `json:"event_id"`
+    EventName   string `json:"event_name"`
+    Timestamp   int64  `json:"timestamp"`
+    Payload     json.RawMessage `json:"payload"`
+    HMACSignature string `json:"hmac_signature"`
+}
+
+func (w *Worker) handleMessage(msg *nats.Msg) {
+    var payload CAPIPayload
+    if err := json.Unmarshal(msg.Data, &payload); err != nil {
+        w.logger.Error("unmarshal failed", "error", err)
+        msg.Nak()
+        return
+    }
+
+    traceID := getTraceID(msg)
+    ctx := context.WithValue(context.Background(), "trace_id", traceID)
+
+    if err := w.Process(ctx, payload); err != nil {
+        w.logger.Error("process failed", "error", err, "event_id", payload.EventID)
+        // Don't ack - will retry
+        msg.Nak()
+        return
+    }
+
+    msg.Ack()
+}
+
+func (w *Worker) Process(ctx context.Context, payload CAPIPayload) error {
+    // 1. Verify HMAC signature
+    var eventData domain.LeadEvent
+    if err := json.Unmarshal(payload.Payload, &eventData); err != nil {
+        return fmt.Errorf("unmarshal payload: %w", err)
+    }
+
+    if !w.hmacVerifier.VerifySignature(
+        payload.EventID,
+        eventData.FBCLID,
+        fmt.Sprintf("%d", payload.Timestamp),
+        eventData,
+        payload.HMACSignature,
+    ) {
+        return ErrInvalidSignature
+    }
+
+    // 2. Normalize user data
+    userData := normalization.NormalizeUserData(&normalization.UserData{
+        Email:      eventData.Email,
+        Phone:      eventData.Phone,
+        FirstName:  eventData.FirstName,
+        LastName:   eventData.LastName,
+        City:       eventData.City,
+        Country:    eventData.Country,
+        ExternalID: eventData.LeadID,
+        ClientIP:   eventData.IPAddress,
+        ClientUA:   eventData.UserAgent,
+        FBC:        eventData.FBC,
+        FBP:        eventData.FBP,
+    })
+
+    // 3. Build CAPI event
+    capiEvent := CAPIMetaEvent{
+        EventName:      payload.EventName,
+        EventTime:      payload.Timestamp,
+        EventID:        payload.EventID,
+        EventSourceURL: eventData.CurrentURL,
+        ActionSource:   "website",
+        UserData:       userData,
+        CustomData: CustomData{
+            Currency: "VND",
+            Value:    0,
+            ContentName: "Apex Fintech Landing",
+        },
+    }
+
+    // 4. Send to Meta with circuit breaker
+    _, err := w.cb.Execute(func() (interface{}, error) {
+        return nil, w.metaClient.SendEvent(payload.TenantID, capiEvent)
+    })
+
+    if err == gobreaker.ErrOpenState {
+        // Circuit open - queue for retry
+        w.logger.Warn("circuit breaker open, queueing for retry", "event_id", payload.EventID)
+        return w.queueForRetry(ctx, payload)
+    }
+
+    if err != nil {
+        return fmt.Errorf("send to meta: %w", err)
+    }
+
+    // 5. Log success
+    w.repo.LogSuccess(ctx, payload.EventID, payload.TenantID)
+
+    return nil
+}
+
+func (w *Worker) queueForRetry(ctx context.Context, payload CAPIPayload) error {
+    // Publish to retry queue with exponential delay
+    retryDelay := 5 * time.Second
+    if payload.Timestamp > 0 {
+        // Add jitter
+        retryDelay = retryDelay + time.Duration(time.Now().UnixNano()%1000)*time.Millisecond
+    }
+
+    // Use NATS delayed message
+    msg := nats.NewMsg("lead.created." + payload.TenantID)
+    msg.Data = mustMarshal(payload)
+    msg.Header.Set("X-Retry-Count", "1")
+    msg.Header.Set("X-Retry-After", retryDelay.String())
+
+    if err := w.nc.PublishMsg(msg); err != nil {
+        // Fallback: write to DB for cron-based retry
+        return w.repo.InsertRetry(ctx, payload)
+    }
+    return nil
+}
+```
+
+### 32.8. Wasm Attestation Module chi tiết (Rust)
+
+```rust
+// services/bot-detection/src/lib.rs
+use wasm_bindgen::prelude::*;
+use serde::{Serialize, Deserialize};
+use sha2::{Sha256, Digest};
+
+#[derive(Serialize, Deserialize)]
+struct AttestationResult {
+    pub token: String,
+    pub score: f32,
+    pub signals: Vec<String>,
+}
+
+#[wasm_bindgen]
+pub struct Attestor {
+    challenge: String,
+    timestamp: i64,
+}
+
+#[wasm_bindgen]
+impl Attestor {
+    #[wasm_bindgen(constructor)]
+    pub fn new(challenge: String, timestamp: i64) -> Self {
+        Self { challenge, timestamp }
+    }
+
+    #[wasm_bindgen]
+    pub fn verify(&self) -> Result<JsValue, JsValue> {
+        let mut score = 1.0_f32;
+        let mut signals = Vec::new();
+
+        // 1. Check WebGL renderer
+        if let Some(renderer) = self.get_webgl_renderer() {
+            if renderer.to_lowercase().contains("swiftshader") {
+                score -= 0.4;
+                signals.push("headless_webgl".to_string());
+            }
+            if renderer.to_lowercase().contains("llvmpipe") {
+                score -= 0.3;
+                signals.push("software_renderer".to_string());
+            }
+        } else {
+            score -= 0.2;
+            signals.push("no_webgl".to_string());
+        }
+
+        // 2. Check user agent for headless markers
+        let ua = self.get_user_agent().to_lowercase();
+        if ua.contains("headlesschrome") || ua.contains("phantomjs") || ua.contains("selenium") {
+            score -= 0.5;
+            signals.push("headless_ua".to_string());
+        }
+
+        // 3. Check for automation tools
+        if self.has_webdriver() {
+            score -= 0.3;
+            signals.push("webdriver_detected".to_string());
+        }
+
+        // 4. Check mouse movement (real user moves mouse non-linearly)
+        let mouse_score = self.analyze_mouse_movement();
+        if mouse_score < 0.3 {
+            score -= 0.3;
+            signals.push("linear_mouse_movement".to_string());
+        }
+
+        // 5. Check touch events (mobile)
+        if self.is_mobile() && !self.has_touch_events() {
+            score -= 0.2;
+            signals.push("mobile_no_touch".to_string());
+        }
+
+        // 6. Canvas fingerprint stability
+        let canvas_hash = self.get_canvas_hash();
+        if canvas_hash.is_empty() {
+            score -= 0.1;
+            signals.push("no_canvas".to_string());
+        }
+
+        // 7. AudioContext
+        if !self.has_audio_context() {
+            score -= 0.1;
+            signals.push("no_audio_context".to_string());
+        }
+
+        // 8. Time to verify (real user: 100-500ms; bot: <10ms or >5s)
+        let elapsed = self.get_elapsed_ms();
+        if elapsed < 10 || elapsed > 5000 {
+            score -= 0.2;
+            signals.push(format!("abnormal_timing:{}ms", elapsed));
+        }
+
+        // Clamp score 0-1
+        score = score.max(0.0).min(1.0);
+
+        // Generate token
+        let token = self.generate_token(score, &signals);
+
+        let result = AttestationResult {
+            token,
+            score,
+            signals,
+        };
+
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    fn get_webgl_renderer(&self) -> Option<String> {
+        // ...
+        None
+    }
+
+    fn get_user_agent(&self) -> String {
+        // ...
+        String::new()
+    }
+
+    fn has_webdriver(&self) -> bool {
+        // navigator.webdriver === true
+        false
+    }
+
+    fn analyze_mouse_movement(&self) -> f32 {
+        // ...
+        0.5
+    }
+
+    fn is_mobile(&self) -> bool {
+        // ...
+        false
+    }
+
+    fn has_touch_events(&self) -> bool {
+        // ...
+        true
+    }
+
+    fn get_canvas_hash(&self) -> String {
+        // ...
+        String::new()
+    }
+
+    fn has_audio_context(&self) -> bool {
+        // ...
+        true
+    }
+
+    fn get_elapsed_ms(&self) -> u64 {
+        // ...
+        100
+    }
+
+    fn generate_token(&self, score: f32, signals: &[String]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.challenge.as_bytes());
+        hasher.update(&self.timestamp.to_le_bytes());
+        hasher.update(&score.to_le_bytes());
+        hasher.update(signals.join(",").as_bytes());
+        let hash = hasher.finalize();
+
+        // Format as JWT-like token (header.payload.signature)
+        let header = base64_url_encode(&serde_json::json!({
+            "alg": "HS256",
+            "typ": "RINCO-Attestation"
+        }).to_string());
+
+        let payload = base64_url_encode(&serde_json::json!({
+            "challenge": self.challenge,
+            "timestamp": self.timestamp,
+            "score": score,
+            "signals": signals,
+            "exp": (self.timestamp + 3600) * 1000 // 1 hour expiry
+        }).to_string());
+
+        let signature = base64_url_encode(&hash);
+
+        format!("{}.{}.{}", header, payload, signature)
+    }
+}
+
+fn base64_url_encode(s: &str) -> String {
+    // URL-safe base64
+    s
+}
+```
+
+---
+
+## 33. Migration Plan từ chiase_cu (Production-ready)
+
+### 33.1. Migration Workflow tổng thể
+
+```
+┌─────────────────┐
+│ Inventory chiase_cu│  ← Bước 1: Liệt kê assets
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Setup Next.js   │  ← Bước 2: Bootstrap project
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Migrate content │  ← Bước 3: Hero, Trust, Form (giữ 100% text)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Migrate assets  │  ← Bước 4: Upload ảnh sang MinIO
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Tracking SDK    │  ← Bước 5: Replace tracker.js
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Form engine     │  ← Bước 6: React Hook Form + Zod
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Bot protection  │  ← Bước 7: Wasm + Argon2
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ CAPI integration│  ← Bước 8: Hybrid Dual-Tracking
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Visual regression│ ← Bước 9: Percy snapshot match
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ GA Launch       │  ← Bước 10: Deploy + monitor
+└─────────────────┘
+```
+
+### 33.2. DOM Mapping chi tiết từ `chiase_cu/index.html`
+
+| DOM cũ | DOM mới | Component | Notes |
+|--------|---------|-----------|-------|
+| `<div class="topbar">` | `<TopBar />` | `<TopBar>` | Server Component |
+| `<header class="header">` | `<StickyHeader />` | `<StickyHeader>` | Client (sticky on scroll) |
+| `<div id="mobileMenu">` | `<MobileMenuDialog />` | Radix Dialog | Accessibility |
+| `<section id="hero">` | `<HeroSection />` | `<HeroSection>` | Server + Client motion |
+| `<form class="lead-form">` | `<LeadForm variant="inline" />` | `<LeadForm>` | Client (form state) |
+| `<div class="logo-marquee">` | `<LogoCloudMarquee />` | `<LogoCloudMarquee>` | CSS animation |
+| `<section id="market-context">` | `<MarketContext />` | `<MarketContext>` | Server |
+| `<section id="speaker">` | `<SpeakerSection />` | `<SpeakerSection>` | Server |
+| `<section id="trust">` | `<TrustSection />` | `<TrustSection>` | Server |
+| `<section id="registration">` | `<RegistrationForm />` | `<RegistrationForm>` | Client |
+| `<div class="risk-warning">` | `<RiskWarning />` | `<RiskWarning>` | Server |
+| `<footer>` | `<Footer />` | `<Footer>` | Server |
+| `<div class="sticky-cta">` | `<StickyCTA />` | `<StickyCTA>` | Client |
+| `<div id="lead-modal">` | `<LeadModal />` | Radix Dialog | Client |
+| `<noscript>` Pixel | `<noscript>` (preserve) | Static | Render-blocking fallback |
+| `<script src="...fbevents.js">` | Next.js `<Script>` | Next Script | afterInteractive |
+| `<script src="...aos.js">` | framer-motion | `motion.div` | IntersectionObserver |
+| `<script src="...main.js">` | React hooks | useEffect/useState | Native |
+
+### 33.3. Thư viện cũ → Thư viện mới
+
+| Library cũ | Library mới | Migration Steps |
+|------------|--------------|----------------|
+| jQuery 3.x | Vanilla JS + React | Xóa jQuery, dùng useState/useEffect, native DOM APIs |
+| Bootstrap 4 (CDN) | Tailwind CSS v4 | Replace classes, purge unused |
+| Font Awesome 6 | Lucide Icons | Tree-shake, SVG |
+| AOS (Animate On Scroll) | framer-motion | IntersectionObserver hooks |
+| Slick Carousel | Embla Carousel | Touch-friendly, lighter |
+| Smooth Scroll JS | CSS `scroll-behavior: smooth` | Native |
+| jQuery Validate | Zod + React Hook Form | Type-safe |
+| Cookie Consent (CookieBot) | Custom CookieConsent | GDPR/PDPA compliant |
+| GA (Universal Analytics) | GA4 + Server-side | Privacy-first |
+
+### 33.4. Pixel Events cũ → Pixel Events mới
+
+| Pixel cũ | Pixel mới | Mapping |
+|----------|-----------|---------|
+| `fbq('track', 'Lead')` | `fbq('track', 'Lead', { content_name, value, currency }, { eventID })` | Thêm eventID match server |
+| `fbq('track', 'CompleteRegistration')` | `fbq('track', 'CompleteRegistration', { content_name, status: 'success' }, { eventID })` | |
+| `fbq('track', 'PageView')` | `fbq('track', 'PageView')` | Default init |
+| Custom event `WebinarRegistration` | Standard `Lead` + Custom `WebinarRegistration` | Cả 2 |
+| Manual UTM grab | URL params + persistence | Cookie 30 ngày |
+
+### 33.5. Tracking Data cũ → Tracking Data mới
+
+```diff
+- dataLayer.push({
+-   'event': 'lead_submit',
+-   'formLocation': 'hero',
+-   'phone': '0987654321'
+- });
++ rincoTracker.track('form_submit', {
++   form_variant: 'hero',
++   phone: '0987654321',  // hashed server-side
++   // Auto-included: session_id, anonymous_id, utm_*, fbclid, fbp, fbc, etc.
++ });
+```
+
+### 33.6. Form Handling cũ → Form Handling mới
+
+```diff
+- // jQuery old
+- $('#leadForm').on('submit', function(e) {
+-   e.preventDefault();
+-   var phone = $('#phone').val();
+-   var valid = phone.match(/^(\+84|0)\d{9,10}$/);
+-   if (!valid) {
+-     alert('Số điện thoại không hợp lệ');
+-     return;
+-   }
+-   $.ajax({
+-     url: '/api/leads',
+-     method: 'POST',
+-     data: $(this).serialize(),
+-     success: function(res) {
+-       $('.success-message').show();
+-     }
+-   });
+- });
++ // React Hook Form + Zod mới
++ const { register, handleSubmit, formState: { errors } } = useForm({
++   resolver: zodResolver(leadSchema),
++   mode: 'onBlur',
++ });
++ const onSubmit = async (data) => {
++   try {
++     const res = await submitLead(data);
++     track('form_submit_success', { lead_id: res.lead_id });
++     reset();
++   } catch (err) {
++     track('form_submit_error', { error: err.message });
++   }
++ };
+```
+
+---
+
+## 34. Edge Cases & Error Scenarios (≥ 30 scenarios)
+
+### 34.1. Edge Cases – Pixel
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E1 | Pixel script bị chặn bởi AdBlock | fbq undefined | Fallback: chỉ CAPI server-side |
+| E2 | Pixel ID không đúng format | Meta Pixel Helper | Validate regex `^\d{15,16}$` |
+| E3 | Multiple Pixels trong 1 page | Conflict | Init primary pixel only |
+| E4 | Pixel ID bị revoke | Response code 400 | Alert admin + auto-disable |
+| E5 | PageView fire trước khi init | Race condition | Use Next.js Script `afterInteractive` |
+| E6 | fbclid quá dài (>200 chars) | URL parser | Truncate 200, store |
+| E7 | fbc cookie expire giữa session | Cookie missing | Generate từ fbclid mới |
+| E8 | user disable 3rd-party cookie | fbc/fbp null | Generate fallback ID |
+| E9 | Pixel ID leaked ra domain khác | Audit | Auto-rotate pixel + alert |
+| E10 | Page load timeout (>10s) | No PageView | Retry với exponential backoff |
+
+### 34.2. Edge Cases – CAPI
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E11 | CAPI rate-limit (>100K events/day) | Meta Graph response | Queue + delay processing |
+| E12 | EMQ score thấp (<6) | Meta diagnostics | Alert admin + auto-enrich user_data |
+| E13 | CAPI Poisoning (fake event) | HMAC mismatch | Reject + IP blacklist |
+| E14 | Event payload > 8KB | Meta API error | Truncate + chunk |
+| E15 | Conversion API token expired | 401 response | Token rotation |
+| E16 | Duplicate event_id (client + server) | Meta tự dedup | OK - within 48h |
+| E17 | Test Event Code expire | 400 response | Re-issue test code |
+| E18 | Aggregated Event Measurement fail | Low match rate | Switch to lower-fidelity |
+| E19 | Meta Graph API down | 5xx | Circuit breaker + retry |
+| E20 | Domain verification expired | 400 with reason | Re-verify + alert |
+
+### 34.3. Edge Cases – Form
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E21 | Form spam 100x trong 1 giây | Rate limit | 429 + IP blacklist |
+| E22 | Bot submit qua Puppeteer | Bot score | Silent drop |
+| E23 | User nhập emoji trong phone | Validation fail | Zod regex strict |
+| E24 | Phone có dấu chấm/dash | Validation | Normalize trước validate |
+| E25 | Honeypot field filled | Bot signal | Silent drop |
+| E26 | Consent checkbox unchecked | Zod literal(true) | Block submit |
+| E27 | Form submit 2 lần (double-click) | Idempotency key | Same lead_id |
+| E28 | Form submit khi offline | navigator.onLine | Disable button + retry khi online |
+| E29 | File upload > 10MB | Size limit | Reject + suggest URL |
+| E30 | Multi-step form step 1 fail | Validation | Stay step 1, show error |
+
+### 34.4. Edge Cases – Tracking
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E31 | Tracking endpoint down | Fetch fail | Queue in memory, retry |
+| E32 | Queue overflow (>100 events) | Memory pressure | Drop oldest + flush |
+| E33 | Beacon API fail | sendBeacon error | Fallback fetch with keepalive |
+| E34 | UTM param có special chars | URL decode | Sanitize |
+| E35 | Time on page > 1 giờ (idle) | User inactive | Don't send 300s milestone |
+| E36 | Scroll depth > 100% | Bug | Clamp to 100 |
+| E37 | LocalStorage quota exceeded | QuotaExceededError | Catch + fallback cookie |
+| E38 | iOS Safari ITP block 3rd party | _fbp not set | Use server-side only |
+| E39 | Browser close giữa track | beforeunload | sendBeacon flush |
+| E40 | AdBlocker detect tracker | Tracker.js removed | Use server-side CAPI |
+
+### 34.5. Edge Cases – Bot Protection
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E41 | Wasm module fail load | Network error | Fallback to hCaptcha |
+| E42 | Wasm attestation timeout (>5s) | Watchdog | Block + log |
+| E43 | Argon2 PoW too slow (>1s) | Real browser | Adaptive threshold |
+| E44 | Argon2 PoW too fast (<10ms) | GPU bot | Block |
+| E45 | Bot rotates IP | Rate limit per IP | Add fingerprint |
+| E46 | Bot uses residential proxy | IP reputation check | Blacklist |
+| E47 | Replay attack (same attestation token) | Token dedup | Reject duplicate |
+| E48 | Wasm module tampered | Hash mismatch | Reject + alert |
+| E49 | Argon2 challenge expired (>5min) | TTL check | Re-issue |
+| E50 | Distributed bot (1000 IPs) | Anomaly detection | hCaptcha mandatory |
+
+### 34.6. Edge Cases – Conversion / Feedback Loop
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E51 | Deal closed but no CAPI Purchase event | Monitoring | Send async |
+| E52 | Purchase event sent với value = 0 (no deal_value) | Validation | Use predicted_ltv |
+| E53 | Currency mismatch (VND vs USD) | Multi-tenant | Per-tenant config |
+| E54 | Subscription active multiple times | Duplicate | Dedupe by subscription_id |
+| E55 | Offline conversion upload fail | Meta API error | Retry 3x, queue |
+| E56 | Custom audience upload > 1M users | Limit | Split into batches |
+| E57 | pLTV prediction fail | Model error | Use default 0 |
+| E58 | Deal value in scientific notation | Parsing | Round to integer |
+| E59 | Lead qualified but never closed | Track | Send QualifiedLead only |
+| E60 | CRM system down (no event) | Circuit breaker | Buffer in DB, retry khi up |
+
+---
+
+## 35. Wasm Attestation Module (Production-ready)
+
+### 35.1. Build Pipeline
+
+```bash
+# Build Wasm từ Rust
+cargo build --target wasm32-wasi --release
+
+# Optimize với wasm-opt
+wasm-opt -O3 -o public/attestation.wasm target/wasm32-wasi/release/attestation.wasm
+
+# Verify size (mục tiêu: <50KB gzipped)
+ls -la public/attestation.wasm
+gzip -c public/attestation.wasm | wc -c
+
+# Hash để verify integrity
+sha256sum public/attestation.wasm
+```
+
+### 35.2. Wasm Loader (TypeScript)
+
+```typescript
+// apps/landing-renderer/lib/wasm/attestation.ts
+import { v7 as uuidv7 } from 'uuid';
+
+interface AttestationResult {
+  token: string;
+  score: number;
+  signals: string[];
+}
+
+class WasmAttestationClient {
+  private wasmModule: WebAssembly.WebAssemblyInstantiatedSource | null = null;
+  private challenge: string;
+  private timestamp: number;
+  private startTime: number = 0;
+
+  constructor() {
+    this.challenge = uuidv7();
+    this.timestamp = Date.now();
+  }
+
+  async load(): Promise<void> {
+    if (this.wasmModule) return;
+
+    const startTime = Date.now();
+    try {
+      const response = await fetch('/attestation.wasm', {
+        cache: 'force-cache', // Cache 24h
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const bytes = await response.arrayBuffer();
+
+      // Verify SHA-256 (anti-tampering)
+      const hash = await crypto.subtle.digest('SHA-256', bytes);
+      const hashHex = Array.from(new Uint8Array(hash))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      if (hashHex !== EXPECTED_HASH) {
+        throw new Error('Wasm hash mismatch');
+      }
+
+      this.wasmModule = await WebAssembly.instantiate(bytes, {
+        env: {
+          // Imports nếu Wasm cần
+        },
+      });
+
+      this.startTime = Date.now();
+    } catch (err) {
+      console.error('Wasm load failed:', err);
+      throw err;
+    }
+  }
+
+  async verify(): Promise<AttestationResult | null> {
+    if (!this.wasmModule) {
+      try {
+        await this.load();
+      } catch {
+        return null;
+      }
+    }
+
+    if (!this.wasmModule) return null;
+
+    try {
+      // Gọi Wasm verify function
+      const exports = this.wasmModule.instance.exports as any;
+      const challengePtr = exports.allocate_write(36); // UUID length
+      const timestampPtr = exports.allocate_write(8);
+
+      // Copy data vào Wasm memory
+      const memory = exports.memory as WebAssembly.Memory;
+      const memoryView = new Uint8Array(memory.buffer);
+      memoryView.set(new TextEncoder().encode(this.challenge), challengePtr);
+      new DataView(memory.buffer).setBigInt64(timestampPtr, BigInt(this.timestamp), true);
+
+      const resultPtr = exports.verify(challengePtr, timestampPtr);
+
+      // Read result
+      const resultJson = new TextDecoder().decode(
+        memoryView.slice(resultPtr, resultPtr + 256).filter(b => b !== 0)
+      );
+
+      return JSON.parse(resultJson);
+    } catch (err) {
+      console.error('Wasm verify failed:', err);
+      return null;
+    }
+  }
+}
+
+const EXPECTED_HASH = process.env.NEXT_PUBLIC_WASM_HASH || '';
+
+export async function getAttestation(): Promise<AttestationResult | null> {
+  const client = new WasmAttestationClient();
+  return client.verify();
+}
+```
+
+### 35.3. Server-side Verification
+
+```go
+// services/bot-detection/internal/verifier/verifier.go
+package verifier
+
+import (
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/base64"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "time"
+)
+
+type AttestationClaims struct {
+    Challenge  string   `json:"challenge"`
+    Timestamp  int64    `json:"timestamp"`
+    Score      float32  `json:"score"`
+    Signals    []string `json:"signals"`
+    Expiry     int64    `json:"exp"`
+}
+
+type Verifier struct {
+    secretKey []byte
+}
+
+func NewVerifier(secret string) *Verifier {
+    return &Verifier{secretKey: []byte(secret)}
+}
+
+func (v *Verifier) Verify(token string) (*AttestationClaims, error) {
+    // Parse JWT-like token
+    parts := splitToken(token)
+    if len(parts) != 3 {
+        return nil, errors.New("invalid token format")
+    }
+
+    // Verify signature
+    expectedSig := v.sign(parts[0] + + parts[1])
+    if !hmac.Equal([]byte(expectedSig), []byte(parts[2])) {
+        return nil, errors.New("invalid signature")
+    }
+
+    // Decode payload
+    payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+    if err != nil {
+        return nil, fmt.Errorf("decode payload: %w", err)
+    }
+
+    var claims AttestationClaims
+    if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+        return nil, fmt.Errorf("unmarshal claims: %w", err)
+    }
+
+    // Check expiry
+    if time.Now().UnixMilli() > claims.Expiry {
+        return nil, errors.New("token expired")
+    }
+
+    return &claims, nil
+}
+
+func (v *Verifier) sign(input string) string {
+    mac := hmac.New(sha256.New, v.secretKey)
+    mac.Write([]byte(input))
+    return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func splitToken(token string) []string {
+    parts := []string{}
+    start := 0
+    for i, c := range token {
+        if c == '.' {
+            parts = append(parts, token[start:i])
+            start = i + 1
+        }
+    }
+    parts = append(parts, token[start:])
+    return parts
+}
+
+func (v *Verifier) IsHighScore(claims *AttestationClaims) bool {
+    return claims.Score >= 0.7
+}
+```
+
+---
+
+## 36. Argon2 PoW Challenge Protocol
+
+### 36.1. Server-side Challenge Generator
+
+```go
+// services/landing-ingest/internal/pow/generator.go
+package pow
+
+import (
+    "crypto/rand"
+    "encoding/base64"
+    "fmt"
+    "time"
+
+    "github.com/google/uuid"
+    "github.com/valkey/go-valkey"
+)
+
+type Challenge struct {
+    Nonce     string
+    Salt      string
+    Timestamp int64
+    Difficulty int // Kibi-bytes (KB) cost
+}
+
+type Generator struct {
+    valkey     *valkey.Client
+    difficulty int
+    ttl        time.Duration
+}
+
+func NewGenerator(valkey *valkey.Client) *Generator {
+    return &Generator{
+        valkey:     valkey,
+        difficulty: 16, // 16 KB cost
+        ttl:        5 * time.Minute,
+    }
+}
+
+func (g *Generator) Generate(tenantID, ip string) (*Challenge, error) {
+    nonceBytes := make([]byte, 16)
+    if _, err := rand.Read(nonceBytes); err != nil {
+        return nil, err
+    }
+    nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
+
+    saltBytes := make([]byte, 16)
+    if _, err := rand.Read(saltBytes); err != nil {
+        return nil, err
+    }
+    salt := base64.RawURLEncoding.EncodeToString(saltBytes)
+
+    challenge := &Challenge{
+        Nonce:      nonce,
+        Salt:       salt,
+        Timestamp:  time.Now().Unix(),
+        Difficulty: g.difficulty,
+    }
+
+    // Store in Valkey với TTL
+    key := fmt.Sprintf("pow:%s:%s:%s", tenantID, ip, nonce)
+    payload := fmt.Sprintf("%s:%d", salt, challenge.Timestamp)
+    if err := g.valkey.Set(ctx, key, payload, g.ttl).Err(); err != nil {
+        return nil, err
+    }
+
+    return challenge, nil
+}
+
+func (g *Generator) Verify(tenantID, ip, nonce, hash string, ts int64) error {
+    // Reject if expired (>5 min)
+    if time.Now().Unix()-ts > 300 {
+        return ErrPoWExpired
+    }
+
+    key := fmt.Sprintf("pow:%s:%s:%s", tenantID, ip, nonce)
+    stored, err := g.valkey.Get(ctx, key).Result()
+    if err != nil {
+        return ErrPoWNotFound
+    }
+
+    expected := fmt.Sprintf("%s:%s", stored, nonce)
+    expectedHash := computeArgon2(expected, g.difficulty)
+
+    if !hmac.Equal([]byte(expectedHash), []byte(hash)) {
+        return ErrPoWInvalid
+    }
+
+    // Mark used (one-time)
+    g.valkey.Del(ctx, key)
+
+    return nil
+}
+
+func computeArgon2(input string, memoryKB uint32) string {
+    // Argon2id với time=1, threads=1, memory=memoryKB
+    // ...
+    return ""
+}
+```
+
+### 36.2. Client-side Solver (TypeScript + WASM)
+
+```typescript
+// apps/landing-renderer/lib/pow/solver.ts
+import { Argon2Browser } from 'argon2-browser';
+
+export interface PoWChallenge {
+  nonce: string;
+  salt: string;
+  timestamp: number;
+  difficulty: number;
+}
+
+export interface PoWResult {
+  nonce: string;
+  hash: string;
+  ts: number;
+}
+
+export async function solvePoW(challenge: PoWChallenge): Promise<PoWResult> {
+  const startTime = performance.now();
+
+  // Argon2id với cùng params như server
+  const result = await Argon2Browser.hash({
+    pass: `${challenge.salt}:${challenge.nonce}`,
+    salt: 'rinco-pow-2026',
+    time: 1,
+    mem: challenge.difficulty * 1024, // KB → bytes
+    parallelism: 1,
+    type: Argon2Browser.ArgonType.Argon2id,
+  });
+
+  const elapsed = performance.now() - startTime;
+
+  // Sanity check: real browser nên compute trong ~20ms với difficulty 16
+  if (elapsed > 1000) {
+    throw new Error(`PoW too slow: ${elapsed}ms (suspicious)`);
+  }
+
+  return {
+    nonce: challenge.nonce,
+    hash: result.encoded,
+    ts: challenge.timestamp,
+  };
+}
+```
+
+---
+
+## 37. A/B Testing Framework
+
+### 37.1. A/B Test Schema
+
+```sql
+CREATE TABLE ab_tests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  variants JSONB NOT NULL,
+  goal TEXT NOT NULL,                  -- 'form_submit', 'cta_click', 'lead_qualified'
+  traffic_allocation JSONB NOT NULL,  -- {"A": 50, "B": 50}
+  status TEXT DEFAULT 'DRAFT',
+  started_at TIMESTAMPTZ,
+  ended_at TIMESTAMPTZ,
+  min_sample_size INT DEFAULT 1000,
+  confidence_threshold DECIMAL(3,2) DEFAULT 0.95,
+  winner_variant TEXT,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX idx_ab_tests_tenant ON ab_tests(tenant_id, status);
+```
+
+### 37.2. Variant Assignment (Deterministic Hash)
+
+```typescript
+// apps/landing-renderer/lib/abtest/assignment.ts
+import { createHash } from 'crypto';
+
+export function assignVariant(
+  test: ABTest,
+  identifier: string  // anonymous_id or user_id
+): string {
+  // Deterministic hash → always same variant for same user
+  const hash = createHash('sha256')
+    .update(`${test.id}:${identifier}`)
+    .digest();
+
+  // Convert first 4 bytes to 0-100 number
+  const bucket = parseInt(hash.toString('hex').slice(0, 8), 16) % 100;
+
+  // Map to variant based on traffic_allocation
+  let cumulative = 0;
+  for (const [variantCode, percent] of Object.entries(test.traffic_allocation)) {
+    cumulative += percent;
+    if (bucket < cumulative) {
+      return variantCode;
+    }
+  }
+
+  // Fallback to first variant
+  return Object.keys(test.traffic_allocation)[0];
+}
+```
+
+### 37.3. Statistical Significance Calculator
+
+```python
+# services/abtest-service/internal/stats.py
+from scipy import stats
+
+def calculate_significance(
+    control_conversions: int,
+    control_total: int,
+    variant_conversions: int,
+    variant_total: int
+) -> dict:
+    """Two-proportion z-test."""
+    p1 = control_conversions / control_total
+    p2 = variant_conversions / variant_total
+    p_pooled = (control_conversions + variant_conversions) / (control_total + variant_total)
+    se = (p_pooled * (1 - p_pooled) * (1/control_total + 1/variant_total)) ** 0.5
+    z = (p2 - p1) / se if se > 0 else 0
+    p_value = 2 * (1 - stats.norm.cdf(abs(z)))
+
+    return {
+        "control_rate": p1,
+        "variant_rate": p2,
+        "lift": (p2 - p1) / p1 if p1 > 0 else 0,
+        "z_score": z,
+        "p_value": p_value,
+        "significant": p_value < 0.05,
+        "winner": "variant" if (p_value < 0.05 and p2 > p1) else "control"
+    }
+```
+
+---
+
+## 38. Testing Strategy chi tiết
+
+### 38.1. Lighthouse Audit CI
+
+```yaml
+# .github/workflows/lighthouse.yml
+name: Lighthouse CI
+on: [pull_request]
+
+steps:
+  - uses: actions/checkout@v3
+  - uses: actions/setup-node@v3
+  - run: npm ci
+  - run: npm run build
+  - run: npm run start &
+  - run: sleep 5
+  - name: Lighthouse CI
+    uses: treosh/lighthouse-ci-action@v9
+    with:
+      configPath: '.lighthouserc.json'
+      uploadArtifacts: true
+
+# .lighthouserc.json
+# {
+#   "ci": {
+#     "assert": {
+#       "assertions": {
+#         "categories:performance": ["error", {"minScore": 0.95}],
+#         "categories:accessibility": ["error", {"minScore": 0.95}],
+#         "categories:best-practices": ["error", {"minScore": 0.95}],
+#         "categories:seo": ["error", {"minScore": 0.95}],
+#         "first-contentful-paint": ["error", {"maxNumericValue": 400}],
+#         "largest-contentful-paint": ["error", {"maxNumericValue": 800}],
+#         "cumulative-layout-shift": ["error", {"maxNumericValue": 0.05}],
+#         "total-blocking-time": ["error", {"maxNumericValue": 100}]
+#       }
+#     }
+#   }
+# }
+```
+
+### 38.2. A/B Test Framework (PostHog style)
+
+```typescript
+// apps/landing-renderer/lib/experiments/feature-flags.ts
+import { Analytics } from '@/lib/tracking';
+
+interface ExperimentConfig {
+  key: string;
+  variants: Record<string, number>;
+  defaultVariant: string;
+}
+
+class ExperimentClient {
+  private assignments = new Map<string, string>();
+
+  getVariant(config: ExperimentConfig, userId: string): string {
+    if (this.assignments.has(config.key)) {
+      return this.assignments.get(config.key)!;
+    }
+
+    const hash = simpleHash(`${userId}:${config.key}`);
+    const bucket = hash % 100;
+
+    let cumulative = 0;
+    for (const [variant, percent] of Object.entries(config.variants)) {
+      cumulative += percent;
+      if (bucket < cumulative) {
+        this.assignments.set(config.key, variant);
+        Analytics.track('experiment_exposed', {
+          experiment: config.key,
+          variant: variant,
+        });
+        return variant;
+      }
+    }
+
+    this.assignments.set(config.key, config.defaultVariant);
+    return config.defaultVariant;
+  }
+}
+
+function simpleHash(s: string): number {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = ((hash << 5) - hash) + s.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+}
+
+export const experiments = new ExperimentClient();
+```
+
+### 38.3. Conversion Tracking Validation
+
+```typescript
+// apps/landing-renderer/lib/analytics/conversion-validation.ts
+export class ConversionValidator {
+  private pixelCalls: any[] = [];
+  private capiCalls: any[] = [];
+
+  init() {
+    // Intercept fbq calls
+    if (typeof window !== 'undefined' && (window as any).fbq) {
+      const originalFbq = (window as any).fbq;
+      (window as any).fbq = (...args: any[]) => {
+        if (args[0] === 'track') {
+          this.pixelCalls.push({
+            event: args[1],
+            data: args[2],
+            eventID: args[3]?.eventID,
+            timestamp: Date.now(),
+          });
+        }
+        return originalFbq.apply(this, args);
+      };
+    }
+  }
+
+  validateConversion(eventID: string): {
+    pixelFired: boolean;
+    capiFired: boolean;
+    matched: boolean;
+  } {
+    const pixel = this.pixelCalls.find(c => c.eventID === eventID);
+    const capi = this.capiCalls.find(c => c.event_id === eventID);
+
+    return {
+      pixelFired: !!pixel,
+      capiFired: !!capi,
+      matched: !!pixel && !!capi,
+    };
+  }
+
+  reportUnmatched() {
+    const unmatched = this.pixelCalls.filter(p =>
+      !this.capiCalls.some(c => c.event_id === p.eventID)
+    );
+
+    if (unmatched.length > 0) {
+      console.warn('Pixel events without CAPI:', unmatched);
+      // Report to monitoring
+    }
+  }
+}
+```
+
+### 38.4. Bot Detection Rate Test
+
+```python
+# tests/bot_detection/test_bot_detection.py
+import pytest
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+
+@pytest.fixture
+def headless_browser():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    return webdriver.Chrome(options=options)
+
+@pytest.fixture
+def real_browser():
+    options = Options()
+    # No --headless
+    return webdriver.Chrome(options=options)
+
+def test_headless_blocked(headless_browser):
+    """Bot bị block 100%."""
+    headless_browser.get("https://landing.apex.vn/")
+    headless_browser.fill_form(name="Bot User", phone="0900000000")
+    headless_browser.click_submit()
+
+    # Should see error or be silently dropped
+    assert not headless_browser.find_success_message()
+    assert headless_browser.find_error_or_no_response()
+
+def test_real_browser_passes(real_browser):
+    """Real browser pass 99%+."""
+    real_browser.get("https://landing.apex.vn/")
+    real_browser.fill_form(name="Real User", phone="0987654321")
+    real_browser.click_submit()
+
+    assert real_browser.find_success_message()
+```
+
+---
+
+## 39. Disaster Recovery
+
+### 39.1. RPO & RTO Targets
+
+| Component | RPO | RTO | Backup Method |
+|-----------|-----|-----|---------------|
+| Landing pages (PostgreSQL) | 5 min | 30 min | WAL continuous + daily snapshot |
+| Raw leads (ScyllaDB) | 1 hour | 2 hours | Daily snapshot |
+| Tracking events (ClickHouse) | 1 hour | 4 hours | Replicated |
+| Asset files (MinIO) | 0 (replicated) | 30 min | Cross-region replication |
+| Pixel config (PostgreSQL) | 5 min | 30 min | WAL |
+| HMAC secrets | 0 (Vault) | 5 min | HashiCorp Vault |
+
+### 39.2. Disaster Scenarios
+
+#### Scenario A: Meta Pixel ID bị mất/revoke
+
+**Detection:**
+- Pixel response 400 với "invalid pixel"
+- CAPI diagnostics shows low match rate
+
+**Response:**
+1. Alert admin qua Telegram
+2. Auto-rotate sang backup pixel (nếu có)
+3. Pause campaigns liên quan
+4. Re-issue new pixel qua Meta Business Manager
+5. Update config + redeploy
+6. RTO: < 30 phút
+
+#### Scenario B: CAPI Worker Down
+
+**Detection:**
+- Queue backlog > 10K events
+- Meta Graph response rate drops
+
+**Response:**
+1. K3s auto-restart worker
+2. Nếu vẫn fail → manual scale up workers
+3. Process DLQ events
+4. Verify EMQ score restored
+5. RTO: < 15 phút
+
+#### Scenario C: Tracking Data Loss
+
+**Detection:**
+- ClickHouse query shows gap
+- ScyllaDB count drops unexpectedly
+
+**Response:**
+1. Restore từ daily snapshot
+2. Replay from NATS JetStream (if events still in stream)
+3. Alert tenants affected
+4. Investigate root cause
+5. RTO: < 1 giờ
+
+#### Scenario D: Tenant Data Corruption
+
+**Detection:**
+- Landing page render fail
+- Form submit error
+
+**Response:**
+1. Stop serving landing page (show maintenance page)
+2. Restore từ backup
+3. Verify integrity
+4. Resume service
+5. RTO: < 15 phút
+
+#### Scenario E: Bot Attack (10K req/s)
+
+**Detection:**
+- Wasm attestation fail rate > 50%
+- Argon2 PoW challenge queue full
+
+**Response:**
+1. Auto-enable hCaptcha cho tất cả submissions
+2. Rate limit per IP giảm xuống 5 req/min
+3. Alert SRE
+4. Analyze bot patterns
+5. Update Wasm heuristics
+6. RTO: < 10 phút
+
+### 39.3. Backup Strategy
+
+```bash
+#!/bin/bash
+# scripts/backup-landing-capi.sh
+set -e
+
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/backup/landing-capi/$TIMESTAMP"
+mkdir -p $BACKUP_DIR
+
+# 1. PostgreSQL schema + data
+pg_dump -h postgres-primary -U rinco -d rinco_landing \
+  --schema=public \
+  --no-owner \
+  | gzip > $BACKUP_DIR/postgres.sql.gz
+
+# 2. ScyllaDB raw_leads snapshot
+nodetool snapshot -t $TIMESTAMP rinco_chat
+
+# 3. ClickHouse metadata
+clickhouse-backup create $TIMESTAMP
+
+# 4. MinIO asset backup
+mc mirror minio/rinco-tenant-assets minio/rinco-backups/assets
+
+# 5. Upload to S3
+aws s3 sync $BACKUP_DIR s3://rinco-backups/landing-capi/$TIMESTAMP/
+
+# 6. Verify
+sha256sum $BACKUP_DIR/* > $BACKUP_DIR/SHA256SUMS
+
+# 7. Cleanup (>30 days)
+find /backup/landing-capi -mtime +30 -exec rm -rf {} \;
+
+echo "Backup complete: $TIMESTAMP"
+```
+
+### 39.4. DR Drill (Quarterly)
+
+```yaml
+# tests/dr/drill-landing-capi.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dr-drill-landing-capi-q3-2026
+spec:
+  template:
+    spec:
+      containers:
+      - name: drill
+        image: rinco/dr-drill:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # 1. Tạo test tenant với 100 landing pages, 10K leads
+          # 2. Snapshot tất cả DB
+          # 3. Kill primary Postgres
+          # 4. Kill ScyllaDB primary
+          # 5. Promote replicas
+          # 6. Verify landing page render OK
+          # 7. Submit test lead → verify CAPI gửi được
+          # 8. Verify tracking events ghi được
+          # 9. Pass/Fail report
+        env:
+        - name: SLACK_WEBHOOK
+          valueFrom:
+            secretKeyRef: {name: dr-secrets, key: slack-webhook}
+      restartPolicy: Never
+```
+
+---
+
+## 40. Cost Estimation
+
+### 40.1. Per-Tenant Storage
+
+```
+Giả định: 1 tenant active với 1 landing page, 1000 leads/month
+
+Storage breakdown:
+  - Lead raw data (ScyllaDB): 1000 × 5KB = 5 MB/month
+  - Tracking events (ClickHouse): 50K × 200B = 10 MB/month
+  - Landing page config (PostgreSQL): ~100 KB
+  - Assets (MinIO): ~50 MB (1 banner + 5 ảnh)
+  Total per tenant: ~65 MB/month
+
+Cost:
+  - ScyllaDB shared: $2/tenant
+  - ClickHouse shared: $0.5/tenant
+  - PostgreSQL shared: $0.1/tenant
+  - MinIO: $0.05/tenant
+  Total storage cost: ~$2.65/tenant/month
+```
+
+### 40.2. CAPI Call Costs
+
+```
+Meta CAPI: FREE (unlimited events)
+
+Infrastructure cost:
+  - Worker (Go): $0.001/1000 events = $0.001 per 1K events
+  - ClickHouse write: $0.0005/1000 events
+  - NATS publish: $0.0002/1000 events
+  Total per event: $0.0000017 per event
+
+For 1M events/month: $1.7/month
+For 10M events/month: $17/month
+```
+
+### 40.3. Bot Protection Infrastructure
+
+```
+Wasm module:
+  - CDN delivery: ~$0.10/month (Cloudflare)
+  - Browser compute: client-side (free)
+
+Argon2 PoW:
+  - Server: shared CPU = $0.20/month
+  - Browser: client-side (free)
+
+hCaptcha fallback:
+  - 1000 free requests/month
+  - $0.99 per 1000 additional
+  For 10K challenges/month: ~$10/month
+
+Total bot protection: ~$10/tenant/month (shared)
+```
+
+### 40.4. Total Cost per Tenant
+
+```
+Storage: $2.65/tenant
+CAPI infrastructure: $0.17/tenant (100 events/month avg)
+Bot protection: $0.10/tenant
+Compute (shared): $0.50/tenant
+
+Total: ~$3.42/tenant/month
+
+Với 10,000 tenants:
+  - Total: $34,200/month infrastructure
+  - Cost per tenant: $3.42
+```
+
+### 40.5. Comparison với SaaS truyền thống
+
+| Platform | Chi phí/tenant/month (10K leads) |
+|----------|----------------------------------|
+| Unbounce | $74 |
+| Leadpages | $37 |
+| Instapage | $79 |
+| ClickFunnels | $127 |
+| HubSpot Landing | $90 |
+| **RINCO Landing + CAPI** | **~$3.4** |
+
+→ Tiết kiệm 90%+ so với SaaS truyền thống.
+
+---
+
+## 41. Open Questions bổ sung (tổng cộng ≥ 30)
+
+21. **Custom code (TypeScript) trong workflow:** Có hỗ trợ không? Nếu có, runtime Node.js hay Wasm sandbox?
+
+23. **PWA / AMP version:** Có cần build PWA / AMP variant của landing page để serve trên mobile slow network?
+
+24. **GA4 + Server-side:** Tích hợp Google Analytics 4 với server-side tracking (qua Measurement Protocol)?
+
+25. **Multi-variant A/B test:** Tối đa bao nhiêu variant? 2, 5, unlimited?
+
+26. **Custom domain SSL:** Auto qua Let's Encrypt (Caddy) hay Cloudflare?
+
+27. **Server-side rendering (SSR) với Edge:** Dùng Vercel Edge Functions hay Cloudflare Workers?
+
+28. **i18n routing:** URL `/vi/`, `/en/` hay subdomain `en.tenant.vn`?
+
+29. **Currency conversion:** Lead value trong CAPI - convert sang USD nếu tenant dùng VND?
+
+30. **Offline mode:** Có cache landing page để serve offline?
+
+31. **PWA install prompt:** Có show "Add to Home Screen" prompt?
+
+32. **Push notification opt-in:** Có request permission cho browser push?
+
+33. **Email lead magnet:** Có auto-send ebook PDF qua email sau khi submit?
+
+34. **Webhook signing:** HMAC SHA256 cho outgoing webhook?
+
+35. **Replay attack prevention:** Nonce + timestamp window?
+
+36. **Lead scoring integration:** Real-time AI scoring trong form (suggestion)?
+
+37. **Form pre-fill:** Nếu user đã submit trước, pre-fill thông tin?
+
+38. **Multi-step progress save:** User có thể resume mid-flow?
+
+39. **Conversion API token rotation:** Auto-rotate CAPI token mỗi 90 ngày?
+
+40. **Pixel ID hot-swap:** Cho phép thay pixel ID không cần deploy?
+
+41. **GDPR consent mode v2:** Implement Google Consent Mode v2?
+
+42. **CCPA compliance:** California Consumer Privacy Act - "Do Not Sell" link?
+
+43. **Heatmap tracking:** Có tích hợp Hotjar/FullStory session recording?
+
+44. **Multi-touch attribution:** Track user qua nhiều session?
+
+45. **Landing page versioning:** Git-style versioning cho content?
+
+46. **Edge function for personalization:** Customize content per IP/cookie?
+
+47. **Sticky form variant:** Form floating khi scroll?
+
+48. **Exit-intent popup thông minh:** AI detect exit intent?
+
+49. **Video background:** Lazy-load video cho hero section?
+
+50. **3D / WebGL hero:** Custom 3D rendering (extra cost)?
+
+---
+
+## 42. Acceptance Criteria cuối cùng
+
+| AC | Tiêu chí | Đo lường |
+|----|---------|---------|
+| AC-LP-01 | Lighthouse Performance ≥ 95 | Score |
+| AC-LP-02 | FCP < 0.4s | Lighthouse |
+| AC-LP-03 | LCP < 0.8s | Lighthouse |
+| AC-LP-04 | CLS < 0.05 | Lighthouse |
+| AC-LP-05 | TBT < 100ms | Lighthouse |
+| AC-LP-06 | Form submit → Lead in Scylla < 50ms | p95 |
+| AC-LP-07 | CAPI success rate ≥ 99.5% | Metric |
+| AC-LP-08 | EMQ ≥ 7 | Meta diagnostic |
+| AC-LP-09 | Bot detection rate ≥ 99% | Test suite |
+| AC-LP-10 | 100% nội dung từ chiase_cu được giữ | Manual QA |
+| AC-LP-11 | GDPR/PDPA cookie consent tuân thủ | Audit |
+| AC-LP-12 | Hybrid Dual-Tracking 100% match rate | Conversion validator |
+| AC-LP-13 | Conversion API call < 500ms p95 | Custom metric |
+| AC-LP-14 | A/B test traffic allocation exact | Stats validator |
+| AC-LP-15 | Webhook delivery 100% với retry | Delivery report |
+| AC-LP-16 | Form submission rate +20% so với cũ | A/B comparison |
+| AC-LP-17 | Cost per tenant < $5/month | Billing |
+| AC-LP-18 | Zero data loss (RPO < 5min) | DR drill |
+| AC-LP-19 | 10 tenants onboard trong 1 tuần | Onboarding metric |
+| AC-LP-20 | Zero critical security issues | Security scan |
+
+---
+
+## 43. Kết luận
+
+Landing Page + Facebook CAPI là **mặt tiền** của RINCO. Chất lượng landing page ảnh hưởng trực tiếp đến:
+
+1. **Conversion rate** (lead quality)
+2. **Cost per lead** (CPL cho ads)
+3. **EMQ score** (Meta optimization quality)
+4. **Brand perception** (UI/UX)
+
+Tổng effort: 12 tuần × 5 FTE = 60 person-weeks.
+Services: 3 (landing-ingest, meta-capi, bot-detection).
+Acceptance: 20 AC phải đạt 100%.
+
+Khi GA, expected outcomes:
+- ✅ Lighthouse 95+ trên mọi tenant
+- ✅ CAPI EMQ ≥ 7 → Meta ads optimization tốt hơn 30%
+- ✅ Bot detection 99%+ → giảm 80% spam leads
+- ✅ Conversion rate +20% so với landing cũ
+- ✅ Cost per tenant < $5/month (vs $37+ SaaS truyền thống)
+
+---
+
+**Tiếp theo:** [`docs/06-chat-engine/README.md`](../06-chat-engine/README.md) – Chat Real-time Engine.
+
 **Tiếp theo:** [`docs/06-chat-engine/README.md`](../06-chat-engine/README.md) – Chat Real-time Engine (đã được mở rộng).

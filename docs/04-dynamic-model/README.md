@@ -2830,6 +2830,2476 @@ Các câu hỏi cần user quyết định trước khi implement:
 
 25. **Webhook signing:** Workflow webhook trigger có cần HMAC signing để receiver verify không?
 
+26. **Auto code-gen cho Tenants lớn:** Khi nào trigger code-gen? Có cần chờ tenant yêu cầu, hay auto khi schema stable? → Ảnh hưởng tới workflow deploy.
+
+27. **Formula field có support lookup sang tenant khác không?** Cross-tenant lookup có vi phạm multi-tenant isolation không?
+
+28. **Schema Backup tần suất:** Daily snapshot hay continuous WAL? Daily rẻ hơn, WAL an toàn hơn.
+
+29. **Workflow Notification kênh:** Email, SMS, Telegram, In-app - ưu tiên kênh nào?
+
+30. **Sandbox giới hạn:** CEL sandbox có cần support file I/O không (cho tenant upload script)?
+
 ---
 
-**Tiếp theo:** [`docs/05-landing-capi/README.md`](../05-landing-capi/README.md) – Landing Page + Facebook CAPI chi tiết (đã được mở rộng với chiase_cu migration).
+## 29. Service Implementation Roadmap (bổ sung)
+
+Đây là roadmap bổ sung tập trung vào **service-level breakdown** (team assignments, dependencies) khác với §27 (feature-level breakdown).
+
+### 29.1. Service Breakdown
+
+| Service | Ngôn ngữ | Responsibility | Owner Team | Dependencies |
+|---------|----------|----------------|------------|--------------|
+| `dynamic-model-service` | Go (Echo + Huma) | CRUD entity/field definitions | Backend Core | PostgreSQL, Valkey |
+| `validation-engine` | Go (cel-go) | Runtime validation pipeline | Backend Core | `dynamic-model-service` |
+| `workflow-engine` | Go | State machine + triggers | Backend Core | `dynamic-model-service`, NATS |
+| `schema-migrator` | Python (Celery) | Auto detect drift + migrate | Platform | PostgreSQL, MongoDB |
+| `codegen-pipeline` | Go + Bash | Generate Ent schemas + types | DevX | GitHub Actions, ECR |
+| `formula-evaluator` | Rust (wasmtime) | High-perf formula eval | Performance | `validation-engine` |
+| `meta-schema-ui` | TypeScript (Next.js) | Visual Schema Builder | Frontend | `dynamic-schema-bff` |
+| `dynamic-schema-bff` | TypeScript (Bun) | BFF aggregation cho UI | Frontend | `dynamic-model-service` |
+
+### 29.2. Inter-service Communication
+
+```
+[meta-schema-ui]
+    ↓ HTTPS (BFF aggregation)
+[dynamic-schema-bff]
+    ↓ gRPC + Connect-RPC
+[dynamic-model-service] ←→ [validation-engine]
+    ↓                          ↓
+[PostgreSQL]              [Valkey cache]
+    ↓
+[NATS] → [workflow-engine] → [Trigger Workers]
+                                 ↓
+                            [External: email/webhook/AI]
+```
+
+### 29.3. Build & Release Order
+
+1. **Phase 1** (Tuần 1-4): `dynamic-model-service` + PostgreSQL schema
+2. **Phase 2** (Tuần 5-6): `validation-engine` với CEL sandbox
+3. **Phase 3** (Tuần 7-8): `workflow-engine` với NATS triggers
+4. **Phase 4** (Tuần 9-10): `meta-schema-ui` MVP
+5. **Phase 5** (Tuần 11-12): `codegen-pipeline` + CI/CD
+6. **Phase 6** (Tuần 13-14): `formula-evaluator` (Rust)
+7. **Phase 7** (Tuần 15-16): Polish + GA
+
+### 29.4. Team Assignments
+
+- **Backend Core (4 người):** `dynamic-model-service`, `validation-engine`, `workflow-engine`
+- **Frontend (2 người):** `meta-schema-ui`, `dynamic-schema-bff`
+- **Platform (1 người):** `schema-migrator`, infra
+- **DevX (1 người):** `codegen-pipeline`
+- **Performance (1 người):** `formula-evaluator` (Rust)
+
+Total: 9 người trong 16 tuần.
+
+### 29.5. Release Branching
+
+```
+main (protected)
+  ├── develop
+  │   ├── feature/dm-01-entity-crud
+  │   ├── feature/dm-02-cel-validator
+  │   └── ...
+  └── hotfix/dm-XXX
+```
+
+- Mỗi service có 1 PR tối đa 500 LOC.
+- Require 2 reviewer approve.
+- CI check: lint + test + benchmark regression < 10%.
+
+---
+
+## 30. Testing Strategy chi tiết (bổ sung §26)
+
+### 30.1. Test Matrix per Layer
+
+| Layer | Test type | Tool | Coverage |
+|-------|-----------|------|----------|
+| Schema Definition Parser | Unit (table-driven) | Go testing | 95% |
+| CEL Sandbox | Unit + fuzz | go-fuzz | 90% |
+| Validation Pipeline | Unit + integration | testcontainers | 90% |
+| Workflow Engine | Unit + integration | testcontainers + NATS | 85% |
+| Schema Cache | Unit + race detector | go test -race | 100% |
+| Drift Detector | Property-based | gopter | 80% |
+| Code-gen | Golden file | go test + git diff | 100% |
+| Schema Builder UI | Component (Vitest) | @testing-library/react | 85% |
+| Workflow Editor | E2E (Playwright) | playwright | 80% |
+| Full Stack | E2E + visual regression | Playwright + Percy | 70% |
+
+### 30.2. Property-Based Testing Example (drift detector)
+
+```go
+// services/schema-migrator/internal/drift/properties_test.go
+package drift_test
+
+import (
+    "testing"
+    "github.com/leanovate/gopter"
+    "github.com/leanovate/gopter/gen"
+    "github.com/leanovate/gopter/prop"
+)
+
+func TestPropertyDriftScore_Monotonic(t *testing.T) {
+    parameters := gopter.DefaultTestParameters()
+    parameters.MinSuccessfulTests = 1000
+
+    properties := gopter.NewProperties(nil)
+
+    properties.Property("more fields → higher score", prop.ForAll(
+        func(numFields1, numFields2 int) bool {
+            if numFields1 >= numFields2 {
+                return true
+            }
+            sample1 := generateSample(numFields1, 100)
+            sample2 := generateSample(numFields1, 100)
+            score1 := computeDrift(sample1)
+            score2 := computeDrift(sample2)
+            return score1 <= score2 + 0.001 // tolerate floating point
+        },
+        gen.IntRange(1, 50),
+        gen.IntRange(1, 50),
+    ))
+
+    properties.TestingRun(t)
+}
+```
+
+### 30.3. Fuzz Testing CEL Sandbox
+
+```go
+// services/validation-engine/internal/cel/fuzz_test.go
+package cel_test
+
+import (
+    "testing"
+    "github.com/google/cel-go/cel"
+)
+
+func FuzzEvaluateExpression(f *testing.F) {
+    f.Add(`score >= 70`)
+    f.Add(`name == "test"`)
+    f.Add(`1 + 1 == 2`)
+    f.Add(`phone.matches("^\\+84\\d+$")`)
+
+    f.Fuzz(func(t *testing.T, expr string) {
+        defer func() {
+            if r := recover(); r != nil {
+                t.Errorf("expression panicked: %v - expr=%s", r, expr)
+            }
+        }()
+
+        env, _ := cel.NewEnv(cel.Variable("score", cel.IntType))
+        ast, issues := env.Compile(expr)
+        if issues != nil && issues.Err() != nil {
+            return // expected for malformed
+        }
+        program, _ := env.Program(ast)
+        _, err := program.Eval(map[string]interface{}{"score": 75})
+        if err != nil {
+            // Expected for type mismatch
+            return
+        }
+    })
+}
+
+// Run: go test -fuzz=FuzzEvaluateExpression -fuzztime=60s
+```
+
+### 30.4. Visual Regression Test (Percy)
+
+```typescript
+// apps/meta-schema-ui/e2e/schema-builder.spec.ts
+import { test, expect } from '@playwright/test';
+import percySnapshot from '@percy/playwright';
+
+test('schema builder visual snapshot', async ({ page }) => {
+  await page.goto('/admin/schema/lead');
+  await page.click('[data-testid=add-field-button]');
+  await page.waitForSelector('[data-testid=field-form]');
+
+  await percySnapshot(page, 'Schema Builder - Add Field Form');
+
+  await page.click('[data-testid=field-type-currency]');
+  await percySnapshot(page, 'Schema Builder - Currency Field Selected');
+});
+
+test('workflow editor visual snapshot', async ({ page }) => {
+  await page.goto('/admin/workflow/lead_lifecycle');
+  await page.waitForSelector('[data-testid=react-flow]');
+  await percySnapshot(page, 'Workflow Editor - Lead Lifecycle');
+});
+```
+
+### 30.5. Performance Regression Test
+
+```go
+// services/dynamic-model/internal/service/perf_test.go
+package service_test
+
+import (
+    "testing"
+    "time"
+)
+
+func TestPerformanceRegression_ValidateRecord_50Fields(t *testing.T) {
+    if testing.Short() {
+        t.Skip("skipping perf test in short mode")
+    }
+
+    svc := setupService(t)
+    schema := generateLargeSchema(50)
+    payload := generateLargePayload(50)
+
+    // Warmup
+    for i := 0; i < 100; i++ {
+        svc.Validate(ctx, schema, payload)
+    }
+
+    // Measure
+    iters := 10000
+    start := time.Now()
+    for i := 0; i < iters; i++ {
+        svc.Validate(ctx, schema, payload)
+    }
+    elapsed := time.Since(start)
+
+    p99 := elapsed / time.Duration(iters) * 99
+    if p99 > 50*time.Millisecond {
+        t.Fatalf("performance regression: p99=%v, expected < 50ms", p99)
+    }
+}
+```
+
+CI Pipeline:
+- Push PR → Run perf test → Compare với baseline → Block nếu regression > 10%.
+
+### 30.6. Contract Testing (Pact)
+
+```go
+// services/dynamic-model/internal/api/contract_test.go
+package api_test
+
+import (
+    "testing"
+    "github.com/pact-foundation/pact-go/v3/pact"
+)
+
+func TestContract_GetEntity(t *testing.T) {
+    mockProvider, _ := pact.NewV3Pact("dynamic-model-service", "crm-core")
+    mockProvider.
+        Given("entity lead exists for tenant apex-fintech").
+        UponReceiving("a request to get lead entity").
+        WithRequest("GET", "/api/dm/v1/entities/lead", map[string]string{
+            "X-Tenant-ID": "apex-fintech",
+        }).
+        WillRespondWith(200, func(builder *pact.V3ResponseBuilder) {
+            builder.JSONBody(map[string]interface{}{
+                "code": "lead",
+                "fields": []map[string]string{{"code": "name", "type": "string"}},
+            })
+        })
+
+    // Verify consumer can parse response
+    err := mockProvider.Verify(t)
+    if err != nil {
+        t.Fatal(err)
+    }
+}
+```
+
+---
+
+## 31. Migration Plan cho Schema động (bổ sung §21)
+
+### 31.1. Migration Patterns
+
+#### Pattern A: Add Field (Zero-Downtime)
+
+```sql
+-- Step 1: Add nullable column (lock ngắn ~ms)
+ALTER TABLE leads ADD COLUMN new_phone_format TEXT;
+
+-- Step 2: Backfill in batches
+DO $$
+DECLARE
+  last_id UUID := '00000000-0000-0000-0000-000000000000';
+  batch_size INT := 5000;
+BEGIN
+  LOOP
+    UPDATE leads
+    SET new_phone_format = regexp_replace(phone, '^0', '+84')
+    WHERE id > last_id AND new_phone_format IS NULL
+    ORDER BY id LIMIT batch_size
+    RETURNING id INTO last_id;
+    EXIT WHEN NOT FOUND;
+    PERFORM pg_sleep(0.05);
+    COMMIT;
+  END LOOP;
+END $$;
+```
+
+#### Pattern B: Drop Field
+
+```sql
+-- Step 1: Mark deprecated (app still writes both old and new)
+UPDATE entity_definitions SET deleted_at = now() WHERE code = 'old_field';
+
+-- Step 2: Wait 30 days for grace period
+-- (backwards-compatible clients still work)
+
+-- Step 3: Hard drop column
+ALTER TABLE leads DROP COLUMN old_field;
+```
+
+#### Pattern C: Change Type
+
+```sql
+-- INT → BIGINT
+ALTER TABLE leads ALTER COLUMN score TYPE BIGINT USING score::BIGINT;
+
+-- TEXT → JSONB
+ALTER TABLE leads ALTER COLUMN data TYPE JSONB USING data::JSONB;
+```
+
+### 31.2. Migration Tooling
+
+`rincoctl migrate` CLI:
+
+```bash
+# Preview migration
+$ rincoctl migrate preview --tenant apex-fintech --entity lead --version 13
+Would execute:
+  ALTER TABLE leads ADD COLUMN new_phone_format TEXT;
+  -- backfill 234,567 rows in 12 batches of 20K
+  -- estimated time: 45 seconds
+  -- lock: NONE (no table rewrite)
+
+# Apply with confirmation
+$ rincoctl migrate apply --tenant apex-fintech --entity lead --version 13
+✓ Lock acquired (timeout=5s)
+✓ Column added
+✓ Backfill started (batch 1/12)...
+✓ Backfill complete
+✓ Schema version bumped
+✓ Cache invalidated across 4 services
+Done in 47s.
+
+# Rollback
+$ rincoctl migrate rollback --tenant apex-fintech --entity lead --to-version 12
+✓ Column dropped
+✓ Schema version reverted
+✓ Cache re-warmed
+Done in 2s.
+```
+
+### 31.3. Cross-tenant Migration Coordination
+
+Khi super admin thay đổi **global template** (industry template) → cần apply cho N tenants:
+
+```python
+# services/schema-migrator/coordinator/multi_tenant.py
+class MultiTenantMigrationCoordinator:
+    async def apply_to_all_tenants(self, template_code: str, from_version: int, to_version: int):
+        tenants = await self.get_tenants_using_template(template_code)
+
+        # Phase 1: 10% canary
+        canary = tenants[:len(tenants)//10]
+        results = await asyncio.gather(*[
+            self.apply_to_tenant(t, from_version, to_version)
+            for t in canary
+        ])
+        if not all(r.success for r in results):
+            await self.rollback_canary(canary, from_version)
+            return
+
+        # Phase 2: 50%
+        next_batch = tenants[len(tenants)//10:len(tenants)//2]
+        await asyncio.gather(*[
+            self.apply_to_tenant(t, from_version, to_version)
+            for t in next_batch
+        ])
+
+        # Phase 3: 100% (rest)
+        rest = tenants[len(tenants)//2:]
+        await asyncio.gather(*[
+            self.apply_to_tenant(t, from_version, to_version)
+            for t in rest
+        ])
+```
+
+### 31.4. Migration Monitoring
+
+Metric:
+- `migration_duration_seconds{tenant, entity, version}` histogram
+- `migration_failure_total{tenant, entity, version, error_type}` counter
+- `migration_active{tenant, entity}` gauge
+- `migration_lock_wait_seconds{tenant, entity}` histogram
+
+Alert:
+- Migration > 5 phút → Slack #platform-team
+- Migration fail > 1% trong batch → PagerDuty
+
+---
+
+## 32. Disaster Recovery (bổ sung §24)
+
+### 32.1. DR Scenario Catalog
+
+| Scenario | Detection | RTO | Recovery Action |
+|----------|-----------|-----|-----------------|
+| 1 service crash | K3s liveness | 5s | Auto-restart |
+| 1 node fail | Heartbeat 30s miss | 2 min | K3s reschedule |
+| DB primary down | Health check | 5 min | Promote replica |
+| Region fail | DNS failover | 30s | GeoDNS |
+| Schema corruption | Smoke test fail | 30 min | Restore from backup |
+| Bad migration | Validation error | 15 min | Rollback migration + code |
+| Cache poisoning | Anomaly detection | 5 min | Flush + rebuild |
+| Template bundle corrupted | SHA mismatch | 2 min | Re-fetch from S3 |
+
+### 32.2. Schema Corruption Auto-Repair
+
+```bash
+# Detect
+$ rincoctl schema verify --tenant apex-fintech --deep
+✗ Entity "lead": foreign key inconsistency (3 records)
+✗ Entity "deal": index checksum mismatch
+✓ Workflow definitions OK
+✓ Permission policies OK
+
+# Auto-repair
+$ rincoctl schema repair --tenant apex-fintech --auto --backup
+✓ Backed up to s3://rinco-backups/repair/20260907-153045/
+✓ Cleaned 3 orphan records in "lead"
+✓ Rebuilt 2 indexes
+✓ Verified OK
+```
+
+### 32.3. Backup Strategy
+
+```yaml
+# infra/k8s/cronjobs/dm-backup.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dm-schema-backup
+spec:
+  schedule: "0 */4 * * *"  # Every 4 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: pg-dump
+            image: postgres:17
+            command:
+            - /bin/sh
+            - -c
+            - |
+              pg_dump -h $PG_HOST -U $PG_USER -d rinco_dynamic \
+                --schema-only --no-owner \
+                | gzip > /backup/schema-$(date +%Y%m%d_%H%M%S).sql.gz
+              aws s3 cp /backup/ s3://rinco-backups/schema/ --recursive
+          restartPolicy: OnFailure
+```
+
+Retention:
+- Hot backup (S3 Standard): 7 ngày
+- Warm (S3 IA): 30 ngày
+- Cold (Glacier): 1 năm
+
+### 32.4. DR Drill (Quarterly)
+
+```yaml
+# tests/dr/drill-dm.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dm-dr-drill-q3-2026
+spec:
+  template:
+    spec:
+      containers:
+      - name: drill
+        image: rinco/dr-drill:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # 1. Tạo test tenant với 100 entities, 10K fields, 1M records
+          # 2. Snapshot schema
+          # 3. Kill primary Postgres
+          # 4. Promote replica
+          # 5. Verify dynamic CRUD + validation works
+          # 6. Compare checksum schema definitions
+          # 7. Verify không mất fields, workflows
+          # 8. Pass/Fail report to Slack
+      restartPolicy: Never
+```
+
+---
+
+## 33. Edge Cases & Error Scenarios (≥ 30 scenarios)
+
+### 33.1. Schema Definition Conflicts
+
+| # | Edge case | Detection | Resolution |
+|---|-----------|-----------|------------|
+| E1 | 2 admin cùng edit 1 entity | ETag mismatch | Return 409, merge manually |
+| E2 | Field code đã tồn tại | UNIQUE constraint | Return 409, suggest rename |
+| E3 | Type conflict (string → number) | Migration check | Block migration, warn user |
+| E4 | Required field bị xóa | Pre-check | Block delete, force archive |
+| E5 | Reference field target entity bị xóa | FK validation | Block, suggest replacement |
+| E6 | Workflow transition invalid (no permission) | Pre-validate | Return 422, show list valid transitions |
+| E7 | CEL expression quá phức tạp (>4096 chars) | Parser limit | Return 422 with length |
+| E8 | Circular reference giữa formulas | DFS detect | Return 422, show cycle path |
+| E9 | Formula reference field không tồn tại | Schema check | Return 422, list missing fields |
+| E10 | Index name collision (auto-gen) | UNIQUE constraint | Append hash suffix |
+
+### 33.2. Migration Failures
+
+| # | Edge case | Detection | Resolution |
+|---|-----------|-----------|------------|
+| E11 | Backfill timeout (>30 phút) | Health check | Pause, alert SRE, manual continue |
+| E12 | Lock timeout (5s exceeded) | PG error | Retry with longer timeout |
+| E13 | Disk full during backfill | PG error | Stop, free space, resume |
+| E14 | Connection drop mid-batch | TCP error | Reconnect + idempotent retry |
+| E15 | Concurrent migration 2 instances | Advisory lock | Block 2nd, queue |
+| E16 | Tenant bị xóa trong khi migrating | FK check | Cancel migration, cleanup |
+| E17 | Schema rollback conflict (newer v applied) | Version check | Block rollback |
+| E18 | Bad SQL generated by migration tool | Smoke test | Block apply, alert DevX |
+| E19 | Memory exhaustion (huge JSONB) | OOM | Stream JSONB, chunked update |
+| E20 | Replication lag > 10s | Lag monitor | Pause migration, wait for catch-up |
+
+### 33.3. JSONB Query Performance
+
+| # | Edge case | Detection | Resolution |
+|---|-----------|-----------|------------|
+| E21 | Query full table scan trên JSONB field | pg_stat_statements | Auto-create GIN index |
+| E22 | Deep nested JSONB query (5+ levels) | Slow query log | Materialize column + index |
+| E23 | N+1 query trong list view | Query pattern detect | Eager load hoặc join |
+| E24 | Large IN clause (>10K values) | Performance | Chunk into batches |
+| E25 | JSONB query với multiple OR | Plan analyze | Bitmap index scan |
+| E26 | Cast fail JSONB→numeric | PG error | NULL fallback + warn |
+| E27 | Unicode trong JSONB key | Encoding issue | Normalize UTF-8 |
+| E28 | JSONB size > 8KB (TOAST) | Storage check | Compress + external storage |
+| E29 | Concurrent update same JSONB key | MVCC | Last-write-wins + conflict log |
+| E30 | Read uncommitted JSONB during backfill | Isolation level | Use READ COMMITTED |
+
+### 33.4. Workflow Engine Errors
+
+| # | Edge case | Detection | Resolution |
+|---|-----------|-----------|------------|
+| E31 | Trigger timeout (>2s) | Worker watchdog | Move to DLQ |
+| E32 | Trigger infinite loop (sub-workflow) | Depth counter | Block at MAX_WORKFLOW_DEPTH=5 |
+| E33 | Webhook receiver down | HTTP timeout | Retry 3x exponential backoff |
+| E34 | Email send fail (SMTP down) | SMTP error | Retry + alert ops |
+| E35 | CEL evaluation panic | Recover | Catch panic, return error |
+| E36 | Workflow definition invalid JSON | Parser | Block save |
+| E37 | Transition không có permission | RBAC | Return 403 |
+| E38 | State machine deadlock (cycle) | Validation | Block save |
+| E39 | Trigger spawns 1000 child records | Quota check | Block + alert |
+| E40 | Workflow run > 90 ngày | TTL check | Auto-expire |
+
+### 33.5. Code-Gen Issues
+
+| # | Edge case | Detection | Resolution |
+|---|-----------|-----------|------------|
+| E41 | Ent schema generation fail | go generate | Alert DevX, fallback JSONB |
+| E42 | TS type-gen cycle | TypeScript | Inline type or break cycle |
+| E43 | Git push conflict (concurrent gen) | Git error | Re-fetch, regenerate |
+| E44 | Binary build fail | Compile error | Alert DevX, hold deploy |
+| E45 | Canary deploy metric regression | Prometheus | Auto-rollback |
+| E46 | Generated code has security issue | SAST scan | Block merge |
+| E47 | Generated binary > 100MB | Size check | Split binary per entity |
+| E48 | Old generated binary still running | Version check | Force restart |
+| E49 | CI/CD pipeline stuck | Timeout 30 min | Alert DevX |
+| E50 | Codegen triggered on every save (spam) | Frequency check | Throttle 1/hour |
+
+---
+
+## 34. Code Examples chi tiết
+
+### 34.1. Go - Meta-Schema Service (Hoàn chỉnh)
+
+#### 34.1.1. Cấu trúc Service
+
+```
+services/dynamic-model/
+├── cmd/
+│   └── main.go
+├── internal/
+│   ├── api/
+│   │   ├── entity.go
+│   │   ├── field.go
+│   │   ├── workflow.go
+│   │   └── view.go
+│   ├── domain/
+│   │   ├── entity.go
+│   │   ├── field.go
+│   │   ├── workflow.go
+│   │   └── validation.go
+│   ├── repository/
+│   │   ├── entity_repo.go
+│   │   ├── field_repo.go
+│   │   ├── workflow_repo.go
+│   │   └── cache.go
+│   ├── service/
+│   │   ├── entity_service.go
+│   │   ├── validation_service.go
+│   │   └── migration_service.go
+│   ├── cel/
+│   │   ├── sandbox.go
+│   │   └── evaluator.go
+│   ├── codegen/
+│   │   ├── ent_generator.go
+│   │   └── ts_generator.go
+│   ├── events/
+│   │   ├── publisher.go
+│   │   └── consumer.go
+│   └── config/
+│       └── config.go
+├── migrations/
+│   ├── 0001_init.sql
+│   ├── 0002_entity_definitions.sql
+│   ├── 0003_workflow_defs.sql
+│   ├── 0004_schema_change_log.sql
+│   └── 0005_rls.sql
+├── templates/
+│   ├── real_estate.json
+│   ├── finance.json
+│   └── ...
+├── Dockerfile
+└── go.mod
+```
+
+#### 34.1.2. Domain Model
+
+```go
+// internal/domain/entity.go
+package domain
+
+import (
+    "time"
+    "github.com/google/uuid"
+)
+
+type EntityDefinition struct {
+    ID           uuid.UUID              `json:"id"`
+    TenantID     string                 `json:"tenant_id"`
+    Code         string                 `json:"code"`            // 'lead', 'deal'
+    DisplayName  string                 `json:"display_name"`
+    Description  string                 `json:"description"`
+    Icon         string                 `json:"icon"`            // lucide:user-plus
+    Color        string                 `json:"color"`           // #10b981
+    IsSystem     bool                   `json:"is_system"`       // built-in entities
+    Fields       []FieldDefinition      `json:"fields"`
+    Workflows    []WorkflowDefinition   `json:"workflows,omitempty"`
+    Indexes      []IndexDefinition      `json:"indexes"`
+    Relations    []RelationDefinition   `json:"relations"`
+    Permissions  PermissionMatrix       `json:"permissions"`
+    JSONSchema   map[string]interface{} `json:"json_schema"`    // compiled
+    Version      int64                  `json:"version"`
+    ETag         string                 `json:"etag"`           // UUIDv7
+    CreatedAt    time.Time              `json:"created_at"`
+    UpdatedAt    time.Time              `json:"updated_at"`
+    CreatedBy    uuid.UUID              `json:"created_by"`
+    UpdatedBy    uuid.UUID              `json:"updated_by"`
+    DeletedAt    *time.Time             `json:"deleted_at,omitempty"`
+}
+
+type FieldDefinition struct {
+    Code         string                 `json:"code"`
+    Label        string                 `json:"label"`
+    Description  string                 `json:"description,omitempty"`
+    Type         FieldType              `json:"type"`
+    Required     bool                   `json:"required"`
+    Unique       bool                   `json:"unique"`
+    Default      interface{}            `json:"default,omitempty"`
+    Validation   map[string]interface{} `json:"validation,omitempty"`
+    UI           UIOption               `json:"ui"`
+    Permission   FieldPermission        `json:"permission,omitempty"`
+    HelpText     string                 `json:"help_text,omitempty"`
+    Placeholder  string                 `json:"placeholder,omitempty"`
+    I18n         map[string]string      `json:"i18n,omitempty"`   // {"en": "Name", "vi": "Họ tên"}
+    Reference    *ReferenceConfig       `json:"reference,omitempty"`
+    Formula      string                 `json:"formula,omitempty"` // DSL
+    Rollup       *RollupConfig          `json:"rollup,omitempty"`
+    Version      int64                  `json:"version"`
+    IsArchived   bool                   `json:"is_archived"`
+}
+
+type FieldType string
+
+const (
+    FieldString     FieldType = "string"
+    FieldText       FieldType = "text"
+    FieldRichText   FieldType = "rich_text"
+    FieldNumber     FieldType = "number"
+    FieldInteger    FieldType = "integer"
+    FieldCurrency   FieldType = "currency"
+    FieldPercent    FieldType = "percent"
+    FieldBoolean    FieldType = "boolean"
+    FieldDate       FieldType = "date"
+    FieldDateTime   FieldType = "datetime"
+    FieldTime       FieldType = "time"
+    FieldEnum       FieldType = "enum"
+    FieldMultiSelect FieldType = "multi_select"
+    FieldArray      FieldType = "array"
+    FieldObject     FieldType = "object"
+    FieldReference  FieldType = "reference"
+    FieldFile       FieldType = "file"
+    FieldFiles      FieldType = "files"
+    FieldImage      FieldType = "image"
+    FieldImages     FieldType = "images"
+    FieldVideo      FieldType = "video"
+    FieldGeo        FieldType = "geo"
+    FieldPhone      FieldType = "phone"
+    FieldEmail      FieldType = "email"
+    FieldURL        FieldType = "url"
+    FieldColor      FieldType = "color"
+    FieldJSON       FieldType = "json"
+    FieldFormula    FieldType = "formula"
+    FieldRollup     FieldType = "rollup"
+    FieldAutonumber FieldType = "autonumber"
+    FieldBarcode    FieldType = "barcode"
+    FieldSignature  FieldType = "signature"
+    FieldQRCode     FieldType = "qrcode"
+)
+```
+
+#### 34.1.3. Repository Layer
+
+```go
+// internal/repository/entity_repo.go
+package repository
+
+import (
+    "context"
+    "database/sql"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "time"
+
+    "github.com/google/uuid"
+    "github.com/jackc/pgx/v5/pgxpool"
+
+    "github.com/itdoanh/rinco/dynamic-model/internal/domain"
+)
+
+var (
+    ErrEntityNotFound     = errors.New("entity not found")
+    ErrEntityVersionConflict = errors.New("entity version conflict")
+    ErrEntityArchived     = errors.New("entity is archived")
+)
+
+type EntityRepository struct {
+    db *pgxpool.Pool
+}
+
+func NewEntityRepository(db *pgxpool.Pool) *EntityRepository {
+    return &EntityRepository{db: db}
+}
+
+func (r *EntityRepository) Create(ctx context.Context, e *domain.EntityDefinition) error {
+    fieldsJSON, _ := json.Marshal(e.Fields)
+    workflowsJSON, _ := json.Marshal(e.Workflows)
+    indexesJSON, _ := json.Marshal(e.Indexes)
+    permissionsJSON, _ := json.Marshal(e.Permissions)
+    schemaJSON, _ := json.Marshal(e.JSONSchema)
+
+    e.ID = uuid.New()
+    e.Version = 1
+    e.ETag = uuid.New().String()
+    e.CreatedAt = time.Now()
+    e.UpdatedAt = e.CreatedAt
+
+    _, err := r.db.Exec(ctx, `
+        INSERT INTO entity_definitions (
+            id, tenant_id, code, display_name, description, icon, color,
+            is_system, fields, workflows, indexes, permissions,
+            json_schema, version, etag, created_at, updated_at, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+    `,
+        e.ID, e.TenantID, e.Code, e.DisplayName, e.Description, e.Icon, e.Color,
+        e.IsSystem, fieldsJSON, workflowsJSON, indexesJSON, permissionsJSON,
+        schemaJSON, e.Version, e.ETag, e.CreatedAt, e.UpdatedAt, e.CreatedBy,
+    )
+    return err
+}
+
+func (r *EntityRepository) GetByCode(ctx context.Context, tenantID, code string) (*domain.EntityDefinition, error) {
+    var e domain.EntityDefinition
+    var fieldsJSON, workflowsJSON, indexesJSON, permissionsJSON, schemaJSON []byte
+
+    err := r.db.QueryRow(ctx, `
+        SELECT id, tenant_id, code, display_name, description, icon, color,
+               is_system, fields, workflows, indexes, permissions,
+               json_schema, version, etag, created_at, updated_at
+        FROM entity_definitions
+        WHERE tenant_id = $1 AND code = $2 AND deleted_at IS NULL
+    `, tenantID, code).Scan(
+        &e.ID, &e.TenantID, &e.Code, &e.DisplayName, &e.Description, &e.Icon, &e.Color,
+        &e.IsSystem, &fieldsJSON, &workflowsJSON, &indexesJSON, &permissionsJSON,
+        &schemaJSON, &e.Version, &e.ETag, &e.CreatedAt, &e.UpdatedAt,
+    )
+    if err == sql.ErrNoRows {
+        return nil, ErrEntityNotFound
+    }
+    if err != nil {
+        return nil, err
+    }
+
+    json.Unmarshal(fieldsJSON, &e.Fields)
+    json.Unmarshal(workflowsJSON, &e.Workflows)
+    json.Unmarshal(indexesJSON, &e.Indexes)
+    json.Unmarshal(permissionsJSON, &e.Permissions)
+    json.Unmarshal(schemaJSON, &e.JSONSchema)
+    return &e, nil
+}
+
+func (r *EntityRepository) UpdateWithOptimisticLock(ctx context.Context, e *domain.EntityDefinition, expectedVersion int64, actor uuid.UUID) error {
+    tx, err := r.db.BeginTx(ctx, nil)
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback(ctx)
+
+    fieldsJSON, _ := json.Marshal(e.Fields)
+    schemaJSON, _ := json.Marshal(e.JSONSchema)
+    newETag := uuid.New().String()
+
+    // Optimistic lock check
+    var actualVersion int64
+    err = tx.QueryRow(ctx, `
+        SELECT version FROM entity_definitions
+        WHERE tenant_id = $1 AND code = $2 AND deleted_at IS NULL
+        FOR UPDATE
+    `, e.TenantID, e.Code).Scan(&actualVersion)
+
+    if err == sql.ErrNoRows {
+        return ErrEntityNotFound
+    }
+    if err != nil {
+        return err
+    }
+    if actualVersion != expectedVersion {
+        return fmt.Errorf("%w: current=%d, expected=%d", ErrEntityVersionConflict, actualVersion, expectedVersion)
+    }
+
+    // Update with version bump
+    _, err = tx.Exec(ctx, `
+        UPDATE entity_definitions
+        SET display_name = $3, description = $4, icon = $5, color = $6,
+            json_schema = $7, fields = $8, version = version + 1, etag = $9,
+            updated_at = now(), updated_by = $10
+        WHERE tenant_id = $1 AND code = $2
+    `, e.TenantID, e.Code, e.DisplayName, e.Description, e.Icon, e.Color,
+        schemaJSON, fieldsJSON, newETag, actor)
+    if err != nil {
+        return err
+    }
+
+    // Insert change log
+    _, err = tx.Exec(ctx, `
+        INSERT INTO schema_change_log (
+            id, tenant_id, entity_code, schema_version, change_type,
+            changed_fields, diff, actor_user_id, trace_id
+        ) VALUES ($1, $2, $3, $4, 'update', $5, $6, $7, $8)
+    `, uuid.New(), e.TenantID, e.Code, actualVersion+1,
+        extractChangedFields(e.Fields), "{}", actor, getTraceID(ctx))
+
+    return tx.Commit(ctx)
+}
+
+func extractChangedFields(fields []domain.FieldDefinition) []byte {
+    codes := make([]string, len(fields))
+    for i, f := range fields {
+        codes[i] = f.Code
+    }
+    out, _ := json.Marshal(codes)
+    return out
+}
+```
+
+#### 34.1.4. Service Layer
+
+```go
+// internal/service/entity_service.go
+package service
+
+import (
+    "context"
+    "errors"
+    "fmt"
+
+    "github.com/google/uuid"
+
+    "github.com/itdoanh/rinco/dynamic-model/internal/cache"
+    "github.com/itdoanh/rinco/dynamic-model/internal/codegen"
+    "github.com/itdoanh/rinco/dynamic-model/internal/domain"
+    "github.com/itdoanh/rinco/dynamic-model/internal/events"
+    "github.com/itdoanh/rinco/dynamic-model/internal/repository"
+    "github.com/itdoanh/rinco/dynamic-model/internal/validation"
+)
+
+type EntityService struct {
+    repo          *repository.EntityRepository
+    cache         *cache.SchemaCache
+    validator     *validation.Validator
+    publisher     *events.Publisher
+    codegenTrigger chan<- codegen.Job
+}
+
+func NewEntityService(
+    repo *repository.EntityRepository,
+    cache *cache.SchemaCache,
+    validator *validation.Validator,
+    publisher *events.Publisher,
+    codegenTrigger chan<- codegen.Job,
+) *EntityService {
+    return &EntityService{
+        repo:           repo,
+        cache:          cache,
+        validator:      validator,
+        publisher:      publisher,
+        codegenTrigger: codegenTrigger,
+    }
+}
+
+func (s *EntityService) CreateEntity(ctx context.Context, e *domain.EntityDefinition) error {
+    // 1. Validate JSON Schema
+    if err := s.validator.ValidateEntityDefinition(e); err != nil {
+        return fmt.Errorf("invalid entity: %w", err)
+    }
+
+    // 2. Check uniqueness
+    existing, err := s.repo.GetByCode(ctx, e.TenantID, e.Code)
+    if err != nil && !errors.Is(err, repository.ErrEntityNotFound) {
+        return err
+    }
+    if existing != nil {
+        return fmt.Errorf("entity code %q already exists", e.Code)
+    }
+
+    // 3. Compile JSON Schema
+    compiledSchema, err := s.validator.CompileJSONSchema(e)
+    if err != nil {
+        return fmt.Errorf("compile json schema: %w", err)
+    }
+    e.JSONSchema = compiledSchema
+
+    // 4. Persist
+    if err := s.repo.Create(ctx, e); err != nil {
+        return err
+    }
+
+    // 5. Invalidate cache
+    s.cache.Invalidate(ctx, e.TenantID, e.Code)
+
+    // 6. Publish event
+    s.publisher.PublishEntityCreated(ctx, e)
+
+    return nil
+}
+
+func (s *EntityService) UpdateEntity(ctx context.Context, e *domain.EntityDefinition, expectedVersion int64, actor uuid.UUID) error {
+    // 1. Validate
+    if err := s.validator.ValidateEntityDefinition(e); err != nil {
+        return fmt.Errorf("invalid entity: %w", err)
+    }
+
+    // 2. Compile JSON Schema
+    compiledSchema, err := s.validator.CompileJSONSchema(e)
+    if err != nil {
+        return fmt.Errorf("compile json schema: %w", err)
+    }
+    e.JSONSchema = compiledSchema
+
+    // 3. Update with optimistic lock
+    if err := s.repo.UpdateWithOptimisticLock(ctx, e, expectedVersion, actor); err != nil {
+        return err
+    }
+
+    // 4. Invalidate cache
+    s.cache.Invalidate(ctx, e.TenantID, e.Code)
+
+    // 5. Publish event (sẽ trigger NATS → các service reload)
+    s.publisher.PublishEntityUpdated(ctx, e)
+
+    // 6. Trigger code-gen if stable
+    if s.isStable(e) {
+        select {
+        case s.codegenTrigger <- codegen.Job{Entity: e.Code, Tenant: e.TenantID}:
+        default: // drop if queue full
+    }
+    }
+
+    return nil
+}
+
+func (s *EntityService) isStable(e *domain.EntityDefinition) bool {
+    // Logic: schema age > 7 days, no recent changes, daily record count > 1000
+    age := time.Since(e.UpdatedAt)
+    return age > 7*24*time.Hour && len(e.Fields) > 8
+}
+
+func (s *EntityService) GetEntity(ctx context.Context, tenantID, code string) (*domain.EntityDefinition, error) {
+    // Try cache first
+    if e, ok := s.cache.Get(ctx, tenantID, code); ok {
+        return e, nil
+    }
+
+    // Fetch from DB
+    e, err := s.repo.GetByCode(ctx, tenantID, code)
+    if err != nil {
+        return nil, err
+    }
+
+    // Cache for next time
+    s.cache.Set(ctx, e, 5*time.Minute)
+    return e, nil
+}
+```
+
+#### 34.1.5. HTTP Handlers (Huma)
+
+```go
+// internal/api/entity.go
+package api
+
+import (
+    "context"
+
+    "github.com/danielgtaylor/huma/v2"
+    "github.com/google/uuid"
+
+    "github.com/itdoanh/rinco/dynamic-model/internal/domain"
+    "github.com/itdoanh/rinco/dynamic-model/internal/service"
+)
+
+type EntityHandler struct {
+    svc *service.EntityService
+}
+
+func RegisterEntityRoutes(api huma.API, svc *service.EntityService) {
+    h := &EntityHandler{svc: svc}
+
+    huma.Register(api, huma.Operation{
+        OperationID: "create-entity",
+        Method:      "POST",
+        Path:        "/api/dm/v1/entities",
+        Summary:     "Tạo entity mới",
+        Tags:        []string{"Entities"},
+    }, h.Create)
+
+    huma.Register(api, huma.Operation{
+        OperationID: "get-entity",
+        Method:      "GET",
+        Path:        "/api/dm/v1/entities/{code}",
+        Summary:     "Lấy entity theo code",
+        Tags:        []string{"Entities"},
+    }, h.Get)
+
+    huma.Register(api, huma.Operation{
+        OperationID: "update-entity",
+        Method:      "PATCH",
+        Path:        "/api/dm/v1/entities/{code}",
+        Summary:     "Cập nhật entity (optimistic lock)",
+        Tags:        []string{"Entities"},
+    }, h.Update)
+}
+
+type CreateEntityRequest struct {
+    Body domain.EntityDefinition
+}
+
+type CreateEntityResponse struct {
+    Body struct {
+        ID      string `json:"id"`
+        Version int64  `json:"version"`
+        ETag    string `json:"etag"`
+    }
+}
+
+func (h *EntityHandler) Create(ctx context.Context, req *CreateEntityRequest) (*CreateEntityResponse, error) {
+    actor := getActor(ctx)
+    req.Body.CreatedBy = actor.ID
+
+    if err := h.svc.CreateEntity(ctx, &req.Body); err != nil {
+        return nil, huma.Error400BadRequest(err.Error(), err)
+    }
+
+    return &CreateEntityResponse{
+        Body: struct {
+            ID      string `json:"id"`
+            Version int64  `json:"version"`
+            ETag    string `json:"etag"`
+        }{
+            ID:      req.Body.ID.String(),
+            Version: req.Body.Version,
+            ETag:    req.Body.ETag,
+        },
+    }, nil
+}
+
+type UpdateEntityRequest struct    {
+    Body struct {
+        Entity domain.EntityDefinition `json:"entity"`
+        ExpectedVersion int64          `json:"expected_version"`
+    }
+}
+
+type UpdateEntityResponse struct {
+    Body struct {
+        Version int64  `json:"version"`
+        ETag    string `json:"etag"`
+    }
+}
+
+func (h *EntityHandler) Update(ctx context.Context, req *UpdateEntityRequest) (*UpdateEntityResponse, error) {
+    actor := getActor(ctx)
+    e := req.Body.Entity
+    e.UpdatedBy = actor.ID
+
+    if err := h.svc.UpdateEntity(ctx, &e, req.Body.ExpectedVersion, actor.ID); err != nil {
+        return nil, huma.Error409Conflict(err.Error(), err)
+    }
+
+    return &UpdateEntityResponse{
+        Body: struct {
+            Version int64  `json:"version"`
+            ETag    string `json:"etag"`
+        }{
+            Version: e.Version + 1,
+            ETag:    uuid.New().String(),
+        },
+    }, nil
+}
+
+type GetEntityRequest struct {
+    Code string `path:"code"`
+}
+
+type GetEntityResponse struct {
+    Body domain.EntityDefinition
+}
+
+func (h *EntityHandler) Get(ctx context.Context, req *GetEntityRequest) (*GetEntityResponse, error) {
+    tenantID := getTenantID(ctx)
+    e, err := h.svc.GetEntity(ctx, tenantID, req.Code)
+    if err != nil {
+        return nil, huma.Error404NotFound(err.Error(), err)
+    }
+    return &GetEntityResponse{Body: *e}, nil
+}
+```
+
+### 34.2. TypeScript - Schema Builder UI với React Flow
+
+```tsx
+// apps/meta-schema-ui/components/workflow/WorkflowEditor.tsx
+'use client';
+
+import React, { useCallback, useMemo } from 'react';
+import ReactFlow, {
+  Node,
+  Edge,
+  Controls,
+  Background,
+  applyNodeChanges,
+  applyEdgeChanges,
+  NodeChange,
+  EdgeChange,
+  addEdge,
+  Connection,
+  MarkerType,
+} from 'reactflow';
+import 'reactflow/dist/style.css';
+
+import { StateNode } from './StateNode';
+import { TransitionEdge } from './TransitionEdge';
+import { useWorkflowStore } from '@/store/workflow';
+import { WorkflowDefinition, WorkflowState, WorkflowTransition } from '@/types/workflow';
+
+const nodeTypes = { stateNode: StateNode };
+const edgeTypes = { transitionEdge: TransitionEdge };
+
+interface WorkflowEditorProps {
+  initialWorkflow: WorkflowDefinition;
+  onChange: (workflow: WorkflowDefinition) => void;
+  readOnly?: boolean;
+}
+
+export function WorkflowEditor({ initialWorkflow, onChange, readOnly = false }: WorkflowEditorProps) {
+  const { workflow, updateWorkflow } = useWorkflowStore(initialWorkflow);
+
+  // Convert states to nodes
+  const nodes: Node[] = useMemo(
+    () =>
+      workflow.states.map((state, idx) => ({
+        id: state.code,
+        type: 'stateNode',
+        position: state.position || { x: idx * 250, y: 100 },
+        data: { state, isInitial: state.code === workflow.initial_state },
+      })),
+    [workflow.states, workflow.initial_state]
+  );
+
+  // Convert transitions to edges
+  const edges: Edge[] = useMemo(
+    () =>
+      workflow.transitions.map((t) => ({
+        id: `${t.from}-${t.to}`,
+        source: t.from,
+        target: t.to,
+        type: 'transitionEdge',
+        data: { transition: t },
+        markerEnd: { type: MarkerType.ArrowClosed },
+        label: t.label,
+      })),
+    [workflow.transitions]
+  );
+
+  const onNodesChange = useCallback(
+    (changes: NodeChange[]) => {
+      const newNodes = applyNodeChanges(changes, nodes);
+      updateWorkflow({
+        ...workflow,
+        states: newNodes.map((n) => ({ ...n.data.state, position: n.position })),
+      });
+    },
+    [nodes, workflow, updateWorkflow]
+  );
+
+  const onEdgesChange = useCallback(
+    (changes: EdgeChange[]) => {
+      const newEdges = applyEdgeChanges(changes, edges);
+      updateWorkflow({
+        ...workflow,
+        transitions: newEdges.map((e) => e.data.transition),
+      });
+    },
+    [edges, workflow, updateWorkflow]
+  );
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return;
+
+      const newTransition: WorkflowTransition = {
+        from: connection.source,
+        to: connection.target,
+        label: 'New Transition',
+        permission: '',
+        condition: '',
+        triggers: [],
+      };
+
+      updateWorkflow({
+        ...workflow,
+        transitions: [...workflow.transitions, newTransition],
+      });
+    },
+    [workflow, updateWorkflow]
+  );
+
+  return (
+    <div className="h-[600px] border rounded-lg">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        fitView
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
+        elementsSelectable={!readOnly}
+      >
+        <Background gap={16} />
+        <Controls />
+      </ReactFlow>
+    </div>
+  );
+}
+```
+
+```tsx
+// apps/meta-schema-ui/components/workflow/StateNode.tsx
+'use client';
+
+import React from 'react';
+import { Handle, Position } from 'reactflow';
+import { WorkflowState } from '@/types/workflow';
+
+export function StateNode({ data }: { data: { state: WorkflowState; isInitial: boolean } }) {
+  return (
+    <div
+      className="px-4 py-3 shadow-md rounded-lg border-2 bg-white min-w-[160px]"
+      style={{ borderColor: data.state.color }}
+    >
+      <Handle type="target" position={Position.Top} className="w-3 h-3" />
+      <div className="flex items-center gap-2">
+        <div
+          className="w-3 h-3 rounded-full"
+          style={{ backgroundColor: data.state.color }}
+        />
+        <div className="font-semibold text-sm">{data.state.label}</div>
+        {data.isInitial && (
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+            START
+          </span>
+        )}
+      </div>
+      <div className="text-xs text-gray-500 mt-1">code: {data.state.code}</div>
+      <Handle type="source" position={Position.Bottom} className="w-3 h-3" />
+    </div>
+  );
+}
+```
+
+```tsx
+// apps/meta-schema-ui/components/workflow/TransitionEdge.tsx
+'use client';
+
+import React from 'react';
+import { BaseEdge, EdgeLabelRenderer, getBezierPath } from 'reactflow';
+
+export function TransitionEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  data,
+}: any) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    sourcePosition,
+    targetX,
+    targetY,
+    targetPosition,
+  });
+
+  return (
+    <>
+      <BaseEdge id={id} path={edgePath} />
+      {data?.transition?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
+              pointerEvents: 'all',
+            }}
+            className="bg-white px-2 py-1 rounded shadow text-xs"
+          >
+            {data.transition.label}
+            {data.transition.condition && (
+              <div className="text-gray-500 text-[10px]">if: {data.transition.condition}</div>
+            )}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
+}
+```
+
+### 34.3. SQL - PostgreSQL JSONB Schema với RLS
+
+```sql
+-- migrations/0002_entity_definitions.sql
+-- +goose Up
+-- +goose StatementBegin
+
+CREATE EXTENSION IF NOT EXISTS ltree;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+CREATE TABLE entity_definitions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    code TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    description TEXT,
+    icon TEXT,
+    color TEXT,
+    is_system BOOLEAN NOT NULL DEFAULT false,
+    fields JSONB NOT NULL DEFAULT '[]'::jsonb,
+    workflows JSONB NOT NULL DEFAULT '[]'::jsonb,
+    indexes JSONB NOT NULL DEFAULT '[]'::jsonb,
+    relations JSONB NOT NULL DEFAULT '[]'::jsonb,
+    permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    json_schema JSONB NOT NULL DEFAULT '{}'::jsonb,
+    version BIGINT NOT NULL DEFAULT 1,
+    etag TEXT NOT NULL DEFAULT gen_random_uuid()::text,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by UUID,
+    updated_by UUID,
+    deleted_at TIMESTAMPTZ,
+    
+    CONSTRAINT uq_entity_tenant_code UNIQUE (tenant_id, code) WHERE deleted_at IS NULL,
+    CONSTRAINT ck_entity_code_format CHECK (code ~ '^[a-z][a-z0-9_]{2,49}$')
+);
+
+CREATE INDEX idx_entity_def_tenant ON entity_definitions(tenant_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_entity_def_code ON entity_definitions(tenant_id, code) WHERE deleted_at IS NULL;
+CREATE INDEX idx_entity_def_fields_gin ON entity_definitions USING GIN (fields);
+CREATE INDEX idx_entity_def_updated ON entity_definitions(updated_at DESC);
+
+-- Update trigger
+CREATE OR REPLACE FUNCTION update_entity_def_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    NEW.version = OLD.version + 1;
+    NEW.etag = gen_random_uuid()::text;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_entity_def_updated
+BEFORE UPDATE ON entity_definitions
+FOR EACH ROW EXECUTE FUNCTION update_entity_def_updated_at();
+
+-- Row-Level Security
+ALTER TABLE entity_definitions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE entity_definitions FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY entity_def_tenant_isolation ON entity_definitions
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID)
+    WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+CREATE POLICY entity_def_superadmin ON entity_definitions
+    USING (current_setting('app.is_super_admin', true) = 'true')
+    WITH CHECK (current_setting('app.is_super_admin', true) = 'true');
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP TRIGGER IF EXISTS trg_entity_def_updated ON entity_definitions;
+DROP FUNCTION IF EXISTS update_entity_def_updated_at();
+DROP TABLE IF EXISTS entity_definitions;
+-- +goose StatementEnd
+```
+
+```sql
+-- migrations/0003_dynamic_records.sql
+-- +goose Up
+-- +goose StatementBegin
+
+-- Generic dynamic records table
+CREATE TABLE dynamic_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    entity_code TEXT NOT NULL,
+    owner_id UUID,
+    -- Fixed common fields
+    name TEXT,
+    status TEXT DEFAULT 'active',
+    -- JSONB for custom fields
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Metadata
+    search_text TSVECTOR,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_by UUID,
+    updated_by UUID,
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_dynamic_records_tenant_entity ON dynamic_records(tenant_id, entity_code) WHERE deleted_at IS NULL;
+CREATE INDEX idx_dynamic_records_owner ON dynamic_records(tenant_id, entity_code, owner_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_dynamic_records_data_gin ON dynamic_records USING GIN (data);
+CREATE INDEX idx_dynamic_records_search ON dynamic_records USING GIN (search_text);
+CREATE INDEX idx_dynamic_records_status ON dynamic_records(tenant_id, entity_code, status) WHERE deleted_at IS NULL;
+CREATE INDEX idx_dynamic_records_updated ON dynamic_records(updated_at DESC);
+
+-- Auto-update search_text
+CREATE OR REPLACE FUNCTION update_search_text()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.search_text := to_tsvector('simple',
+        COALESCE(NEW.name, '') || ' ' ||
+        COALESCE(jsonb_path_query_array(NEW.data, '$.* ?(@ != null)'), ARRAY[]::jsonb)::text
+    );
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_dynamic_records_search
+BEFORE INSERT OR UPDATE OF data, name ON dynamic_records
+FOR EACH ROW EXECUTE FUNCTION update_search_text();
+
+-- RLS
+ALTER TABLE dynamic_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dynamic_records FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY dynamic_records_tenant ON dynamic_records
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID)
+    WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+-- Audit log table (per §17.2)
+CREATE TABLE schema_change_log (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    entity_code TEXT NOT NULL,
+    schema_version BIGINT NOT NULL,
+    change_type TEXT NOT NULL,
+    changed_fields JSONB,
+    diff JSONB,
+    actor_user_id UUID NOT NULL,
+    trace_id UUID NOT NULL,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_schema_change_tenant ON schema_change_log(tenant_id, entity_code, applied_at DESC);
+
+-- +goose StatementEnd
+```
+
+### 34.4. CEL Expressions chi tiết
+
+```yaml
+# File: services/validation-engine/cel/examples.yaml
+examples:
+  - name: "lead_score_validation"
+    description: "Lead score phải nằm trong khoảng 0-100"
+    expression: |
+      record.score >= 0 && record.score <= 100
+    expected_error: "Score phải từ 0-100"
+
+  - name: "won_deal_value_required"
+    description: "Won deal phải có value > 0"
+    expression: |
+      record.status != "won" || record.deal_value > 0
+    expected_error: "Deal đã thắng phải có giá trị > 0"
+
+  - name: "vietnam_phone_format"
+    description: "Phone phải đúng format VN"
+    expression: |
+      record.phone.matches("^(\\+84|0)\\d{9,10}$")
+    expected_error: "Số điện thoại không đúng format VN"
+
+  - name: "owner_must_be_in_subtree"
+    description: "Owner phải thuộc cùng subtree với current user"
+    expression: |
+      record.owner_id in subtree_of(user.id)
+    expected_error: "Owner phải thuộc team của bạn"
+
+  - name: "lead_age_for_followup"
+    description: "Follow-up date phải sau created_at"
+    expression: |
+      record.followup_date == null || record.followup_date > record.created_at
+    expected_error: "Ngày follow-up phải sau ngày tạo"
+
+  - name: "compound_required_field"
+    description: "Nếu qualified thì phải có qualification_notes"
+    expression: |
+      record.status != "qualified" || size(record.qualification_notes) > 10
+    expected_error: "Khi qualified, phải có qualification_notes > 10 ký tự"
+
+  - name: "unique_combination"
+    description: "Source + email phải unique per tenant"
+    expression: |
+      !exists_in_db(record.tenant_id, record.entity_code, {"source": record.source, "email": record.email})
+    expected_error: "Email này đã tồn tại với cùng source"
+
+  - name: "cross_entity_check"
+    description: "Deal value phải match quote total"
+    expression: |
+      record.deal_value == related_entity("quote", record.quote_id).total_amount
+    expected_error: "Giá trị deal phải khớp với báo giá"
+
+  - name: "time_window_validation"
+    description: "Meeting time phải trong giờ hành chính"
+    expression: |
+      var hour = hour(record.scheduled_at);
+      hour >= 8 && hour <= 18
+    expected_error: "Meeting phải trong giờ hành chính (8h-18h)"
+
+  - name: "currency_format"
+    description: "Currency phải là VND hoặc USD"
+    expression: |
+      record.currency in ["VND", "USD"]
+    expected_error: "Currency phải là VND hoặc USD"
+
+  - name: "max_discount_percent"
+    description: "Discount không quá 30%"
+    expression: |
+      record.discount_percent == null || record.discount_percent <= 30
+    expected_error: "Discount không được quá 30%"
+
+  - name: "required_attachments_count"
+    description: "Application phải có >= 2 attachments"
+    expression: |
+      record.attachments == null || size(record.attachments) >= 2
+    expected_error: "Phải upload ít nhất 2 file"
+
+  - name: "ip_in_allowed_regions"
+    description: "IP phải từ Vietnam hoặc Singapore"
+    expression: |
+      geoip(record.client_ip).country in ["VN", "SG"]
+    expected_error: "IP không thuộc vùng cho phép"
+
+  - name: "referrer_required_for_paid"
+    description: "Nếu là paid traffic, phải có referrer"
+    expression: |
+      record.utm_medium != "cpc" || size(record.referrer) > 0
+    expected_error: "Paid traffic phải có referrer"
+
+  - name: "lead_lifecycle_check"
+    description: "Status flow hợp lệ"
+    expression: |
+      !record._previous_status || record._previous_status == "new" || record.status != "lost"
+    expected_error: "Không thể chuyển sang 'lost' từ 'won'"
+```
+
+### 34.5. Migration Tool: JSON Schema → Ent Schema
+
+```go
+// services/dynamic-model/internal/codegen/ent_generator.go
+package codegen
+
+import (
+    "bytes"
+    "fmt"
+    "strings"
+    "text/template"
+
+    "github.com/itdoanh/rinco/dynamic-model/internal/domain"
+)
+
+const entTemplate = `// Code generated by rincoctl codegen. DO NOT EDIT.
+package schema
+
+import (
+    "time"
+
+    "entgo.io/ent"
+    "entgo.io/ent/schema/field"
+    "entgo.io/ent/schema/index"
+    "github.com/google/uuid"
+)
+
+// {{.Code}} holds the schema definition for the {{.DisplayName}} entity.
+type {{.Code | title}} struct {
+    ent.Schema
+}
+
+func ({{.Code | title}}) Fields() []ent.Field {
+    return []ent.Field{
+        field.UUID("id", uuid.UUID{}).Default(uuid.New).Immutable(),
+        field.UUID("tenant_id", uuid.UUID{}).Immutable(),
+        field.UUID("owner_id", uuid.UUID{}),
+        {{range .Fields}}
+        {{- if eq .Type "string"}}
+        field.String("{{.Code}}"){{if .Required}}.NotEmpty(){{end}}{{if .Unique}}.Unique(){{end}},
+        {{- else if eq .Type "text"}}
+        field.Text("{{.Code}}").Optional(),
+        {{- else if eq .Type "integer"}}
+        field.Int("{{.Code}}").Optional(),
+        {{- else if eq .Type "number"}}
+        field.Float("{{.Code}}").Optional(),
+        {{- else if eq .Type "boolean"}}
+        field.Bool("{{.Code}}").Default(false),
+        {{- else if eq .Type "currency"}}
+        field.Float("{{.Code}}").Optional(),
+        {{- else if eq .Type "date"}}
+        field.Time("{{.Code}}").Optional().Immutable(),
+        {{- else if eq .Type "datetime"}}
+        field.Time("{{.Code}}").Optional(),
+        {{- else if eq .Type "enum"}}
+        field.Enum("{{.Code}}").Values({{enumValues .Validation}}).Optional(),
+        {{- else if eq .Type "json"}}
+        field.JSON("{{.Code}}", map[string]interface{}{}).Optional(),
+        {{- end}}
+        {{end}}
+        field.Time("created_at").Default(time.Now).Immutable(),
+        field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
+    }
+}
+
+func ({{.Code | title}}) Indexes() []ent.Index {
+    return []ent.Index{
+        index.Fields("tenant_id", "owner_id"),
+        {{range .Indexes}}{{if .Unique}}
+        index.Fields({{range .Fields}}"{{.}}",{{end}}).Unique(),
+        {{else}}
+        index.Fields({{range .Fields}}"{{.}}",{{end}}),
+        {{end}}{{end}}
+    }
+}
+`
+
+type entGen struct {
+    tmpl *template.Template
+}
+
+func NewEntGenerator() (*entGen, error) {
+    funcMap := template.FuncMap{
+        "title": strings.Title,
+        "enumValues": func(v map[string]interface{}) string {
+            opts, _ := v["options"].([]interface{})
+            parts := []string{}
+            for _, o := range opts {
+                parts = append(parts, fmt.Sprintf("%q", o))
+            }
+            return strings.Join(parts, ", ")
+        },
+    }
+    tmpl, err := template.New("ent").Funcs(funcMap).Parse(entTemplate)
+    if err != nil {
+        return nil, err
+    }
+    return &entGen{tmpl: tmpl}, nil
+}
+
+func (g *entGen) Generate(e *domain.EntityDefinition) (string, error) {
+    var buf bytes.Buffer
+    if err := g.tmpl.Execute(&buf, e); err != nil {
+        return "", err
+    }
+    return buf.String(), nil
+}
+```
+
+```go
+// services/dynamic-model/cmd/codegen-worker/main.go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    "os/exec"
+    "path/filepath"
+    "time"
+
+    "github.com/google/uuid"
+    "github.com/nats-io/nats.go"
+
+    "github.com/itdoanh/rinco/dynamic-model/internal/codegen"
+    "github.com/itdoanh/rinco/dynamic-model/internal/domain"
+    "github.com/itdoanh/rinco/dynamic-model/internal/repository"
+)
+
+func main() {
+    natsURL := os.Getenv("NATS_URL")
+    nc, err := nats.Connect(natsURL)
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer nc.Close()
+
+    repo := repository.NewEntityRepository(getDB())
+
+    // Subscribe to entity-updated events
+    sub, err := nc.Subscribe("entity.updated.>", func(msg *nats.Msg) {
+        var e domain.EntityDefinition
+        if err := json.Unmarshal(msg.Data, &e); err != nil {
+            log.Printf("decode error: %v", err)
+            return
+        }
+
+        if !shouldGenerate(e) {
+            return
+        }
+
+        if err := generateAndPush(&e); err != nil {
+            log.Printf("codegen failed for %s/%s: %v", e.TenantID, e.Code, err)
+            return
+        }
+
+        log.Printf("codegen complete for %s/%s v%d", e.TenantID, e.Code, e.Version)
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer sub.Unsubscribe()
+
+    fmt.Println("codegen-worker listening...")
+    select {}
+}
+
+func shouldGenerate(e domain.EntityDefinition) bool {
+    // Trigger if:
+    // - Age > 7 days
+    // - No change in last 3 days (stable)
+    // - Field count > 8
+    if time.Since(e.UpdatedAt) < 7*24*time.Hour {
+        return false
+    }
+    if len(e.Fields) < 8 {
+        return false
+    }
+    return true
+}
+
+func generateAndPush(e *domain.EntityDefinition) error {
+    // 1. Generate Ent schema
+    gen, _ := codegen.NewEntGenerator()
+    entCode, err := gen.Generate(e)
+    if err != nil {
+        return err
+    }
+
+    // 2. Write to git worktree
+    repoPath := filepath.Join("/tmp/codegen", e.TenantID, e.Code)
+    os.MkdirAll(repoPath, 0755)
+    schemaPath := filepath.Join(repoPath, "schema", fmt.Sprintf("%s.go", e.Code))
+    if err := os.WriteFile(schemaPath, []byte(entCode), 0644); err != nil {
+        return err
+    }
+
+    // 3. Run ent generate
+    cmd := exec.Command("go", "generate", "./ent")
+    cmd.Dir = repoPath
+    if out, err := cmd.CombinedOutput(); err != nil {
+        return fmt.Errorf("ent generate: %v\n%s", err, out)
+    }
+
+    // 4. Git commit + push (triggers CI/CD)
+    branchName := fmt.Sprintf("codegen/%s/%s-%d", e.TenantID, e.Code, e.Version)
+    runGit := func(args ...string) error {
+        c := exec.Command("git", args...)
+        c.Dir = repoPath
+        if out, err := c.CombinedOutput(); err != nil {
+            return fmt.Errorf("git %v: %v\n%s", args, err, out)
+        }
+        return nil
+    }
+    if err := runGit("checkout", "-b", branchName); err != nil {
+        return err
+    }
+    if err := runGit("add", "."); err != nil {
+        return err
+    }
+    if err := runGit("commit", "-m", fmt.Sprintf("codegen: %s v%d", e.Code, e.Version)); err != nil {
+        return err
+    }
+    if err := runGit("push", "origin", branchName); err != nil {
+        return err
+    }
+
+    return nil
+}
+```
+
+---
+
+## 35. Industry Templates chi tiết (bổ sung §20)
+
+### 35.1. Template: Bất động sản (chi tiết)
+
+```json
+// services/dynamic-model/templates/real_estate.json
+{
+  "template_code": "real_estate",
+  "display_name": "Bất động sản",
+  "description": "CRM cho sàn BĐS, môi giới, dự án",
+  "icon": "lucide:home",
+  "color": "#0ea5e9",
+  "version": "1.0.0",
+  "entities": [
+    {
+      "code": "lead",
+      "display_name": "Khách hàng quan tâm",
+      "icon": "lucide:user-plus",
+      "fields": [
+        {"code": "name", "label": "Họ tên", "type": "string", "required": true, "validation": {"minLength": 1, "maxLength": 255}},
+        {"code": "phone", "label": "Số điện thoại", "type": "phone", "required": true, "unique": true},
+        {"code": "email", "label": "Email", "type": "email", "validation": {"format": "email"}},
+        {"code": "budget_min", "label": "Ngân sách tối thiểu", "type": "currency"},
+        {"code": "budget_max", "label": "Ngân sách tối đa", "type": "currency"},
+        {"code": "preferred_locations", "label": "Khu vực quan tâm", "type": "multi_select"},
+        {"code": "property_type", "label": "Loại BĐS", "type": "enum", "options": ["apartment", "house", "land", "shophouse", "villa"]},
+        {"code": "bedrooms", "label": "Số phòng ngủ", "type": "integer", "min": 0, "max": 10},
+        {"code": "bathrooms", "label": "Số phòng tắm", "type": "integer", "min": 0, "max": 10},
+        {"code": "interest", "label": "Mục đích", "type": "enum", "options": ["buy", "rent", "invest"]},
+        {"code": "move_in_date", "label": "Ngày dự kiến dọn vào", "type": "date"},
+        {"code": "financing_needed", "label": "Cần hỗ trợ tài chính", "type": "boolean"}
+      ]
+    },
+    {
+      "code": "viewing",
+      "display_name": "Lịch xem nhà",
+      "fields": [
+        {"code": "lead_id", "type": "reference", "ref_entity": "lead", "required": true},
+        {"code": "property_id", "type": "reference", "ref_entity": "property", "required": true},
+        {"code": "scheduled_at", "type": "datetime", "required": true},
+        {"code": "agent_id", "type": "reference", "ref_entity": "user"},
+        {"code": "notes", "type": "text"}
+      ]
+    },
+    {
+      "code": "property",
+      "display_name": "Bất động sản",
+      "fields": [
+        {"code": "title", "label": "Tiêu đề", "type": "string", "required": true},
+        {"code": "address", "type": "string", "required": true},
+        {"code": "lat_lng", "type": "geo"},
+        {"code": "area_m2", "type": "number"},
+        {"code": "price", "type": "currency", "required": true},
+        {"code": "photos", "type": "images"}
+      ]
+    },
+    {
+      "code": "deal",
+      "display_name": "Giao dịch",
+      "fields": [
+        {"code": "lead_id", "type": "reference", "ref_entity": "lead"},
+        {"code": "property_id", "type": "reference", "ref_entity": "property"},
+        {"code": "deal_value", "type": "currency", "required": true},
+        {"code": "commission", "type": "currency"},
+        {"code": "signed_at", "type": "date"}
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "code": "lead_lifecycle_re",
+      "entity": "lead",
+      "states": ["new", "contacted", "viewing_scheduled", "viewed", "negotiating", "won", "lost"],
+      "transitions": [
+        {"from": "new", "to": "contacted", "trigger": "create_activity"},
+        {"from": "contacted", "to": "viewing_scheduled", "trigger": "send_notification"},
+        {"from": "viewing_scheduled", "to": "viewed", "trigger": "create_activity"},
+        {"from": "viewed", "to": "negotiating", "trigger": "send_notification"},
+        {"from": "negotiating", "to": "won", "condition": "deal_value > 0", "trigger": "notify_accounting"}
+      ]
+    }
+  ],
+  "sample_data_csv": "templates/real_estate/sample_leads.csv",
+  "kpi_metrics": [
+    {"code": "lead_to_viewing_rate", "label": "Tỷ lệ xem nhà"},
+    {"code": "viewing_to_deal_rate", "label": "Tỷ lệ chốt deal"},
+    {"code": "avg_deal_value", "label": "Giá trị trung bình"}
+  ]
+}
+```
+
+### 35.2. Template: Tài chính / Tín dụng
+
+```json
+// services/dynamic-model/templates/finance.json
+{
+  "template_code": "finance",
+  "display_name": "Tài chính / Tín dụng",
+  "icon": "lucide:banknote",
+  "color": "#10b981",
+  "entities": [
+    {
+      "code": "loan_application",
+      "display_name": "Hồ sơ vay",
+      "fields": [
+        {"code": "applicant_name", "type": "string", "required": true},
+        {"code": "applicant_phone", "type": "phone", "required": true},
+        {"code": "applicant_email", "type": "email"},
+        {"code": "monthly_income", "type": "currency", "required": true},
+        {"code": "loan_amount", "type": "currency", "required": true},
+        {"code": "loan_purpose", "type": "enum", "options": ["home_purchase", "car_purchase", "business", "education", "medical", "other"]},
+        {"code": "loan_term_months", "type": "integer", "min": 6, "max": 360},
+        {"code": "credit_score", "type": "integer", "min": 300, "max": 850},
+        {"code": "kyc_status", "type": "enum", "options": ["pending", "verified", "rejected"]},
+        {"code": "collateral_value", "type": "currency"},
+        {"code": "debt_to_income_ratio", "type": "formula", "formula": "{monthly_debt} / {monthly_income}"}
+      ]
+    },
+    {
+      "code": "loan_decision",
+      "display_name": "Quyết định cho vay",
+      "fields": [
+        {"code": "application_id", "type": "reference", "ref_entity": "loan_application"},
+        {"code": "decision", "type": "enum", "options": ["approved", "rejected", "conditional"]},
+        {"code": "approved_amount", "type": "currency"},
+        {"code": "interest_rate", "type": "percent"},
+        {"code": "decided_by", "type": "reference", "ref_entity": "user"},
+        {"code": "decided_at", "type": "datetime"},
+        {"code": "rejection_reason", "type": "text"}
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "code": "loan_approval",
+      "entity": "loan_application",
+      "states": ["new", "pre_qualified", "docs_collected", "under_review", "approved", "rejected", "contract_signed", "disbursed"],
+      "transitions": [
+        {"from": "new", "to": "pre_qualified", "trigger": "ai_score"},
+        {"from": "pre_qualified", "to": "docs_collected", "permission": "loan.collect_docs"},
+        {"from": "docs_collected", "to": "under_review", "trigger": "assign_reviewer"},
+        {"from": "under_review", "to": "approved", "condition": "credit_score >= 700", "permission": "loan.approve"},
+        {"from": "under_review", "to": "rejected", "permission": "loan.reject"},
+        {"from": "approved", "to": "contract_signed", "trigger": "send_contract"},
+        {"from": "contract_signed", "to": "disbursed", "trigger": "notify_accounting"}
+      ],
+      "approval_chain": {
+        "under_review->approved": {
+          "levels": 3,
+          "level1": {"role": "credit_officer", "min_amount": 0},
+          "level2": {"role": "branch_manager", "min_amount": 500000000},
+          "level3": {"role": "ceo", "min_amount": 5000000000}
+        }
+      }
+    }
+  ]
+}
+```
+
+### 35.3. Template: Giáo dục
+
+```json
+// services/dynamic-model/templates/education.json
+{
+  "template_code": "education",
+  "display_name": "Giáo dục / Đào tạo",
+  "icon": "lucide:graduation-cap",
+  "color": "#8b5cf6",
+  "entities": [
+    {
+      "code": "student",
+      "display_name": "Học sinh",
+      "fields": [
+        {"code": "student_name", "type": "string", "required": true},
+        {"code": "parent_name", "type": "string", "required": true},
+        {"code": "parent_phone", "type": "phone", "required": true},
+        {"code": "parent_email", "type": "email"},
+        {"code": "current_school", "type": "string"},
+        {"code": "grade_level", "type": "enum", "options": ["grade_1", "grade_2", "grade_3", "grade_4", "grade_5", "grade_6", "grade_7", "grade_8", "grade_9", "grade_10", "grade_11", "grade_12"]},
+        {"code": "course_interest", "type": "multi_select"},
+        {"code": "preferred_schedule", "type": "multi_select", "options": ["weekday_morning", "weekday_afternoon", "weekday_evening", "weekend_morning", "weekend_afternoon"]}
+      ]
+    },
+    {
+      "code": "enrollment",
+      "display_name": "Ghi danh",
+      "fields": [
+        {"code": "student_id", "type": "reference", "ref_entity": "student"},
+        {"code": "course_id", "type": "reference", "ref_entity": "course"},
+        {"code": "enrolled_at", "type": "datetime"},
+        {"code": "tuition_fee", "type": "currency"},
+        {"code": "discount_percent", "type": "percent"}
+      ]
+    },
+    {
+      "code": "course",
+      "display_name": "Khóa học",
+      "fields": [
+        {"code": "title", "type": "string", "required": true},
+        {"code": "description", "type": "text"},
+        {"code": "duration_weeks", "type": "integer"},
+        {"code": "tuition_fee", "type": "currency", "required": true},
+        {"code": "max_students", "type": "integer"}
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "code": "student_journey",
+      "entity": "student",
+      "states": ["new", "contacted", "trial_booked", "trialed", "enrolled", "nurture", "lost"],
+      "transitions": [
+        {"from": "new", "to": "contacted", "trigger": "send_sms"},
+        {"from": "contacted", "to": "trial_booked", "trigger": "schedule"},
+        {"from": "trial_booked", "to": "trialed", "trigger": "create_activity"},
+        {"from": "trialed", "to": "enrolled", "condition": "discount_percent > 0", "trigger": "create_enrollment"},
+        {"from": "trialed", "to": "nurture", "trigger": "schedule_nurture_sequence"},
+        {"from": "trial_booked", "to": "lost", "condition": "no_show == true"}
+      ]
+    }
+  ]
+}
+```
+
+### 35.4. Template: E-commerce / Bán lẻ
+
+```json
+// services/dynamic-model/templates/ecommerce.json
+{
+  "template_code": "ecommerce",
+  "display_name": "Bán lẻ / E-commerce",
+  "icon": "lucide:shopping-cart",
+  "color": "#f59e0b",
+  "entities": [
+    {
+      "code": "customer",
+      "display_name": "Khách hàng",
+      "fields": [
+        {"code": "name", "type": "string", "required": true},
+        {"code": "phone", "type": "phone", "unique": true},
+        {"code": "email", "type": "email"},
+        {"code": "total_orders", "type": "rollup", "rollup_config": {"target_entity": "order", "aggregation": "count"}},
+        {"code": "lifetime_value", "type": "rollup", "rollup_config": {"target_entity": "order", "target_field": "total", "aggregation": "sum"}},
+        {"code": "last_purchase_date", "type": "rollup", "rollup_config": {"target_entity": "order", "target_field": "created_at", "aggregation": "max"}},
+        {"code": "preferred_category", "type": "string"},
+        {"code": "vip_tier", "type": "enum", "options": ["bronze", "silver", "gold", "platinum"]}
+      ]
+    },
+    {
+      "code": "order",
+      "display_name": "Đơn hàng",
+      "fields": [
+        {"code": "customer_id", "type": "reference", "ref_entity": "customer"},
+        {"code": "total", "type": "currency", "required": true},
+        {"code": "items", "type": "array"},
+        {"code": "status", "type": "enum", "options": ["pending", "paid", "shipped", "delivered", "cancelled", "returned"]},
+        {"code": "payment_method", "type": "enum", "options": ["cod", "vnpay", "momo", "bank_transfer"]}
+      ]
+    },
+    {
+      "code": "product",
+      "display_name": "Sản phẩm",
+      "fields": [
+        {"code": "sku", "type": "string", "required": true, "unique": true},
+        {"code": "title", "type": "string", "required": true},
+        {"code": "price", "type": "currency", "required": true},
+        {"code": "stock", "type": "integer", "default": 0},
+        {"code": "category", "type": "string"},
+        {"code": "images", "type": "images"}
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "code": "customer_lifecycle",
+      "entity": "customer",
+      "states": ["visitor", "lead", "first_purchase", "repeat_customer", "vip", "churned"],
+      "transitions": [
+        {"from": "visitor", "to": "lead", "trigger": "add_to_list"},
+        {"from": "lead", "to": "first_purchase", "condition": "total_orders == 1"},
+        {"from": "first_purchase", "to": "repeat_customer", "condition": "total_orders >= 2"},
+        {"from": "repeat_customer", "to": "vip", "condition": "lifetime_value >= 10000000"}
+      ]
+    }
+  ]
+}
+```
+
+### 35.5. Template: Marketing Agency
+
+```json
+// services/dynamic-model/templates/agency.json
+{
+  "template_code": "agency",
+  "display_name": "Marketing Agency",
+  "icon": "lucide:megaphone",
+  "color": "#ec4899",
+  "entities": [
+    {
+      "code": "client",
+      "display_name": "Khách hàng doanh nghiệp",
+      "fields": [
+        {"code": "company_name", "type": "string", "required": true, "unique": true},
+        {"code": "industry", "type": "enum", "options": ["fashion", "f&b", "tech", "education", "real_estate", "other"]},
+        {"code": "monthly_retainer", "type": "currency", "required": true},
+        {"code": "services_subscribed", "type": "multi_select", "options": ["seo", "ads", "social_media", "content", "email_marketing", "web_design"]},
+        {"code": "health_score", "type": "formula", "formula": "({nps_score} * 0.4 + {engagement_rate} * 0.3 + {payment_history} * 0.3)"},
+        {"code": "churn_risk", "type": "formula", "formula": "days_since_last_contact > 30 ? 'high' : days_since_last_contact > 14 ? 'medium' : 'low'"},
+        {"code": "nps_score", "type": "integer", "min": 0, "max": 10}
+      ]
+    },
+    {
+      "code": "campaign",
+      "display_name": "Chiến dịch",
+      "fields": [
+        {"code": "client_id", "type": "reference", "ref_entity": "client"},
+        {"code": "name", "type": "string", "required": true},
+        {"code": "channel", "type": "enum", "options": ["facebook_ads", "google_ads", "tiktok_ads", "seo", "email"]},
+        {"code": "budget", "type": "currency", "required": true},
+        {"code": "start_date", "type": "date"},
+        {"code": "end_date", "type": "date"},
+        {"code": "roi", "type": "percent"}
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "code": "client_onboarding",
+      "entity": "client",
+      "states": ["prospect", "negotiating", "contract_signed", "onboarding", "active", "paused", "churned"],
+      "transitions": [
+        {"from": "prospect", "to": "negotiating", "trigger": "schedule_call"},
+        {"from": "negotiating", "to": "contract_signed", "trigger": "send_contract"},
+        {"from": "contract_signed", "to": "onboarding", "trigger": "create_kickoff_meeting"},
+        {"from": "onboarding", "to": "active", "trigger": "first_campaign_launch"},
+        {"from": "active", "to": "paused", "condition": "monthly_retainer > 0 && payment_overdue"},
+        {"from": "paused", "to": "churned", "condition": "days_paused > 60"}
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## 36. Open Questions bổ sung (tổng cộng ≥ 30 câu)
+
+26. **Auto code-gen cho Tenants lớn:** Khi nào trigger code-gen? Có cần chờ tenant yêu cầu, hay auto khi schema stable? → Ảnh hưởng tới workflow deploy.
+
+27. **Formula field có support lookup sang tenant khác không?** Cross-tenant lookup có vi phạm multi-tenant isolation không?
+
+28. **Schema Backup tần suất:** Daily snapshot hay continuous WAL? Daily rẻ hơn, WAL an toàn hơn.
+
+29. **Workflow Notification kênh:** Email, SMS, Telegram, In-app - ưu tiên kênh nào?
+
+30. **Sandbox giới hạn:** CEL sandbox có cần support file I/O không (cho tenant upload script)?
+
+31. **Multi-tenant schema marketplace:** Có hỗ trợ tenant mua/bán schema template không? Nếu có, payment integration thế nào?
+
+32. **Versioning retention:** Schema version giữ bao lâu? Vĩnh viễn hay có TTL?
+
+33. **API versioning cho dynamic entity:** Endpoint `/api/crm/v1/lead` vs `/api/crm/v2/lead` - khi nào tạo version mới?
+
+34. **Custom code (TypeScript) trong workflow:** Có hỗ trợ không? Nếu có, runtime Node.js hay Wasm?
+
+35. **Formula & CEL combined:** Cho phép formula reference CEL function không? Ví dụ `CONCAT(first_name, last_name)` kết hợp với `if(score > 70, "hot", "cold")`?
+
+36. **Industry template override:** Tenant customize 1 industry template rồi, update từ admin có auto-merge hay replace?
+
+37. **Schema import conflict resolution:** Khi import schema từ file, gặp field trùng tên → skip, rename, hay error?
+
+38. **Auto code-gen rollback:** Nếu code-gen pipeline fail ở bước canary, có cần auto-rollback hay manual?
+
+39. **Browser compatibility:** Schema Builder UI support tới browser nào? Chrome 90+, Safari 14+, Edge 90+? Hay cần IE11 (legacy)?
+
+40. **Quota per tenant:** Có cần quota field/entity count per tenant (free tier: 50 fields, pro: unlimited)?
+
+41. **Webhook signing:** Workflow webhook trigger có cần HMAC signing để receiver verify không?
+
+42. **Auto-suggest field:** AI có thể auto-suggest field types dựa trên column header từ CSV import?
+
+43. **Migration dry-run:** Có cần mode dry-run cho migration để test trên staging data?
+
+44. **Custom error message i18n:** Error message có cần multi-language (Tiếng Việt, English, Japanese)?
+
+45. **Field-level encryption:** PII field (CC number, ID number) có cần encrypt column-level không?
+
+46. **GDPR Right to be Forgotten:** Soft delete 30 ngày hay hard delete ngay lập tức?
+
+47. **Schema analytics:** Dashboard cho admin thấy schema nào ít dùng, field nào nhiều data?
+
+48. **Field dependency graph:** Visualize field nào reference field nào (cho debugging formula)?
+
+49. **Workflow approval chain:** Max level cho approval chain? 3, 5, unlimited?
+
+50. **Multi-region cho MongoDB migration:** Khi drift detection suggest migrate to Mongo, có auto-replicate sang region khác không?
+
+51. **Custom DSL cho advanced user:** Có cho phép advanced user viết DSL riêng (cú pháp tự định nghĩa)?
+
+52. **Real-time collaboration:** Multiple admin cùng edit schema - có support Google-Docs style real-time collab?
+
+53. **Schema marketplace:** Tenant publish schema template để bán cho tenant khác - business model?
+
+54. **Version diff UI:** Có UI visualize diff giữa 2 version (như GitHub PR diff)?
+
+55. **Auto-test generation:** AI tự động generate test case cho validation rule?
+
+---
+
+## 37. Service Architecture Diagram (chi tiết)
+
+```
+                         ┌────────────────────────────────────┐
+                         │     Tenant Admin Web UI           │
+                         │  (Next.js + React Flow + Monaco)  │
+                         └─────────────┬──────────────────────┘
+                                       │ HTTPS
+                                       ▼
+                         ┌────────────────────────────────────┐
+                         │   dynamic-schema-bff (TS + Bun)    │
+                         │   - Aggregate APIs                 │
+                         │   - User context (tenant_id)       │
+                         └─────────────┬──────────────────────┘
+                                       │ gRPC + Connect-RPC
+                                       ▼
+   ┌──────────────────┐  ┌────────────────────────────────────┐  ┌──────────────────┐
+   │  auth-service    │◄─┤   dynamic-model-service (Go)       ├─►│  crm-core       │
+   │  PASETO + RBAC   │  │   - Entity CRUD                    │  │  (Ent schemas)  │
+   └──────────────────┘  │   - Field CRUD                     │  └──────────────────┘
+                         │   - Workflow CRUD                  │           │
+                         │   - View CRUD                      │           │
+                         └─────┬────────────┬────────────┬────┘           │
+                               │            │            │                │
+                               ▼            ▼            ▼                │
+   ┌──────────────────┐ ┌─────────┐ ┌──────────────┐ ┌──────────────┐  │
+   │ PostgreSQL 17    │ │ Valkey  │ │  NATS JetStream (events)        │  │
+   │ - entity_defs    │ │ (cache) │ │  - entity.updated.{tenant}      │  │
+   │ - dynamic_records│ │ (rate)  │ │  - workflow.transitioned        │  │
+   │ - schema_change_ │ │ (pub/sub│ │  - validation.failed            │  │
+   │   log            │ │         │ │  - migration.completed          │  │
+   │ - RLS policies   │ │         │ │                                │  │
+   └──────────────────┘ └─────────┘ └──────────────┬───────────────┘  │
+                                                    │                  │
+                          ┌─────────────────────────┘                  │
+                          ▼                                             │
+   ┌──────────────────────────────────────────────┐                   │
+   │   validation-engine (Go + cel-go)           │                   │
+   │   - 5-layer pipeline                          │                   │
+   │   - CEL sandbox                              │                   │
+   │   - Cross-entity rules                       │                   │
+   └─────────────┬────────────────┬───────────────┘                   │
+                 │                │                                   │
+                 ▼                ▼                                   │
+   ┌─────────────────────┐  ┌──────────────────────┐                │
+   │ workflow-engine     │  │ schema-migrator      │                │
+   │ (Go)                │  │ (Python + Celery)    │                │
+   │ - State machine     │  │ - Drift detection    │                │
+   │ - Triggers          │  │ - Migration runner   │                │
+   │ - Sub-workflow      │  │ - Mongo migration    │                │
+   │ - Rollback          │  │                      │                │
+   └─────────┬───────────┘  └──────────────────────┘                │
+             │                                                      │
+             ▼                                                      │
+   ┌─────────────────────────┐  ┌──────────────────────────────┐   │
+   │  Trigger Workers        │  │  External Services           │   │
+   │  - Email (SMTP)         │  │  - Email provider (SES)      │   │
+   │  - SMS (Twilio)         │  │  - SMS (Twilio, VNPay)       │   │
+   │  - Webhook              │  │  - Webhook targets           │   │
+   │  - Push notification    │  │  - AI services (XGBoost)     │   │
+   │  - Assignment           │  │                              │   │
+   └─────────────────────────┘  └──────────────────────────────┘   │
+                                                                      │
+                                                                      │
+   ┌──────────────────────────────────────────────────────────────┐ │
+   │  codegen-pipeline (Go + Bash)                                │ │
+   │  - Detect stable schema                                      │ │
+   │  - Generate Ent schema + TS types                            │ │
+   │  - Git commit + push                                         │ │
+   │  - Trigger CI/CD build                                       │ │
+   └──────────────────────────────────────────────────────────────┘ │
+                                                                      │
+                                                                      ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │  External CI/CD (GitHub Actions)
+   │  - Run go generate ./...
+   │  - Build binary
+   │  - Push to ghcr.io
+   │  - Trigger ArgoCD
+   └──────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 38. Cost Estimation chi tiết (bổ sung §25)
+
+### 38.1. JSONB Storage Cost
+
+**Ví dụ:** 10M dynamic records với 50 fields/record, average 5KB/record (với JSONB).
+
+```
+PostgreSQL storage:
+  - Records: 10M × 5KB = 50 GB
+  - Indexes (B-tree + GIN): 10 GB
+  - WAL overhead: 5 GB
+  - TOAST (large JSONB): 20 GB
+  Total PostgreSQL: ~85 GB
+
+Valkey cache:
+  - Hot schemas (1000 entities × 50KB): 50 MB
+  
+ClickHouse analytics:
+  - Aggregated events: 10M events × 200 bytes = 2 GB
+  - Total ClickHouse: ~3 GB
+
+MinIO (asset upload via field):
+  - 100K files × 2MB average: 200 GB
+
+Cost breakdown (AWS equivalent):
+  - RDS db.r6g.2xlarge (500GB SSD): $1,200/month
+  - ElastiCache (12 GB): $180/month
+  - ClickHouse 4-core: $400/month
+  - S3 storage: $0.023 × 200GB = $5/month
+  - Total: ~$1,800/month for 10M records
+```
+
+### 38.2. Index Cost
+
+| Index Type | Storage per 1M records | Query speedup |
+|-----------|------------------------|---------------|
+| B-tree (single column) | ~20 MB | 10-100x |
+| GIN (JSONB full) | ~150 MB | 5-20x |
+| Expression index | ~25 MB | 50-200x |
+| Partial index | ~5 MB | 100x (for specific subset) |
+| BRIN (time-series) | ~2 MB | 2-10x |
+
+Rule of thumb: Total indexes size ≈ 30-50% of table size.
+
+### 38.3. Compute Cost cho Schema Builder UI
+
+| Resource | Spec | Cost/month |
+|----------|------|------------|
+| Next.js hosting (Vercel) | Pro plan | $200 |
+| CDN (Cloudflare Pro) | - | $200 |
+| Edge functions | - | $50 |
+| Database connection pooling (PgBouncer) | 4 vCPU, 8GB | $120 |
+| **Total** | - | **~$570/month** |
+
+### 38.4. Cost per Tenant (Avg)
+
+```
+Shared cluster model:
+  - Storage: $1,800 / 1,000 tenants = $1.80/tenant
+  - Compute: $800 / 1,000 tenants = $0.80/tenant
+  - Cache: $180 / 1,000 tenants = $0.18/tenant
+  Total: ~$2.78/tenant/month
+
+Isolated VPS model:
+  - Dedicated VPS: $80-300/tenant/month
+  - Replicated storage: +$20/tenant/month
+  Total: $100-320/tenant/month
+```
+
+---
+
+## 39. Acceptance Criteria cuối cùng
+
+| AC | Tiêu chí | Đo lường |
+|----|---------|---------|
+| AC-DM-01 | Tạo field mới không cần restart | Hot reload < 5s |
+| AC-DM-02 | Validate 1000 fields < 50ms | CEL benchmark |
+| AC-DM-03 | CRUD dynamic entity < 100ms | p95 |
+| AC-DM-04 | Workflow transition < 200ms | p95 |
+| AC-DM-05 | JSONB query < 50ms với GIN index | p95 |
+| AC-DM-06 | Schema save cache invalidate < 1s | Multi-service benchmark |
+| AC-DM-07 | Multi-tenant isolation 100% | Security test |
+| AC-DM-08 | Code-gen pipeline success > 95% | CI metric |
+| AC-DM-09 | Migration zero-downtime | DR drill |
+| AC-DM-10 | Industry template install < 10s | Load test |
+| AC-DM-11 | Formula evaluation < 5ms | Benchmark |
+| AC-DM-12 | CEL sandbox resource limit | Fuzz test |
+| AC-DM-13 | Concurrent edit conflict resolution | Concurrency test |
+| AC-DM-14 | Audit log 100% schema changes | Audit verification |
+| AC-DM-15 | Disaster recovery RTO < 30 min | DR drill |
+
+---
+
+## 40. Kết luận
+
+Dynamic Model Engine là trái tim của RINCO Multi-Tenant CRM. Nó cho phép:
+
+1. **Mỗi tenant có schema riêng** mà không cần fork code
+2. **Validation runtime < 5ms** với CEL sandbox an toàn
+3. **Workflow automation** không cần re-deploy
+4. **Schema versioning & hot reload** với optimistic locking
+5. **Code-gen tự động** khi schema stable → performance boost
+6. **15+ industry templates** để onboard nhanh
+
+Tổng effort: 16 tuần × 9 người = ~144 person-weeks.
+Service components: 8 services Go/TS/Python/Rust.
+Acceptance: 15 AC phải đạt 100%.
+
+---
+
+**Tiếp theo:** [`docs/05-landing-capi/README.md`](../05-landing-capi/README.md) – Landing Page + Facebook CAPI chi tiết.
