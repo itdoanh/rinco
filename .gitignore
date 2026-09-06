@@ -1,0 +1,78 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+vendor/
+go.sum
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# Node
+node_modules/
+.next/
+.turbo/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.log
+
+# Docker
+docker-compose.override.yml
+
+# Models (large)
+models/
+*.joblib
+*.pkl
+
+# Recordings
+recordings/
+*.webm
+*.mp4
+
+# Local data
+data/
+*.sqlite
+*.db
+
+# K8s secrets
+*.secrets.yaml
+sealed-secrets/
+
+# Build artifacts
+build/
+dist/
+out/
+
+# Cache
+.cache/

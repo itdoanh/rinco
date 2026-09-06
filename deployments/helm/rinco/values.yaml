@@ -1,0 +1,163 @@
+# Default values for RINCO Helm chart.
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+global:
+  imageRegistry: ""
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# Common service settings
+service:
+  type: ClusterIP
+  port: 80
+
+# Ingress
+ingress:
+  enabled: true
+  className: traefik
+  annotations: {}
+  hosts:
+    - host: rinco.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# PostgreSQL
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: rinco_dev_password
+    database: rinco
+  primary:
+    persistence:
+      size: 100Gi
+
+# ScyllaDB
+scylla:
+  enabled: true
+  persistence:
+    size: 200Gi
+
+# ClickHouse
+clickhouse:
+  enabled: true
+  persistence:
+    size: 100Gi
+
+# Resources
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+# Services config
+services:
+  auth:
+    enabled: true
+    replicas: 2
+    port: 8081
+
+  tenant:
+    enabled: true
+    replicas: 2
+    port: 8082
+
+  crm:
+    enabled: true
+    replicas: 2
+    port: 8083
+
+  dynamicModel:
+    enabled: true
+    replicas: 2
+    port: 8084
+
+  lead:
+    enabled: true
+    replicas: 2
+    port: 8085
+
+  landing:
+    enabled: true
+    replicas: 3
+    port: 8086
+
+  email:
+    enabled: true
+    replicas: 1
+    port: 8087
+
+  notification:
+    enabled: true
+    replicas: 1
+    port: 8088
+
+  observability:
+    enabled: true
+    replicas: 1
+    port: 8089
+
+  chatEngine:
+    enabled: true
+    replicas: 2
+    port: 8094
+
+  webrtcSfu:
+    enabled: true
+    replicas: 2
+    port: 8095
+
+  recording:
+    enabled: true
+    replicas: 1
+    port: 8096
+
+  leadScoring:
+    enabled: true
+    replicas: 2
+    port: 8092
+
+  aiSre:
+    enabled: true
+    replicas: 1
+    port: 8090
+
+  ragChatbot:
+    enabled: true
+    replicas: 2
+    port: 8091
+
+  sttService:
+    enabled: false  # Requires GPU
+    replicas: 1
+    port: 8093
+
+# Persistence
+persistence:
+  enabled: true
+  storageClass: longhorn
+  size: 10Gi
+
+# Logging
+logging:
+  level: info
+  format: json
+
+# Monitoring
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s

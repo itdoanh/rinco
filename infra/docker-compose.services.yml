@@ -1,0 +1,298 @@
+version: '3.8'
+
+x-go-env: &go-env
+  ENV: development
+  LOG_LEVEL: info
+  DB_HOST: postgres
+  DB_PORT: 5432
+  DB_USER: rinco
+  DB_PASSWORD: rinco_dev_password
+  DB_NAME: rinco
+  DB_SSLMODE: disable
+
+x-python-env: &python-env
+  ENV: development
+  VLLM_URL: http://vllm:8000/v1
+  QDRANT_URL: http://qdrant:6333
+
+services:
+  # ============================================================
+  # Go Services
+  # ============================================================
+  auth-service:
+    build: ./services/auth-service
+    container_name: rinco-auth-service
+    restart: unless-stopped
+    environment:
+      <<: *go-env
+      PASETO_KEY_CURRENT: ${PASETO_KEY_CURRENT}
+      PASETO_KEY_PREVIOUS: ${PASETO_KEY_PREVIOUS}
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
+  tenant-service:
+    build: ./services/tenant-service
+    container_name: rinco-tenant-service
+    restart: unless-stopped
+    environment:
+      <<: *go-env
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
+  crm-service:
+    build: ./services/crm-service
+    container_name: rinco-crm-service
+    restart: unless-stopped
+    environment: *go-env
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
+  dynamic-model-service:
+    build: ./services/dynamic-model-service
+    container_name: rinco-dynamic-model-service
+    restart: unless-stopped
+    environment: *go-env
+    ports:
+      - "8084:8084"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
+  lead-service:
+    build: ./services/lead-service
+    container_name: rinco-lead-service
+    restart: unless-stopped
+    environment: *go-env
+    ports:
+      - "8085:8085"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
+  landing-service:
+    build: ./services/landing-service
+    container_name: rinco-landing-service
+    restart: unless-stopped
+    environment:
+      ENV: development
+      DB_HOST: postgres
+      DB_USER: rinco
+      DB_PASSWORD: rinco_dev_password
+      DB_NAME: rinco
+      SCYLLA_HOST: scylla
+      VALKEY_HOST: valkey
+      INGESTION_HMAC_SECRET: ${INGESTION_HMAC_SECRET:-dev_secret_change_me}
+    ports:
+      - "8086:8086"
+      - "8090:8090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      scylla:
+        condition: service_started
+    networks:
+      - rinco-net
+
+  email-service:
+    build: ./services/email-service
+    container_name: rinco-email-service
+    restart: unless-stopped
+    environment:
+      SMTP_HOST: mailhog
+      SMTP_PORT: 1025
+      SMTP_FROM: noreply@rinco.app
+    ports:
+      - "8087:8087"
+    networks:
+      - rinco-net
+
+  notification-service:
+    build: ./services/notification-service
+    container_name: rinco-notification-service
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    ports:
+      - "8088:8088"
+    networks:
+      - rinco-net
+
+  observability-service:
+    build: ./services/observability-service
+    container_name: rinco-observability-service
+    restart: unless-stopped
+    environment: *go-env
+    ports:
+      - "8089:8089"
+    depends_on:
+      - auth-service
+      - crm-service
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # Rust Services
+  # ============================================================
+  chat-engine:
+    build: ./services/chat-engine
+    container_name: rinco-chat-engine
+    restart: unless-stopped
+    environment:
+      SCYLLA_HOST: scylla
+      VALKEY_URL: redis://valkey:6379
+      RUST_LOG: info
+    ports:
+      - "8094:8094"
+    depends_on:
+      scylla:
+        condition: service_started
+    networks:
+      - rinco-net
+
+  webrtc-sfu:
+    build: ./services/webrtc-sfu
+    container_name: rinco-webrtc-sfu
+    restart: unless-stopped
+    environment:
+      TURN_HOST: turn.rinco.app
+      TURN_SECRET: ${TURN_SECRET:-dev_turn_secret}
+    ports:
+      - "8095:8095"
+    networks:
+      - rinco-net
+
+  recording-service:
+    build: ./services/recording-service
+    container_name: rinco-recording-service
+    restart: unless-stopped
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: rinco
+      S3_SECRET_KEY: rinco_dev_password
+      S3_BUCKET: recordings
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: rinco
+      AWS_SECRET_ACCESS_KEY: rinco_dev_password
+    ports:
+      - "8096:8096"
+    depends_on:
+      - minio
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # Python Services
+  # ============================================================
+  lead-scoring:
+    build: ./services/lead-scoring
+    container_name: rinco-lead-scoring
+    restart: unless-stopped
+    environment: *python-env
+    ports:
+      - "8092:8092"
+    networks:
+      - rinco-net
+
+  ai-sre:
+    build: ./services/ai-sre
+    container_name: rinco-ai-sre
+    restart: unless-stopped
+    environment:
+      <<: *python-env
+      CLICKHOUSE_URL: http://clickhouse:8123
+      LLM_MODEL: deepseek-coder-v2-lite-instruct
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      GITHUB_REPO: itdoanh/rinco
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    ports:
+      - "8090:8090"
+    networks:
+      - rinco-net
+
+  rag-chatbot:
+    build: ./services/rag-chatbot
+    container_name: rinco-rag-chatbot
+    restart: unless-stopped
+    environment: *python-env
+    ports:
+      - "8091:8091"
+    depends_on:
+      - qdrant
+    networks:
+      - rinco-net
+
+  stt-service:
+    build: ./services/stt-service
+    container_name: rinco-stt-service
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      WHISPER_MODEL: large-v3
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE: float16
+    ports:
+      - "8093:8093"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # Frontend (Next.js)
+  # ============================================================
+  landing-frontend:
+    build: ./frontend/landing
+    container_name: rinco-landing-frontend
+    restart: unless-stopped
+    environment:
+      LANDING_API_URL: http://landing-service:8086
+      NEXT_PUBLIC_FB_PIXEL_ID: ${NEXT_PUBLIC_FB_PIXEL_ID:-}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - landing-service
+    networks:
+      - rinco-net
+
+  admin-portal-frontend:
+    build: ./frontend/admin-portal
+    container_name: rinco-admin-portal
+    restart: unless-stopped
+    environment:
+      ADMIN_API_URL: http://auth-service:8081
+    ports:
+      - "3002:3002"
+    depends_on:
+      - auth-service
+    networks:
+      - rinco-net
+
+networks:
+  rinco-net:
+    external: true
+    name: rinco_rinco-net
