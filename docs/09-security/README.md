@@ -925,3 +925,825 @@ CREATE TABLE audit_log (
 ---
 
 **Tiếp theo:** [`docs/10-database/README.md`](../10-database/README.md) – Database Schema chi tiết & Polyglot Persistence.
+
+---
+
+# PHẦN MỞ RỘNG – Audit, Edge Cases, Code Examples, Roadmap
+
+> Phần này bổ sung cho tài liệu gốc, cung cấp implementation chi tiết cho security stack.
+
+---
+
+## 8. Audit Report (Self-Audit)
+
+### 8.1. Những gì đã đủ chi tiết ✓
+- Zero-Trust 4 tầng network, frontend, application, database, admin.
+- PostgreSQL RLS pattern.
+- Dark Admin concept.
+
+### 8.2. Cần bổ sung ⚠️
+- Code examples cho mỗi tầng (eBPF, Wasm, PASETO, RLS).
+- Penetration testing methodology.
+- Cost estimation cho security infrastructure.
+- Disaster recovery cho security incidents.
+
+### 8.3. Mâu thuẫn nội bộ ❌
+- FIDO2 requirement cho admin có thể conflict với UX nếu không có backup key. Cần rõ recovery flow.
+
+---
+
+## 9. Edge Cases & Error Scenarios (≥ 30)
+
+### 9.1. eBPF/XDP Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 1 | eBPF program verify fail (kernel version mismatch) | Filter không load | Map program version → fallback userspace iptables |
+| 2 | XDP_DROP quá aggressive | False positive | Per-IP whitelist, allow-list override |
+| 3 | Map overflow | New IP không rate-limit | LRU eviction, monitoring |
+| 4 | NIC không support XDP | Bypass filter | Detect + log, fallback |
+| 5 | Kernel panic do eBPF bug | Server crash | Disable program, restart, alert |
+| 6 | Race condition giữa userspace update và XDP lookup | Stale rule | Use BPF ring buffer for sync |
+
+### 9.2. Wasm Attestation Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 7 | Wasm module load fail (CDN down) | Attestation fail | Local fallback + CAPTCHA |
+| 8 | Browser không support Wasm (cũ) | Attestation fail | Polyfill, fallback JS check |
+| 9 | Headless Chrome mới bypass Canvas check | False negative | Multiple signals (mouse, WebGL, audio) |
+| 10 | Argon2 PoW timing attack | Bot tối ưu | Adaptive difficulty |
+| 11 | Wasm compromised (CDN hacked) | Attestation leak | Subresource Integrity hash pin |
+
+### 9.3. PASETO Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 12 | PASETO key rotation mid-session | Token invalid | Support overlap period (2 keys active) |
+| 13 | Clock skew giữa issuer và verifier | Token "expired" | 60s clock skew tolerance |
+| 14 | Token theft via XSS | Account compromise | Short TTL + httpOnly + CSP |
+| 15 | Replay attack | Token reuse | jti + nonce store in Valkey |
+| 16 | PASETO local key leak | All tokens compromised | Key rotation + audit + invalidate all |
+| 17 | Brute force PASETO verification | DoS | Rate limit per IP |
+
+### 9.4. PostgreSQL RLS Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 18 | RLS bypass via SQL injection | Tenant leak | sqlc parameterized queries, lint |
+| 19 | RLS policy too strict | Own data inaccessible | Test matrix, dry-run migration |
+| 20 | Missing SET LOCAL | RLS fail silently | Middleware enforce, integration test |
+| 21 | Super admin flag leak | Cross-tenant read | Audit + 2FA for super admin |
+| 22 | Connection pool reuses session | Wrong tenant context | PgBouncer transaction mode + SET LOCAL |
+| 23 | RLS policy conflict giữa policies | Inconsistent result | Review all, integration test |
+| 24 | Bypass RLS via superuser | Privilege escalation | FORCE ROW LEVEL SECURITY |
+| 25 | LTREE path injection | Path traversal | Validate input format |
+
+### 9.5. Dark Admin Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 26 | SPA packet spoofed | Admin port exposed | HMAC + nonce + replay window |
+| 27 | WireGuard key lost | Cannot connect admin | Recovery key + offline QR backup |
+| 28 | FIDO2 device lost | Cannot login | Backup YubiKey required at registration |
+| 29 | FIDO2 challenge replay | Auth bypass | One-time challenge, 5 min TTL |
+| 30 | Quorum member unavailable | Cannot approve action | Time-extension, designated alternate |
+| 31 | 2-of-3 quorum compromised | Malicious action | Audit log + anomaly detection + manual review |
+| 32 | Admin session stolen | Privilege escalation | IP lock + device fingerprint |
+
+---
+
+## 10. Code Examples chi tiết
+
+### 10.1. C – eBPF/XDP DDoS Filter (full)
+```c
+// xdp_antiddos.bpf.c
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
+#include <bpf/bpf_helpers.h>
+
+struct rate_limit_key {
+    __u32 src_ip;
+};
+
+struct rate_limit_val {
+    __u64 tokens;
+    __u64 last_refill_ns;
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 100000);
+    __type(key, struct rate_limit_key);
+    __type(value, struct rate_limit_val);
+} rate_limit_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10000);
+    __type(key, __u32);              // IP
+    __type(value, __u64);             // block_until_ns
+} blacklist_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
+    __type(key, __u32);
+    __type(value, __u64);
+} config_map SEC(".maps");  // 0: tokens_per_sec, 1: burst
+
+static __always_inline __u64 now_ns(void) {
+    return bpf_ktime_get_ns();
+}
+
+static __always_inline int check_rate(struct rate_limit_key *k, __u64 rate, __u64 burst) {
+    struct rate_limit_val *v = bpf_map_lookup_elem(&rate_limit_map, k);
+    __u64 now = now_ns();
+
+    if (!v) {
+        struct rate_limit_val init = { .tokens = burst, .last_refill_ns = now };
+        bpf_map_update_elem(&rate_limit_map, k, &init, BPF_ANY);
+        return 1;
+    }
+
+    __u64 elapsed = now - v->last_refill_ns;
+    __u64 refill = (elapsed * rate) / 1000000000ULL;
+    v->tokens = (v->tokens + refill > burst) ? burst : v->tokens + refill;
+    v->last_refill_ns = now;
+
+    if (v->tokens == 0) return 0;
+    v->tokens--;
+    return 1;
+}
+
+SEC("xdp")
+int xdp_antiddos(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) return XDP_PASS;
+    struct iphdr *ip = (void *)(eth + 1);
+    if ((void *)(ip + 1) > data_end) return XDP_PASS;
+
+    __u32 saddr = ip->saddr;
+
+    // 1. Blacklist
+    __u64 *blocked = bpf_map_lookup_elem(&blacklist_map, &saddr);
+    if (blocked && *blocked > now_ns()) return XDP_DROP;
+
+    // 2. Get config (rate, burst)
+    __u32 zero = 0;
+    __u64 *rate = bpf_map_lookup_elem(&config_map, &zero);
+    __u64 rps = rate ? *rate : 100;        // default 100 req/s
+    __u64 burst = rps * 2;
+
+    // 3. Rate limit
+    struct rate_limit_key k = { .src_ip = saddr };
+    if (!check_rate(&k, rps, burst)) return XDP_DROP;
+
+    return XDP_PASS;
+}
+
+char _license[] SEC("license") = "GPL";
+```
+
+### 10.2. C – eBPF RASP (syscall filter)
+```c
+// rasp_syscall.bpf.c
+#include <linux/bpf.h>
+#include <bpf/bpf_helpers.h>
+
+// Block suspicious execve
+SEC("tracepoint/syscalls/sys_enter_execve")
+int block_execve(struct trace_event_raw_sys_enter *ctx) {
+    char filename[128];
+    bpf_probe_read_user_str(filename, sizeof(filename), (char *)ctx->args[0]);
+
+    // Whitelist safe binaries
+    if (
+        filename[0] == '/' &&
+        filename[1] == 'u' &&
+        filename[2] == 's' &&
+        filename[3] == 'r' &&
+        filename[4] == '/'
+    ) return 0;
+
+    // Allow /proc/self/exe (the binary itself)
+    // ...
+
+    // Block /bin/sh, /bin/bash, reverse shells
+    char blocklist[][16] = {
+        "/bin/sh\0",
+        "/bin/bash\0",
+        "/bin/zsh\0",
+        "/usr/bin/curl\0",
+        "/usr/bin/wget\0",
+        "/usr/bin/nc\0",
+        "/usr/bin/python\0",  // potential reverse shell
+    };
+
+    for (int i = 0; i < sizeof(blocklist)/sizeof(blocklist[0]); i++) {
+        bool match = true;
+        for (int j = 0; j < 16 && blocklist[i][j]; j++) {
+            if (j >= sizeof(filename)) break;
+            if (filename[j] != blocklist[i][j]) { match = false; break; }
+        }
+        if (match) {
+            u64 pid_tgid = bpf_get_current_pid_tgid();
+            u32 pid = pid_tgid >> 32;
+            bpf_printk("RASP: blocked %s from pid %d", filename, pid);
+            bpf_send_signal(SIGKILL);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+// Block access to sensitive files
+SEC("tracepoint/syscalls/sys_enter_openat")
+int block_file_access(struct trace_event_raw_sys_enter *ctx) {
+    char filename[128];
+    bpf_probe_read_user_str(filename, sizeof(filename), (char *)ctx->args[1]);
+
+    // Sensitive file patterns
+    if (
+        // /etc/shadow, /etc/passwd, /root/.ssh/...
+        true  // simplified; use actual pattern matching
+    ) {
+        bpf_send_signal(SIGKILL);
+    }
+    return 0;
+}
+
+char _license[] SEC(".rodata") = "GPL";
+```
+
+### 10.3. Rust – Wasm Attestation (full)
+```rust
+// attestation/src/lib.rs
+use wasm_bindgen::prelude::*;
+use serde::{Serialize, Deserialize};
+use sha2::{Digest, Sha256};
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AttestationProof {
+    pub canvas_hash: String,
+    pub webgl_renderer: String,
+    pub audio_fingerprint: String,
+    pub has_real_mouse: bool,
+    pub has_real_touch: bool,
+    pub timestamp: u64,
+    pub nonce: String,
+    pub user_agent_hash: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum AttestationResult {
+    Human(AttestationProof),
+    Bot(String),
+}
+
+#[wasm_bindgen]
+pub fn attest(nonce: JsValue) -> JsValue {
+    let nonce_str: String = nonce.as_string().unwrap_or_default();
+    let result = attest_internal(&nonce_str);
+    serde_wasm_bindgen::to_value(&result).unwrap()
+}
+
+fn attest_internal(nonce: &str) -> AttestationResult {
+    let canvas_hash = get_canvas_hash();
+    let webgl_renderer = get_webgl_renderer();
+    let audio_fp = get_audio_fingerprint();
+    let ua = get_user_agent();
+
+    // 1. Detect headless Chrome
+    if webgl_renderer.contains("swiftshader") ||
+       webgl_renderer.contains("llvmpipe") {
+        return AttestationResult::Bot("headless_chromium".into());
+    }
+
+    // 2. Detect Selenium/Puppeteer
+    if webgl_renderer.is_empty() || webgl_renderer == "WebGL" {
+        return AttestationResult::Bot("no_webgl".into());
+    }
+
+    // 3. Audio context fingerprint
+    if audio_fp.is_empty() {
+        return AttestationResult::Bot("no_audio".into());
+    }
+
+    // 4. Mouse movement entropy (assumed real if has mouse activity)
+    let has_real_mouse = check_mouse_entropy();
+
+    AttestationResult::Human(AttestationProof {
+        canvas_hash,
+        webgl_renderer,
+        audio_fingerprint: audio_fp,
+        has_real_mouse,
+        has_real_touch: false,
+        timestamp: get_timestamp(),
+        nonce: nonce.to_string(),
+        user_agent_hash: sha256_hex(ua.as_bytes()),
+    })
+}
+
+fn get_canvas_hash() -> String {
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let canvas = document.create_element("canvas").unwrap()
+        .dyn_into::<web_sys::HtmlCanvasElement>().unwrap();
+    canvas.set_width(280);
+    canvas.set_height(60);
+    let ctx = canvas.get_context("2d").unwrap().unwrap()
+        .dyn_into::<web_sys::CanvasRenderingContext2d>().unwrap();
+    ctx.set_font("16px Arial");
+    ctx.fill_text("RINCO-attest-2026", 2.0, 30.0).unwrap();
+    let data = canvas.to_data_url().unwrap();
+    sha256_hex(data.as_bytes())
+}
+
+fn get_webgl_renderer() -> String {
+    let window = web_sys::window().unwrap();
+    let document = window.document().unwrap();
+    let canvas = document.create_element("canvas").unwrap()
+        .dyn_into::<web_sys::HtmlCanvasElement>().unwrap();
+    let gl = canvas.get_context("webgl").unwrap().unwrap()
+        .dyn_into::<web_sys::WebGlRenderingContext>().unwrap();
+    let ext = gl.get_extension("WEBGL_debug_renderer_info").unwrap();
+    let renderer = gl.get_parameter(
+        ext.as_ref().unwrap(),
+        web_sys::WebGlRenderingContext::UNMASKED_RENDERER_WEBGL
+    ).unwrap();
+    renderer.as_string().unwrap_or_default()
+}
+
+fn get_audio_fingerprint() -> String {
+    // OfflineAudioContext fingerprint
+    let window = web_sys::window().unwrap();
+    let audio_ctx = web_sys::AudioContext::new().unwrap();
+    let oscillator = audio_ctx.create_oscillator().unwrap();
+    let analyser = audio_ctx.create_analyser().unwrap();
+    oscillator.connect(&analyser).unwrap();
+    let _ = analyser.get_byte_frequency_data(&mut web_sys::Uint8Array::new_with_length(analyser.frequency_bin_count()));
+    let sum: u32 = (0..analyser.frequency_bin_count()).map(|i| i as u32).sum();
+    sha256_hex(sum.to_string().as_bytes())
+}
+
+fn check_mouse_entropy() -> bool {
+    // Implementation depends on event listener.
+    // Stub: assume true (real validation done at server side via mouse events).
+    true
+}
+
+fn get_timestamp() -> u64 {
+    js_sys::Date::now() as u64
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    hex::encode(result)
+}
+```
+
+### 10.4. Go – PASETO v4 + RBAC (full)
+```go
+// pkg/auth/paseto.go
+package auth
+
+import (
+    "crypto/rand"
+    "encoding/hex"
+    "errors"
+    "time"
+
+    "github.com/google/uuid"
+    "github.com/o1egl/paseto"
+    "golang.org/x/crypto/chacha20poly1305"
+)
+
+var (
+    ErrExpired      = errors.New("token expired")
+    ErrInvalid      = errors.New("invalid token")
+    ErrReplay       = errors.New("token replay detected")
+)
+
+type Claims struct {
+    Issuer     string    `json:"iss"`
+    Subject    string    `json:"sub"`
+    Audience   string    `json:"aud"`
+    ExpiresAt  time.Time `json:"exp"`
+    IssuedAt   time.Time `json:"iat"`
+    NotBefore  time.Time `json:"nbf"`
+    JTI        string    `json:"jti"`
+    TenantID   string    `json:"tenant_id,omitempty"`
+    UserID     string    `json:"user_id,omitempty"`
+    Roles      []string  `json:"roles,omitempty"`
+    Permissions []string `json:"perms,omitempty"`
+    Scope      string    `json:"scope,omitempty"`
+}
+
+type Paseto struct {
+    key       []byte
+    validator *Validator
+}
+
+func NewPaseto(hexKey string) (*Paseto, error) {
+    key, err := hex.DecodeString(hexKey)
+    if err != nil {
+        return nil, err
+    }
+    if len(key) != chacha20poly1305.KeySize {
+        return nil, errors.New("invalid key size")
+    }
+    return &Paseto{
+        key: key,
+        validator: NewValidator(),
+    }, nil
+}
+
+func (p *Paseto) Encrypt(claims Claims) (string, error) {
+    pasetoObj := paseto.NewV4Local()
+    return pasetoObj.Encrypt(p.key, claims, nil)
+}
+
+func (p *Paseto) Decrypt(token string) (*Claims, error) {
+    pasetoObj := paseto.NewV4Local()
+    var claims Claims
+    if err := pasetoObj.Decrypt(token, p.key, &claims, nil); err != nil {
+        return nil, ErrInvalid
+    }
+    if err := p.validator.Validate(&claims); err != nil {
+        return nil, err
+    }
+    return &claims, nil
+}
+
+type Validator struct {
+    nowFunc func() time.Time
+    skew    time.Duration
+}
+
+func NewValidator() *Validator {
+    return &Validator{
+        nowFunc: time.Now,
+        skew:    60 * time.Second,
+    }
+}
+
+func (v *Validator) Validate(c *Claims) error {
+    now := v.nowFunc()
+    if !c.ExpiresAt.IsZero() && now.After(c.ExpiresAt.Add(v.skew)) {
+        return ErrExpired
+    }
+    if !c.NotBefore.IsZero() && now.Before(c.NotBefore.Add(-v.skew)) {
+        return ErrInvalid
+    }
+    return nil
+}
+
+// RotateKey xoay vòng key (overlap period)
+type KeyRing struct {
+    current  []byte
+    previous []byte
+}
+
+func (k *KeyRing) Encrypt(c Claims) (string, error) {
+    p := paseto.NewV4Local()
+    return p.Encrypt(k.current, c, nil)
+}
+
+func (k *KeyRing) Decrypt(token string) (*Claims, error) {
+    p := paseto.NewV4Local()
+    var c Claims
+    if err := p.Decrypt(token, k.current, &c, nil); err == nil {
+        return &c, nil
+    }
+    if err := p.Decrypt(token, k.previous, &c, nil); err == nil {
+        return &c, nil
+    }
+    return nil, ErrInvalid
+}
+```
+
+### 10.5. Go – PostgreSQL RLS Setup
+```go
+// pkg/db/rls.go
+package db
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+)
+
+type ctxKey string
+
+const (
+    TenantIDKey ctxKey = "tenant_id"
+    UserIDKey   ctxKey = "user_id"
+    IsAdminKey  ctxKey = "is_super_admin"
+)
+
+// WithRLS thiết lập session variables cho RLS trong transaction.
+func WithRLS(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+    tx, err := db.BeginTx(ctx, nil)
+    if err != nil {
+        return nil, fmt.Errorf("begin tx: %w", err)
+    }
+
+    tenantID, _ := ctx.Value(TenantIDKey).(string)
+    userID, _ := ctx.Value(UserIDKey).(string)
+    isAdmin, _ := ctx.Value(IsAdminKey).(bool)
+
+    if tenantID != "" {
+        if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL app.current_tenant_id = '%s'", tenantID)); err != nil {
+            tx.Rollback()
+            return nil, fmt.Errorf("set tenant: %w", err)
+        }
+    }
+    if userID != "" {
+        if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL app.current_user_id = '%s'", userID)); err != nil {
+            tx.Rollback()
+            return nil, fmt.Errorf("set user: %w", err)
+        }
+    }
+    if isAdmin {
+        if _, err := tx.ExecContext(ctx, "SET LOCAL app.is_super_admin = 'true'"); err != nil {
+            tx.Rollback()
+            return nil, fmt.Errorf("set admin: %w", err)
+        }
+    }
+
+    return tx, nil
+}
+
+// SetTenantContext gắn tenant_id vào context.
+func SetTenantContext(ctx context.Context, tenantID, userID string, isAdmin bool) context.Context {
+    ctx = context.WithValue(ctx, TenantIDKey, tenantID)
+    ctx = context.WithValue(ctx, UserIDKey, userID)
+    if isAdmin {
+        ctx = context.WithValue(ctx, IsAdminKey, true)
+    }
+    return ctx
+}
+
+// AuditContext ghi log mọi query
+func AuditContext(ctx context.Context, action string) {
+    // Implementation: ghi vào ScyllaDB audit_log
+}
+```
+
+### 10.6. SQL – Tất cả RLS policies
+```sql
+-- 1. Tenants table (chỉ super admin)
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenants FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY tenants_admin ON tenants
+  FOR ALL
+  USING (current_setting('app.is_super_admin', true) = 'true')
+  WITH CHECK (current_setting('app.is_super_admin', true) = 'true');
+
+-- 2. Users table
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY users_tenant ON users
+  FOR ALL
+  USING (
+    tenant_id = current_setting('app.current_tenant_id', true)::UUID
+    OR current_setting('app.is_super_admin', true) = 'true'
+  );
+
+CREATE POLICY users_subtree ON users
+  FOR SELECT
+  USING (
+    owner_in_subtree(id)
+  );
+
+-- 3. Leads
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leads FORCE ROW LEVEL SECURITY;
+
+CREATE POLICY leads_tenant ON leads
+  FOR ALL
+  USING (
+    tenant_id = current_setting('app.current_tenant_id', true)::UUID
+    OR current_setting('app.is_super_admin', true) = 'true'
+  );
+
+CREATE POLICY leads_user_scope ON leads
+  FOR ALL
+  USING (
+    owner_user_id = current_setting('app.current_user_id', true)::UUID
+    OR owner_user_id IN (
+      SELECT id FROM users
+      WHERE path <@ (
+        SELECT path FROM users
+        WHERE id = current_setting('app.current_user_id', true)::UUID
+      )
+    )
+    OR current_setting('app.is_super_admin', true) = 'true'
+  );
+
+-- Helper function
+CREATE OR REPLACE FUNCTION owner_in_subtree(uid UUID)
+RETURNS BOOLEAN AS $$
+DECLARE
+    current_path LTREE;
+    target_path LTREE;
+BEGIN
+    SELECT path INTO current_path FROM users
+    WHERE id = current_setting('app.current_user_id', true)::UUID;
+    SELECT path INTO target_path FROM users WHERE id = uid;
+
+    IF current_path IS NULL OR target_path IS NULL THEN
+        RETURN FALSE;
+    END IF;
+
+    RETURN target_path <@ current_path;
+END;
+$$ LANGUAGE plpgsql STABLE;
+```
+
+### 10.7. YAML – WireGuard + Headscale
+```yaml
+# docker-compose.wireguard.yml
+version: '3.8'
+services:
+  headscale:
+    image: headscale/headscale:latest
+    command: headscale serve
+    volumes:
+      - ./headscale/config.yaml:/etc/headscale/config.yaml
+      - headscale-data:/var/lib/headscale
+    ports:
+      - "8080:8080"
+    restart: always
+
+  coturn:
+    image: coturn/coturn:latest
+    network_mode: host
+    command: >
+      -n
+      --realm=rinco.app
+      --static-auth-secret=xxx
+      --use-auth-secret
+      --no-tls
+      --no-dtls
+      --listening-port=3478
+      --min-port=49160
+      --max-port=49200
+      --fingerprint
+      --no-multicast-peers
+    restart: always
+
+volumes:
+  headscale-data:
+```
+
+```yaml
+# WireGuard client config (admin)
+[Interface]
+PrivateKey = <admin_priv>
+Address = 10.99.0.2/32
+DNS = 10.99.0.1
+
+[Peer]
+PublicKey = <server_pub>
+PresharedKey = <psk>
+Endpoint = wireguard.rinco.app:51820
+AllowedIPs = 10.99.0.0/24
+PersistentKeepalive = 25
+```
+
+---
+
+## 11. Implementation Roadmap
+
+### Tuần 1-2: RLS + Tenant Context
+- [ ] Apply RLS policies cho 10 tables quan trọng nhất.
+- [ ] Implement `pkg/db/rls.go` Go.
+- [ ] Middleware enforce SET LOCAL.
+- [ ] Integration test cross-tenant.
+- **Acceptance:** 100% cross-tenant attempt fail.
+
+### Tuần 3-4: PASETO + RBAC
+- [ ] Setup `pkg/auth/paseto.go`.
+- [ ] KeyRing với rotation.
+- [ ] RBAC engine với permission matrix.
+- [ ] Migration từ JWT (nếu có).
+- **Acceptance:** Auth flow end-to-end với PASETO, no JWT.
+
+### Tuần 5-6: DDoS Protection (eBPF)
+- [ ] Compile + load `xdp_antiddos.bpf.c`.
+- [ ] Userspace controller (Go) để update map.
+- [ ] Test với traffic generator.
+- [ ] Integration với alerting.
+- **Acceptance:** 1M pps drop không ảnh hưởng legitimate traffic.
+
+### Tuần 7-8: Wasm + Argon2
+- [ ] Compile Wasm attestation module.
+- [ ] Integrate vào landing page.
+- [ ] Server-side verification.
+- [ ] Argon2 PoW server.
+- **Acceptance:** 99% bot block, false positive < 1%.
+
+### Tuần 9-10: Dark Admin + WireGuard
+- [ ] Headscale deployment.
+- [ ] SPA tool (Go client).
+- [ ] WireGuard mesh giữa nodes.
+- [ ] Admin gateway trên WireGuard interface only.
+- **Acceptance:** Admin không accessible từ public IP (nmap clean).
+
+### Tuần 11-12: FIDO2 + Quorum + Polish
+- [ ] WebAuthn flow cho admin.
+- [ ] YubiKey enrollment.
+- [ ] 2-of-3 quorum service.
+- [ ] Audit log + anomaly detection.
+- **Acceptance:** Critical action yêu cầu 2 admin ký.
+
+---
+
+## 12. Disaster Recovery cho Security Incidents
+
+### 12.1. PASETO Key Compromise
+```
+1. Rotate key ngay (overlap period).
+2. Invalidate all active tokens.
+3. Force re-login mọi user.
+4. Audit log: xem token leak từ đâu.
+5. Update secret store.
+```
+
+### 12.2. RLS Bypass Detection
+```
+1. SIEM alert "RLS policy not enforced".
+2. Auto-disable service (circuit breaker).
+3. Investigate qua audit log.
+4. Patch + add test.
+5. Post-mortem.
+```
+
+### 12.3. FIDO2 Device Lost
+```
+1. Admin đăng nhập bằng backup key (nếu có).
+2. Nếu mất cả 2 → admin emergency contact.
+3. Verify identity (video call, passport).
+4. Generate new credentials.
+5. Revoke old.
+```
+
+### 12.4. eBPF Program Crash
+```
+1. Auto-detect via health check.
+2. Detach program, fallback userspace.
+3. Investigate kernel version.
+4. Fix, redeploy.
+```
+
+---
+
+## 13. Cost Estimation
+
+| Component | Spec | Cost/month (USD) |
+|-----------|------|-----------------|
+| Headscale + WireGuard | 2 nodes | $80 |
+| Coturn TURN | 2 nodes, 1Gbps | $200 |
+| FIDO2 YubiKey | 5 keys ($50 each, 3-year life) | ~$15 amortized |
+| Penetration test annual | 3rd party | $15,000 one-time |
+| DDoS appliance (Cloudflare Pro) | - | $240 |
+| Secrets management (Vault) | Self-hosted | $80 |
+| SIEM (Wazuh) | Self-hosted | $120 |
+| **Total recurring** | | **~$735** |
+
+---
+
+## 14. Open Questions / Cần user xác nhận
+
+1. **Self-host Sentry/GlitchTip hay SaaS?**
+2. **BYOK (Bring Your Own Key) cho Enterprise tenants?**
+3. **SAML SSO cho tenant SSO?**
+4. **Cloudflare DDoS hay tự build eBPF?**
+5. **Penetration test cadence: hàng quý?**
+6. **Audit log retention: 5 năm hay 7 năm?**
+7. **GDPR compliance certification?**
+8. **SOC 2 Type II target year?**
+9. **Backup encryption key escrow policy?**
+10. **Disaster recovery RPO/RTO targets?**
+
+---
+
+## 15. Acceptance Criteria bổ sung
+
+| AC | Tiêu chí | Đo lường |
+|----|---------|---------|
+| AC-SEC-08 | PASETO rotation không break session | E2E test |
+| AC-SEC-09 | eBPF program verify pass | bpftool verify |
+| AC-SEC-10 | Wasm attestation block 99% headless | Selenium grid |
+| AC-SEC-11 | RLS policy test 100% tables | Coverage report |
+| AC-SEC-12 | Audit log integrity (hash chain) | Verify |
+| AC-SEC-13 | Penetration test no P0/P1 | Report |
+| AC-SEC-14 | GDPR right-to-be-forgotten < 30 days | SLA |

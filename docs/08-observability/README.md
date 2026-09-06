@@ -998,3 +998,795 @@ POST   /api/obs/v1/ai/capacity-plan
 ---
 
 **Tiếp theo:** [`docs/09-security/README.md`](../09-security/README.md) – Multi-Tenant Security Zero-Trust.
+
+---
+
+# PHẦN MỞ RỘNG – Audit, Edge Cases, Code Examples, Roadmap
+
+> Phần này bổ sung cho tài liệu gốc, cung cấp implementation chi tiết cho observability stack.
+
+---
+
+## 8. Audit Report (Self-Audit)
+
+### 8.1. Những gì đã đủ chi tiết ✓
+- 4 tầng observability với triết lý rõ ràng.
+- Schema ClickHouse, Prometheus metrics.
+- Alert severity matrix.
+
+### 8.2. Cần bổ sung ⚠️
+- Code examples cho mỗi tầng.
+- Sequence diagrams.
+- Edge cases cụ thể cho mỗi loại lỗi.
+- Testing strategy chi tiết.
+- Disaster recovery runbook.
+- Cost estimation per component.
+
+### 8.3. Mâu thuẫn nội bộ ❌
+- Hiện không có mâu thuẫn lớn nhưng cần cross-check với `11-ai-integration` (AI SRE overlap).
+
+---
+
+## 9. Edge Cases & Error Scenarios (≥ 30)
+
+### 9.1. Logging Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 1 | Buffer log tràn do traffic spike | Log bị drop | Sampling theo rate, priority queue |
+| 2 | Trace ID collision (cùng UUIDv7 ns) | Trace bị merge | Thêm entropy từ pid+random |
+| 3 | PII leak do developer quên redact | Sentry báo | Lint rule, PII scanner trong CI |
+| 4 | Log JSON parse fail | Vector drop | Fallback về raw text + alert |
+| 5 | Clock skew giữa các service | Trace ordering sai | NTP, monotonic clock fallback |
+| 6 | Disk đầy ở Vector agent | Log ship fail | Drain mode + buffer to memory |
+| 7 | Async log block khi DB down | Goroutine leak | Circuit breaker + buffered write |
+
+### 9.2. Metrics Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 8 | Prometheus scrape timeout | Metric bị miss | Increase timeout, chunked |
+| 9 | High cardinality labels | Prometheus OOM | Drop unused labels, sampling |
+| 10 | Counter reset do pod restart | Rate calculation sai | Use `rate()` over window |
+| 11 | Histogram bucket miss | p99 sai | Auto-bucket tuning, native histograms |
+| 12 | VictoriaMetrics WAL corruption | Data loss | WAL replication + snapshot |
+| 13 | Recording rule conflict | Alert sai | Namespaced rules, audit |
+| 14 | Multi-tenant metric leak | Tenant A thấy metric B | Force `tenant_id` label + Prometheus rule |
+
+### 9.3. Tracing Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 15 | Trace context loss ở boundary | Orphan spans | W3C Trace Context + manual inject |
+| 16 | Tail sampling fail | Important trace miss | Head sampling fallback |
+| 17 | Jaeger indexer OOM | Search chậm | TTL ngắn, eslim snapshot |
+| 18 | OTLP exporter backpressure | Span drop | Rate-limit sampling |
+| 19 | Span limit exceeded | Sampling | Limit max spans per trace |
+| 20 | Trace ID format mismatch (W3C vs B3) | Trace split | Configurable propagator |
+
+### 9.4. AI SRE Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 21 | AI hallucination RCA | Fix sai | Human review gate, confidence score |
+| 22 | Prompt injection từ log content | AI leak secret | Input sanitization |
+| 23 | LLM API timeout | RCA fail | Local model fallback |
+| 24 | Code-LLM suggest bad fix | Production break | Dry-run + canary deploy |
+| 25 | Sentry rate limit | Error bị miss | Group + sample |
+| 26 | Auto PR tạo quá nhiều | Spam | Limit per day, deduplicate |
+
+### 9.5. Self-Healing Edge Cases
+| # | Scenario | Triệu chứng | Xử lý |
+|---|----------|------------|-------|
+| 27 | Circuit breaker stuck open | Permanent fail | Half-open probe sau TTL |
+| 28 | K3s restart loop (CrashLoopBackOff) | Pod không start | Exponential backoff, alert |
+| 29 | Fallback to stale cache quá lâu | Data sai | Stale-while-revalidate + TTL |
+| 30 | Rollback fail | Version cũ hỏng | Blue-green + version pinning |
+| 31 | DB failover không graceful | Connection drop | PgBouncer + retry middleware |
+| 32 | Liveness probe too strict | Restart liên tục | Tune thresholds |
+
+---
+
+## 10. Code Examples chi tiết
+
+### 10.1. Go – Structured Logger hoàn chỉnh
+```go
+// pkg/logger/logger.go
+package logger
+
+import (
+    "context"
+    "os"
+    "sync"
+    "time"
+
+    "go.uber.org/zap"
+    "go.uber.org/zap/zapcore"
+)
+
+type ctxKey string
+
+const (
+    traceIDKey   ctxKey = "trace_id"
+    tenantIDKey  ctxKey = "tenant_id"
+    userIDKey    ctxKey = "user_id"
+    spanIDKey    ctxKey = "span_id"
+    requestIDKey ctxKey = "request_id"
+)
+
+var (
+    baseLogger *zap.Logger
+    once       sync.Once
+)
+
+// Init khởi tạo logger 1 lần với JSON output.
+func Init(service, env, version string) {
+    once.Do(func() {
+        encoderCfg := zap.NewProductionEncoderConfig()
+        encoderCfg.TimeKey = "timestamp"
+        encoderCfg.EncodeTime = zapcore.ISO8601TimeEncoder
+        encoderCfg.MessageKey = "message"
+        encoderCfg.LevelKey = "level"
+        encoderCfg.CallerKey = "caller"
+
+        core := zapcore.NewCore(
+            zapcore.NewJSONEncoder(encoderCfg),
+            zapcore.Lock(os.Stdout),
+            zap.NewAtomicLevelAt(zap.InfoLevel),
+        )
+
+        baseLogger = zap.New(core,
+            zap.AddCaller(),
+            zap.AddCallerSkip(1),
+            zap.Fields(
+                zap.String("service", service),
+                zap.String("env", env),
+                zap.String("version", version),
+                zap.String("host", hostname()),
+            ),
+        )
+    })
+}
+
+// WithContext trích context fields rồi gắn vào logger.
+func WithContext(ctx context.Context) *zap.Logger {
+    l := baseLogger
+    if v, ok := ctx.Value(traceIDKey).(string); ok && v != "" {
+        l = l.With(zap.String("trace_id", v))
+    }
+    if v, ok := ctx.Value(tenantIDKey).(string); ok && v != "" {
+        l = l.With(zap.String("tenant_id", v))
+    }
+    if v, ok := ctx.Value(userIDKey).(string); ok && v != "" {
+        l = l.With(zap.String("user_id", v))
+    }
+    if v, ok := ctx.Value(spanIDKey).(string); ok && v != "" {
+        l = l.With(zap.String("span_id", v))
+    }
+    if v, ok := ctx.Value(requestIDKey).(string); ok && v != "" {
+        l = l.With(zap.String("request_id", v))
+    }
+    return l
+}
+
+// Info, Warn, Error shortcuts.
+func Info(ctx context.Context, msg string, fields ...zap.Field) {
+    WithContext(ctx).Info(msg, fields...)
+}
+func Warn(ctx context.Context, msg string, fields ...zap.Field) {
+    WithContext(ctx).Warn(msg, fields...)
+}
+func Error(ctx context.Context, msg string, err error, fields ...zap.Field) {
+    all := append(fields,
+        zap.Error(err),
+        zap.String("error_type", errorType(err)),
+    )
+    WithContext(ctx).Error(msg, all...)
+}
+
+// Helper
+func hostname() string {
+    h, _ := os.Hostname()
+    return h
+}
+
+func errorType(err error) string {
+    if err == nil {
+        return ""
+    }
+    // Lấy type name đầu tiên qua reflection-free path
+    t := fmt.Sprintf("%T", err)
+    return t
+}
+```
+
+### 10.2. Go – Trace Middleware (HTTP)
+```go
+// pkg/middleware/trace.go
+package middleware
+
+import (
+    "github.com/google/uuid"
+    "github.com/labstack/echo/v4"
+    "go.opentelemetry.io/otel"
+    "go.opentelemetry.io/otel/attribute"
+    "go.opentelemetry.io/otel/propagation"
+    "go.opentelemetry.io/otel/trace"
+)
+
+const traceHeader = "X-Trace-ID"
+
+func Trace() echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            req := c.Request()
+            ctx := req.Context()
+
+            // 1. Lấy trace context từ W3C Trace Context (nếu có)
+            prop := otel.GetTextMapPropagator()
+            ctx = prop.Extract(ctx, propagation.HeaderCarrier(req.Header))
+
+            // 2. Sinh trace_id mới nếu chưa có
+            sc := trace.SpanContextFromContext(ctx)
+            var traceID string
+            if sc.HasTraceID() {
+                traceID = sc.TraceID().String()
+            } else {
+                traceID = uuid.NewV7().String()
+            }
+
+            // 3. Set vào context custom (logger đọc từ đây)
+            ctx = context.WithValue(ctx, traceIDKey, traceID)
+            ctx = context.WithValue(ctx, requestIDKey, uuid.NewV7().String())
+
+            // 4. Start root span
+            tracer := otel.Tracer("rinco")
+            spanName := req.Method + " " + c.Path()
+            ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindServer))
+            defer span.End()
+
+            span.SetAttributes(
+                attribute.String("http.method", req.Method),
+                attribute.String("http.target", req.RequestURI),
+                attribute.String("http.scheme", req.URL.Scheme),
+                attribute.String("net.peer.ip", c.RealIP()),
+                attribute.String("user_agent.original", req.UserAgent()),
+            )
+
+            // 5. Set header response
+            c.Response().Header().Set(traceHeader, traceID)
+
+            // 6. Tiếp tục chain
+            err := next(c)
+
+            // 7. Gắn status code
+            status := c.Response().Status
+            span.SetAttributes(attribute.Int("http.status_code", status))
+
+            if err != nil {
+                span.RecordError(err)
+            }
+            if status >= 500 {
+                span.SetStatus(codes.Error, "5xx response")
+            }
+
+            return err
+        }
+    }
+}
+```
+
+### 10.3. Go – Prometheus Metrics Middleware
+```go
+// pkg/middleware/metrics.go
+package middleware
+
+import (
+    "strconv"
+    "time"
+
+    "github.com/labstack/echo/v4"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+    httpRequestsTotal = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "rinco_http_requests_total",
+            Help: "Total HTTP requests processed",
+        },
+        []string{"service", "method", "route", "status"},
+    )
+    httpRequestDuration = promauto.NewHistogramVec(
+        prometheus.HistogramOpts{
+            Name:    "rinco_http_request_duration_seconds",
+            Help:    "HTTP request duration",
+            Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+        },
+        []string{"service", "method", "route"},
+    )
+    httpInflight = promauto.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "rinco_http_inflight_requests",
+            Help: "Number of inflight HTTP requests",
+        },
+        []string{"service"},
+    )
+)
+
+func Metrics(serviceName string) echo.MiddlewareFunc {
+    return func(next echo.HandlerFunc) echo.HandlerFunc {
+        return func(c echo.Context) error {
+            req := c.Request()
+            start := time.Now()
+            inflight := httpInflight.WithLabelValues(serviceName)
+            inflight.Inc()
+            defer inflight.Dec()
+
+            err := next(c)
+
+            route := c.Path()
+            status := strconv.Itoa(c.Response().Status)
+            duration := time.Since(start).Seconds()
+
+            httpRequestsTotal.WithLabelValues(serviceName, req.Method, route, status).Inc()
+            httpRequestDuration.WithLabelValues(serviceName, req.Method, route).Observe(duration)
+
+            return err
+        }
+    }
+}
+```
+
+### 10.4. Rust – tracing Setup cho service
+```rust
+// src/observability.rs
+use opentelemetry::global;
+use opentelemetry::propagation::Extractor;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::Resource;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
+
+pub fn init(service: &str, env: &str, otlp: &str) -> anyhow::Result<()> {
+    global::set_text_map_propagator(TraceContextPropagator::new());
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(otlp)
+        .build()?;
+
+    let provider = SdkTracerProvider::builder()
+        .with_resource(Resource::new(vec![
+            KeyValue::new("service.name", service.to_string()),
+            KeyValue::new("deployment.environment", env.to_string()),
+        ]))
+        .with_batch_exporter(exporter)
+        .build();
+
+    global::set_tracer_provider(provider.clone());
+    let tracer = provider.tracer("rinco");
+
+    let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .with_current_span(true)
+        .with_span_list(false)
+        .with_target(true)
+        .with_file(true)
+        .with_line_number(true);
+
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .with(fmt_layer)
+        .with(telemetry)
+        .init();
+
+    Ok(())
+}
+
+#[derive(Debug)]
+pub struct HeaderExtractor<'a>(pub &'a axum::http::HeaderMap);
+
+impl<'a> Extractor for HeaderExtractor<'a> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+```
+
+### 10.5. Python – AI SRE Worker (rút gọn)
+```python
+# services/ai-sre/main.py
+import asyncio
+import json
+import os
+from datetime import datetime
+from typing import Any
+
+import httpx
+from fastapi import FastAPI, BackgroundTasks
+from pydantic import BaseModel
+import structlog
+
+logger = structlog.get_logger(__name__)
+app = FastAPI(title="AI SRE Worker")
+
+
+class Incident(BaseModel):
+    incident_id: str
+    service: str
+    trace_id: str | None
+    error: str
+    stack: str | None = None
+    severity: str = "P2"
+    sentry_url: str | None = None
+
+
+class RCAResult(BaseModel):
+    incident_id: str
+    root_cause: str
+    why: str
+    suggested_fix: str
+    prevention: str
+    confidence: float
+    file: str | None = None
+    line: int | None = None
+    pr_url: str | None = None
+
+
+async def fetch_logs(trace_id: str) -> list[dict[str, Any]]:
+    """ClickHouse query."""
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"http://clickhouse:8123/?query=SELECT+*+FROM+rinco_logs.app_logs+WHERE+trace_id='{trace_id}'+LIMIT+50",
+            headers={"X-ClickHouse-User": "readonly"},
+        )
+        r.raise_for_status()
+        return json.loads(r.text)
+
+
+async def fetch_source(file: str, line: int) -> str:
+    """Read source via GitHub API."""
+    repo = os.getenv("GITHUB_REPO", "itdoanh/rinco")
+    ref = os.getenv("GITHUB_REF", "main")
+    token = os.getenv("GITHUB_TOKEN", "")
+    async with httpx.AsyncClient() as client:
+        r = await client.get(
+            f"https://api.github.com/repos/{repo}/contents/{file}?ref={ref}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        r.raise_for_status()
+        return base64.b64decode(r.json()["content"]).decode()
+
+
+def build_prompt(error: str, stack: str, logs: list, source: str) -> str:
+    log_lines = "\n".join(
+        f"[{l.get('level')}] {l.get('message')} ({l.get('caller_file', '')}:{l.get('caller_line', '')})"
+        for l in logs
+    )
+    return f"""You are an expert SRE AI.
+
+Error: {error}
+Stack:
+{stack or '(no stack)'}
+
+Recent logs:
+{log_lines[:3000]}
+
+Source (file:line):
+```
+{source[:5000]}
+```
+
+Provide a JSON with keys: root_cause, why, suggested_fix (code), prevention, file, line, confidence (0-1).
+Be concise. No preamble."""
+
+
+async def call_llm(prompt: str) -> dict:
+    """Gọi vLLM local."""
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.post(
+            "http://vllm:8000/v1/chat/completions",
+            json={
+                "model": "deepseek-coder-v2-lite-instruct",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 2000,
+                "temperature": 0.1,
+            },
+        )
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"]
+
+
+@app.post("/analyze")
+async def analyze(incident: Incident, bg: BackgroundTasks) -> dict:
+    """Trigger RCA ngay."""
+    logger.info("incident.received", incident_id=incident.incident_id, severity=incident.severity)
+
+    logs = []
+    if incident.trace_id:
+        try:
+            logs = await fetch_logs(incident.trace_id)
+        except Exception as e:
+            logger.warning("logs.fetch_failed", error=str(e))
+
+    file, line, source = "(unknown)", 0, ""
+    if incident.stack:
+        # Parse stack đơn giản: lấy frame đầu tiên có file.go:line
+        # ...
+        file = "pkg/repo/lead.go"
+        line = 142
+    if file != "(unknown)":
+        try:
+            source = await fetch_source(file, line)
+        except Exception as e:
+            logger.warning("source.fetch_failed", error=str(e))
+
+    prompt = build_prompt(incident.error, incident.stack or "", logs, source)
+    result_text = await call_llm(prompt)
+
+    # Parse JSON
+    try:
+        rca = json.loads(result_text)
+    except Exception:
+        # Fallback: regex
+        rca = {"raw": result_text, "root_cause": "unparseable", "confidence": 0.0}
+
+    rca["incident_id"] = incident.incident_id
+
+    # Send Telegram alert
+    bg.add_task(notify_telegram, incident, rca)
+
+    # Auto-create PR if confidence high and severity >= P1
+    if rca.get("confidence", 0) > 0.8 and incident.severity in ("P0", "P1"):
+        bg.add_task(auto_create_pr, rca, source)
+
+    return rca
+
+
+async def notify_telegram(incident: Incident, rca: dict):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    if not token:
+        return
+    msg = f"""🚨 *{incident.severity}* – `{incident.service}`
+
+*Error*: `{incident.error[:200]}`
+
+*RCA*: {rca.get('root_cause', '?')[:500]}
+
+*Fix*: 
+```
+{rca.get('suggested_fix', '?')[:1000]}
+```
+
+*Confidence*: {rca.get('confidence', 0):.0%}
+
+Trace: `{incident.trace_id}`
+[Open Sentry]({incident.sentry_url or '#'})
+"""
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+        )
+
+
+async def auto_create_pr(rca: dict, source: str):
+    repo = os.getenv("GITHUB_REPO", "itdoanh/rinco")
+    token = os.getenv("GITHUB_TOKEN", "")
+    branch = f"hotfix/ai-{rca['incident_id'][:8]}"
+    # ... use PyGithub or raw API ...
+```
+
+### 10.6. YAML – Prometheus Alert Rules
+```yaml
+# infra/prometheus/rules/rinco.yml
+groups:
+- name: rinco.core
+  rules:
+  - alert: HighErrorRate
+    expr: |
+      sum(rate(rinco_http_requests_total{status=~"5.."}[5m])) by (service, route)
+      /
+      sum(rate(rinco_http_requests_total[5m])) by (service, route)
+      > 0.01
+    for: 1m
+    labels:
+      severity: P1
+      team: sre
+    annotations:
+      summary: "Error rate > 1% on {{ $labels.service }} {{ $labels.route }}"
+      runbook: "https://wiki.rinco.app/runbooks/high-error-rate"
+      dashboard: "https://grafana.rinco.app/d/{{ $labels.service }}"
+
+  - alert: HighLatencyP99
+    expr: |
+      histogram_quantile(0.99, sum(rate(rinco_http_request_duration_seconds_bucket[5m])) by (service, route, le))
+      > 0.5
+    for: 2m
+    labels:
+      severity: P1
+    annotations:
+      summary: "P99 > 500ms on {{ $labels.service }}/{{ $labels.route }}"
+
+  - alert: DiskSpaceFilling
+    expr: |
+      (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.1
+    for: 5m
+    labels:
+      severity: P2
+    annotations:
+      summary: "Disk < 10% on {{ $labels.instance }}"
+
+  - alert: PostgresConnectionsHigh
+    expr: |
+      pg_stat_activity_count > 80
+    for: 1m
+    labels:
+      severity: P2
+
+  - alert: ScyllaWriteTimeout
+    expr: |
+      rate(scylla_write_timeouts_total[5m]) > 0.1
+    for: 1m
+    labels:
+      severity: P1
+
+  - alert: CIRCUIT_OPEN
+    expr: rinco_circuit_breaker_state == 2
+    for: 0m
+    labels:
+      severity: P1
+    annotations:
+      summary: "Circuit breaker OPEN for {{ $labels.name }}"
+
+- name: rinco.tenant
+  rules:
+  - alert: TenantStorageQuotaNear
+    expr: rinco_tenant_storage_bytes / rinco_tenant_storage_quota_bytes > 0.9
+    for: 10m
+    labels:
+      severity: P2
+    annotations:
+      summary: "Tenant {{ $labels.tenant_id }} near storage quota"
+
+  - alert: TenantAPIErrors
+    expr: |
+      sum(rate(rinco_http_requests_total{tenant_id=~".+",status=~"5.."}[10m])) by (tenant_id)
+      > 5
+    for: 1m
+    labels:
+      severity: P2
+```
+
+---
+
+## 11. Implementation Roadmap (chi tiết theo tuần)
+
+### Tuần 1-2: Application Logging
+- [ ] Setup `pkg/logger` Go với Zap.
+- [ ] Setup `observability.rs` Rust với tracing.
+- [ ] Trace ID middleware cho Echo + Axum.
+- [ ] PII redaction helper + lint rule.
+- [ ] Unit test logger.
+- **Acceptance:** Mọi HTTP request có trace_id, PII được redact.
+
+### Tuần 3-4: Metrics + Prometheus
+- [ ] Metrics middleware Go + Rust.
+- [ ] Custom business metrics (leads_created_total, chat_messages_total).
+- [ ] Prometheus scrape config + service discovery.
+- [ ] Grafana datasource + 5 dashboard cơ bản.
+- **Acceptance:** Metrics xuất hiện ở `/metrics`, Prometheus scrape thành công.
+
+### Tuần 5-6: Distributed Tracing
+- [ ] OpenTelemetry SDK setup Go + Rust + Python.
+- [ ] OTLP Collector deployment.
+- [ ] Jaeger hoặc Tempo deployment.
+- [ ] Auto-instrumentation cho HTTP, DB, gRPC.
+- **Acceptance:** Trace end-to-end xuất hiện trong Jaeger UI.
+
+### Tuần 7-8: Error Tracking + Alerting
+- [ ] Sentry SDK Go + Frontend.
+- [ ] Alertmanager deployment.
+- [ ] Alert rules cho critical metrics.
+- [ ] Telegram bot + on-call rotation.
+- **Acceptance:** Lỗi xuất hiện trong Sentry, alert gửi qua Telegram.
+
+### Tuần 9-10: AI SRE
+- [ ] vLLM deployment với DeepSeek-Coder.
+- [ ] AI SRE worker (Python).
+- [ ] ClickHouse + GitHub integration.
+- [ ] Auto PR creation.
+- **Acceptance:** Sentry webhook → RCA report → Telegram.
+
+### Tuần 11-12: Chaos + Polish
+- [ ] Chaos Mesh deployment.
+- [ ] Game day drills.
+- [ ] Runbook cho mỗi alert.
+- [ ] Cost optimization.
+- **Acceptance:** Self-healing trong < 2s cho 5 scenarios.
+
+---
+
+## 12. Disaster Recovery
+
+### 12.1. ClickHouse Recovery
+```bash
+# Backup
+clickhouse-backup create --config config.yml
+clickhouse-backup upload default
+
+# Restore
+clickhouse-backup download default
+clickhouse-backup restore default
+```
+
+### 12.2. Prometheus Recovery
+```bash
+# WAL recovery
+docker exec prometheus promtool tsdb recover /prometheus
+
+# Restart với snapshot
+docker-compose restart prometheus
+```
+
+### 12.3. Jaeger Recovery
+- Storage backend: Elasticsearch hoặc Cassandra.
+- Snapshot mỗi ngày.
+- Restore từ snapshot → reindex nếu cần.
+
+### 12.4. Sentry Recovery
+- Self-hosted GlitchTip.
+- Postgres backend.
+- Backup daily qua pg_dump.
+
+---
+
+## 13. Cost Estimation
+
+| Component | Spec | Cost/month (USD) |
+|-----------|------|-----------------|
+| ClickHouse (3 nodes) | 8 vCPU, 32GB, 1TB NVMe | $450 |
+| VictoriaMetrics (1 node) | 4 vCPU, 16GB, 500GB | $120 |
+| Grafana Cloud Pro | 10K series | $290 |
+| Jaeger (3 nodes) | 4 vCPU, 16GB | $240 |
+| Sentry (self-hosted) | 4 vCPU, 16GB | $120 |
+| Vector agents | Per pod (lightweight) | included in cluster |
+| vLLM (GPU) | 1x A100 | $1,200 |
+| **Total** | | **~$2,420** |
+
+---
+
+## 14. Open Questions / Cần user xác nhận
+
+1. **Self-hosted Sentry hay cloud?** Ảnh hưởng cost + PII control.
+2. **LLM cho AI SRE: DeepSeek-Coder hay Llama-3-Code?** Trade-off cost vs quality.
+3. **Retention bao lâu cho log/trace?** Ảnh hưởng storage cost.
+4. **Multi-region observability?** Tăng cost 2-3x.
+5. **Sentry sampling rate cho production?** 10% traces default OK?
+6. **Alert group strategy:** group by service hay by tenant?
+7. **Auto-PR workflow có bật cho production không?** Risk vs benefit.
+8. **Chaos engineering schedule (weekly drill)?**
+9. **OpenTelemetry SDK version pinning?**
+10. **Cost budget cho observability stack per month?**
+
+---
+
+## 15. Acceptance Criteria bổ sung
+
+| AC | Tiêu chí | Đo lường |
+|----|---------|---------|
+| AC-OBS-07 | AI SRE RCA accuracy ≥ 70% | Manual review |
+| AC-OBS-08 | Self-healing MTTR < 30s | Chaos test |
+| AC-OBS-09 | Log PII leak = 0 | Scan |
+| AC-OBS-10 | Prometheus uptime ≥ 99.95% | Uptime check |
+| AC-OBS-11 | Alert false positive < 5% | Audit |
+| AC-OBS-12 | Cost per service < $200/month | Billing |
