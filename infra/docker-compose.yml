@@ -55,28 +55,23 @@ services:
     networks:
       - rinco-net
 
-  # PgBouncer connection pool
-  pgbouncer:
-    image: bitnami/pgbouncer:1.22.1
-    container_name: rinco-pgbouncer
-    restart: unless-stopped
-    environment:
-      PGBOUNCER_DATABASE: rinco
-      PGBOUNCER_USERNAME: rinco
-      PGBOUNCER_PASSWORD: rinco_dev_password
-      PGBOUNCER_AUTH_TYPE: md5
-      PGBOUNCER_POOL_MODE: transaction
-      PGBOUNCER_DEFAULT_POOL_SIZE: 25
-      PGBOUNCER_MAX_CLIENT_CONN: 1000
-      PGBOUNCER_SERVER_IDLE_TIMEOUT: 600
-      PGBOUNCER_LISTEN_ADDRESSES: 0.0.0.0
-    ports:
-      - "6432:6432"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - rinco-net
+  # PgBouncer - build from source if needed (commented out for now, PostgreSQL handles direct connections)
+  # pgbouncer:
+  #   image: edob01/pgbouncer:1.22.0
+  #   container_name: rinco-pgbouncer
+  #   restart: unless-stopped
+  #   environment:
+  #     DATABASE_URL: postgresql://rinco:rinco_dev_password@postgres:5432/rinco
+  #     POOL_MODE: transaction
+  #     MAX_CLIENT_CONN: 1000
+  #     DEFAULT_POOL_SIZE: 25
+  #   ports:
+  #     - "6432:5432"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   networks:
+  #     - rinco-net
 
   # ============================================================
   # 2. SCYLLADB 6.x (Chat, WebRTC, Leads Raw)
@@ -211,8 +206,7 @@ services:
     command:
       - "server"
       - "/data"
-      - "--console-address"
-      ":9001"
+      - "--console-address=:9001"
     ports:
       - "9000:9000"
       - "9001:9001"
