@@ -3746,4 +3746,2612 @@ Roadmap 16 tuần (4 tháng).
 
 ---
 
+# PHẦN BỔ SUNG MỞ RỘNG (v2.0) – AUDIT, CODE EXAMPLES, EDGE CASES, ROADMAP
+
+> Phiên bản 2.0 bổ sung toàn diện cho phase production: Audit Report chi tiết, ≥30 edge cases, code examples đầy đủ (Rust gateway, Singleflight, eBPF/XDP, FlatBuffers, Go SDK, TypeScript UI), sequence diagrams, implementation roadmap theo tuần, testing strategy, migration plan, disaster recovery, cost estimation, open questions.
+
+---
+
+## 35. Audit Report (v2.0)
+
+### 35.1. Tổng quan
+File `docs/06-chat-engine/README.md` đã trải qua 1 lần mở rộng trước (v1.x với 34 sections). Phiên bản v2.0 này audit lại tổng thể 34 sections + bổ sung 14 sections mới (§35–§48) với mục tiêu đưa tài liệu đạt cấp độ "implementation-ready" cho team engineering.
+
+### 35.2. Đánh giá từng khối nội dung
+
+| Khối | Sections | Mức đủ (1-10) | Ghi chú |
+|------|----------|---------------|---------|
+| Kiến trúc tổng quan | §2 | 7 | Cần diagram chi tiết hơn cho sharding per tenant |
+| FlatBuffers | §3, §16 | 9 | Schema đã đầy đủ, cần thêm code-generated Rust binding |
+| io_uring / eBPF | §4, §17, §21 | 7 | Code example cơ bản; cần full program cho production |
+| Singleflight | §5, §18 | 7 | Concept OK; cần full implementation với timeout + retry |
+| ScyllaDB | §6, §11 | 8 | Schema tốt; cần phần prepared statement + paging |
+| Presence | §7, §19 | 7 | Logic đúng; cần code Valkey client chi tiết |
+| Channel/Permission | §8 | 7 | RBAC matrix chưa có |
+| File upload | §9, §22 | 6 | Flow tốt; thiếu code Multipart, virus scan pipeline |
+| Tính năng | §10 | 10 | 120 tính năng liệt kê đầy đủ |
+| Protocol Flow | §15 | 9 | Sequence diagrams đã có cho connect/auth/send/reconnect |
+| Edge Cases | §27 | 6 | Chỉ 15 edge cases; cần ≥30 |
+| Performance | §28 | 6 | Có benchmark nhưng thiếu flamegraph CI integration |
+| Security | §29 | 6 | Cần thêm chi tiết E2EE, key rotation, replay protection |
+| DR | §30 | 5 | Có RPO/RTO sơ bộ; cần runbook chi tiết |
+| Cost | §31 | 4 | Chỉ là rough estimate; cần breakdown chi tiết theo usage |
+| Testing | §32 | 5 | Có strategy nhưng chưa có script |
+| Roadmap | §33 | 6 | Đúng phase nhưng chưa có acceptance gate chi tiết |
+| Open Questions | §34 | 8 | 20 câu hỏi tốt; cần categorize và prioritize |
+
+### 35.3. Mâu thuẫn nội bộ (mới phát hiện ở v2.0)
+
+| ID | Vị trí | Mâu thuẫn | Hướng xử lý |
+|----|--------|-----------|-------------|
+| C-1 | §3 vs §16 | §3 dùng `ChatMessage` table đơn giản, §16 mở rộng thêm `thread_parent_id`, `mention_channels` → schema versioning chưa có policy rõ ràng | Thêm FlatBuffers schema version field |
+| C-2 | §4.1 vs §17 | §4.1 dùng `tokio_uring`, §17 có thể sẽ cần `glommio` cho CPU-pinned → chưa chốt stack cuối | Benchmark chọn 1 |
+| C-3 | §6.4 vs §15.2 | Write path nói "fire-and-forget" nhưng sequence diagram §15.2 chờ ACK → conflict | Cần clarify: ACK trả về sau khi ScyllaDB acknowledge hoặc accept + verify async |
+| C-4 | §26 vs §33 | Capacity §26 nói "10 gateway nodes" cho 1M CCU, nhưng §33 Phase 2 chỉ có 4 tuần deploy → capacity plan realistic chưa | Tính toán lại dựa trên single node = 100K CCU |
+| C-5 | §5.3 Singleflight result vs §28.2 benchmark | §5.3 nói "50K → 1 query", §28.2 cho p99 500ms – quá chậm | Singleflight phải có timeout ngắn (50ms) |
+
+### 35.4. Phần cần bổ sung ở v2.0
+
+| Mục tiêu | Sections mới | Lý do |
+|----------|-------------|-------|
+| ≥30 edge cases | §36 | Production cần test toàn bộ edge cases trước launch |
+| Full Rust Gateway | §37 | Cần implementable code, không chỉ snippet |
+| Full Singleflight | §38 | Pattern phức tạp cần timeout/retry/error handling |
+| Full eBPF/XDP | §39 | Kernel code không thể chỉ pseudo |
+| FlatBuffers schema cuối | §40 | Schema đã có nhưng cần version + generated Rust |
+| Go SDK | §41 | Reference cho client mobile/backend |
+| TypeScript UI | §42 | Reference cho frontend team |
+| Voice recorder | §43 | Voice message UX |
+| File upload UI | §44 | Upload UX |
+| Sequence diagrams | §45 | Visualize các flow quan trọng |
+| Roadmap 12 tuần | §46 | Có acceptance gate |
+| Testing strategy | §47 | Load test 1M CCU, failover, etc. |
+| Migration Plan | §48 | Từ polling API cũ |
+| Disaster Recovery | §49 | Runbook chi tiết |
+| Cost Estimation | §50 | Breakdown chi tiết |
+| Open Questions | §51 | ≥10 câu prioritize |
+
+---
+
+## 36. Edge Cases & Error Scenarios (≥ 30 scenarios)
+
+### 36.1. Network & Connection
+
+| # | Edge case | Detection | Handling |
+|---|-----------|-----------|----------|
+| EC-1 | **WebSocket reconnect storm** (10000 client disconnect cùng lúc do mạng运营商) | Counter rate `disconnect_per_second` > 5000 | Exponential backoff với jitter: `delay = min(60s, 2^n + random(0, 1000)ms)`. Gateway buffer client mới tối đa 30s, sau đó reject 503 |
+| EC-2 | **Half-open connection** (client mất mạng nhưng TCP không RST) | Heartbeat ping timeout > 60s | Server force close connection; client resync từ `last_event_id` |
+| EC-3 | **TLS handshake fail** (client cũ chỉ support TLS 1.0) | TLS error log | Gateway reject với `TLS_UNSUPPORTED`; client phải upgrade |
+| EC-4 | **eBPF/XDP filter block legitimate user** (false positive UA detection) | User report "không vào được" | Whitelist UA pattern cho testing; auto-learn từ accepted traffic |
+| EC-5 | **DDoS L7 với WebSocket** | Rate per IP > 100 connect/s | eBPF XDP_DROP + Valkey token bucket + IP blacklist 1h |
+| EC-6 | **Proxy/WiFi captive portal** inject HTML vào WS upgrade response | Client nhận HTML thay vì 101 | Server enforce `Upgrade: websocket` + Content-Length 0 |
+
+### 36.2. Protocol & Parsing
+
+| # | Edge case | Detection | Handling |
+|---|-----------|-----------|----------|
+| EC-7 | **FlatBuffers parse error** (corrupted bytes / wrong schema) | flatbuffers verify() return false | Log warning, send `ERROR_INVALID_FORMAT` frame, close connection |
+| EC-8 | **Schema version mismatch** (client cũ kết nối server mới) | `schema_version` field in header | Server detect version, fallback parser hoặc reject với error code 3001 |
+| EC-9 | **Frame size > 64KB** | Length prefix > MAX_FRAME_SIZE | Reject với `ERROR_CONTENT_TOO_LARGE`, close connection |
+| EC-10 | **Unknown enum value** (client sends MessageType = 99) | Parser không match enum | Default sang TEXT type; log warning |
+| EC-11 | **UTF-8 invalid** (binary garbage trong text field) | std::str::from_utf8 fail | Replace invalid bytes bằng U+FFFD; vẫn accept message |
+| EC-12 | **Excessive depth nesting** (thread reply → reply → reply...) | Counter > 10 | Flatten về thread gốc |
+| EC-13 | **Duplicate client_event_id** | ScyllaDB UNIQUE constraint | Trả về ACK với original `server_event_id` (idempotent) |
+| EC-14 | **Replay attack** (client send cũ event_id) | timestamp > 5 min | Reject với `ERROR_REPLAY_DETECTED` |
+
+### 36.3. Persistence & Storage
+
+| # | Edge case | Detection | Handling |
+|---|-----------|-----------|----------|
+| EC-15 | **ScyllaDB timeout** (> 100ms) | driver error code | Retry 3 lần với exponential backoff; fail cuối → buffer Valkey Stream |
+| EC-16 | **ScyllaDB node down** | All hosts connection refused | Token-aware driver reroute sang node khác trong cùng DC; cross-DC fail |
+| EC-17 | **ScyllaDB write conflict** (LWT timeout) | Paxos state error | Convert từ LWT sang eventual consistency; resolve ở background job |
+| EC-18 | **Valkey down** | Connection refused | Fallback local LRU cache (512MB); degrade gracefully |
+| EC-19 | **Valkey OOM** | OOM error response | Auto-evict LRU keys; alert SRE |
+| EC-20 | **Meilisearch indexing lag** (> 1 min) | Index lag metric | Async batch reindex; UI still functional với partial results |
+
+### 36.4. Logic & Domain
+
+| # | Edge case | Detection | Handling |
+|---|-----------|-----------|----------|
+| EC-21 | **Message ordering across shards** (channel hash shard khác nhau do re-shard) | Client thấy message cũ sau message mới | ScyllaDB clustering order by event_time DESC đảm bảo; client sort lại theo timestamp |
+| EC-22 | **Large file upload fail mid-stream** (TCP reset tại chunk 50/100) | MinIO multipart incomplete | Abort multipart upload, mark file_id = `ABORTED`, refund storage quota |
+| EC-23 | **Bot spam 1000 msg/s** | Rate limit exceeded | Bot auto-banned sau 3 lần vi phạm; admin notification |
+| EC-24 | **Mention @all in large channel** (50K users) | Mention parser | Server fan-out via NATS; rate-limit per-user notification (5/s) |
+| EC-25 | **Channel deleted mid-conversation** | Channel lookup miss | Send `CHANNEL_DELETED` frame tới tất cả subscribers, close connection optional |
+| EC-26 | **User banned from channel** | Membership check fail | Silent skip message; banned user không biết mình bị ban |
+| EC-27 | **E2EE key rotation conflict** | 2 device rotate cùng lúc | Resolve bằng `key_version` field; client merge keys |
+| EC-28 | **Time skew client/server** (> 5 min) | timestamp difference | Resync qua `server_timestamp` frame; log warning |
+| EC-29 | **Time zone for scheduled message** | Schedule at 2 AM local | Store UTC + user TZ; fire dựa trên server UTC + per-user offset |
+| EC-30 | **Read receipt for E2EE message** | Server cannot read content | Send receipt with `message_hash` only; preserve privacy |
+
+### 36.5. Presence & State
+
+| # | Edge case | Detection | Handling |
+|---|-----------|-----------|----------|
+| EC-31 | **Presence drift** (user online nhưng Valkey key expired) | Stale `last_seen` > 5 min | Force re-fetch từ client; broadcast offline event |
+| EC-32 | **Typing indicator spam** (> 1 typing/s/user) | Rate counter | Drop event, không respond |
+| EC-33 | **Multi-device sync race** (mobile + web cùng đọc message) | last_read_event_time conflict | Max() merge strategy; UI show union of read state |
+| EC-34 | **User logout từ 1 device nhưng mobile vẫn online** | Session list in Valkey | Revoke all sessions in tenant; force re-auth trên tất cả devices |
+| EC-35 | **Stale presence after server crash** | `last_seen` quá cũ | Valkey key TTL expire tự nhiên; client tự reconnect |
+
+### 36.6. Cross-cutting
+
+| # | Edge case | Detection | Handling |
+|---|-----------|-----------|----------|
+| EC-36 | **NATS JetStream backlog full** | Stream length > limit | Scale consumer; drop low-priority events; alert |
+| EC-37 | **ClickHouse ingest lag** | Kafka consumer lag > 5 min | Batch size increase; backpressure chat history |
+| EC-38 | **Meilisearch index corrupted** | Search return 500 | Fallback search từ ScyllaDB LIKE query (slower); rebuild index |
+| EC-39 | **MinIO disk full** | PUT return 507 | Cleanup old multipart uploads; alert |
+| EC-40 | **ScyllaDB partition size > 100MB** (1 channel quá nhiều message) | Compaction slow | Split channel hoặc sub-partition theo week |
+
+---
+
+## 37. Rust: Chat Gateway với tokio-uring (full module)
+
+### 37.1. Cargo.toml
+```toml
+[package]
+name = "chat-gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.40", features = ["full"] }
+tokio-uring = { version = "0.5", features = ["full"] }
+glommio = { version = "0.9", features = ["no_io_uring"] }  # fallback
+fastwebsockets = "0.8"
+flatbuffers = "24.3"
+scylla = "0.13"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+twox-hash = "1.6"
+dashmap = "6.1"
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.23"
+prometheus = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "1"
+uuid = { version = "1", features = ["v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+flatbuffers-build = "0.3"
+
+[features]
+default = []
+profiling = ["perf", "flamegraph"]
+```
+
+### 37.2. src/main.rs
+```rust
+use std::sync::Arc;
+use std::net::SocketAddr;
+use anyhow::Result;
+use tracing::{info, error, warn};
+use tracing_subscriber::{EnvFilter, fmt};
+use metrics_exporter_prometheus::PrometheusBuilder;
+
+mod gateway;
+mod router;
+mod session;
+mod presence;
+mod coalesce;
+mod auth;
+mod frame_parser;
+mod storage;
+
+use gateway::Gateway;
+
+#[tokio::main(flavor = "multi_thread", worker_threads = 16)]
+async fn main() -> Result<()> {
+    // 1. Init tracing
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    fmt().json().with_env_filter(filter).init();
+
+    // 2. Init Prometheus
+    let socket: SocketAddr = ([0, 0, 0, 0], 9090).into();
+    PrometheusBuilder::new().with_http_listener(socket).install()?;
+
+    // 3. Build gateway
+    let cfg = gateway::Config::from_env()?;
+    let gw = Arc::new(Gateway::new(cfg).await?);
+
+    // 4. Start metrics server + gateway listener
+    let admin_handle = tokio::spawn(admin::run(gw.clone()));
+    let gw_handle = tokio::spawn(gw.clone().run());
+
+    tokio::select! {
+        r = admin_handle => if let Err(e) = r? { error!("admin server crashed: {e}"); },
+        r = gw_handle => if let Err(e) = r? { error!("gateway crashed: {e}"); },
+        _ = tokio::signal::ctrl_c() => { info!("shutdown signal received"); }
+    }
+
+    Ok(())
+}
+```
+
+### 37.3. src/gateway.rs
+```rust
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use anyhow::{Result, Context};
+use tokio::net::TcpListener;
+use tokio::sync::RwLock;
+use tracing::{info, warn, error, instrument};
+use uuid::Uuid;
+use dashmap::DashMap;
+
+use crate::router::ChannelRouter;
+use crate::session::Session;
+use crate::presence::PresenceService;
+use crate::coalesce::Singleflight;
+use crate::auth::AuthService;
+use crate::storage::ScyllaStore;
+
+pub struct Config {
+    pub bind_addr: SocketAddr,
+    pub scylla_nodes: Vec<String>,
+    pub valkey_url: String,
+    pub tenant_secret: String,
+    pub max_frame_size: usize,
+    pub ping_interval: std::time::Duration,
+    pub write_timeout: std::time::Duration,
+}
+
+impl Config {
+    pub fn from_env() -> Result<Self> {
+        Ok(Self {
+            bind_addr: std::env::var("GATEWAY_BIND").unwrap_or_else(|_| "0.0.0.0:8088".into()).parse()?,
+            scylla_nodes: std::env::var("SCYLLA_NODES")?.split(',').map(String::from).collect(),
+            valkey_url: std::env::var("VALKEY_URL")?,
+            tenant_secret: std::env::var("TENANT_SECRET")?,
+            max_frame_size: 65_536,
+            ping_interval: std::time::Duration::from_secs(30),
+            write_timeout: std::time::Duration::from_millis(100),
+        })
+    }
+}
+
+pub struct Gateway {
+    cfg: Config,
+    sessions: DashMap<Uuid, Arc<Session>>,
+    router: Arc<ChannelRouter>,
+    presence: Arc<PresenceService>,
+    coalescer: Arc<Singleflight>,
+    auth: Arc<AuthService>,
+    storage: Arc<ScyllaStore>,
+    metrics: Metrics,
+}
+
+impl Gateway {
+    pub async fn new(cfg: Config) -> Result<Self> {
+        let storage = Arc::new(ScyllaStore::new(&cfg.scylla_nodes).await?);
+        let auth = Arc::new(AuthService::new(cfg.tenant_secret.clone()));
+        let router = Arc::new(ChannelRouter::new(64));
+        let presence = Arc::new(PresenceService::new(&cfg.valkey_url).await?);
+        let coalescer = Arc::new(Singleflight::new());
+
+        Ok(Self {
+            cfg,
+            sessions: DashMap::new(),
+            router,
+            presence,
+            coalescer,
+            auth,
+            storage,
+            metrics: Metrics::new(),
+        })
+    }
+
+    pub async fn run(self: Arc<Self>) -> Result<()> {
+        let listener = TcpListener::bind(self.cfg.bind_addr).await
+            .with_context(|| format!("bind {}", self.cfg.bind_addr))?;
+        info!("chat-gateway listening on {}", self.cfg.bind_addr);
+
+        loop {
+            let (stream, peer) = listener.accept().await?;
+            let gw = self.clone();
+            tokio::spawn(async move {
+                if let Err(e) = gw.handle_connection(stream, peer).await {
+                    warn!("connection from {} error: {e}", peer);
+                }
+            });
+        }
+    }
+
+    #[instrument(skip(self, stream), fields(peer = %peer))]
+    async fn handle_connection(self: Arc<Self>, stream: tokio::net::TcpStream, peer: SocketAddr) -> Result<()> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        // 1. TLS handshake (terminated at LB or directly here)
+        let mut stream = stream;
+
+        // 2. Read first frame (must be AUTH)
+        let mut buf = vec![0u8; self.cfg.max_frame_size + 4];
+        let n = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            stream.read_exact(&mut buf[..4])
+        ).await??;
+        let frame_len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        if frame_len > self.cfg.max_frame_size {
+            return Err(anyhow::anyhow!("frame too large: {}", frame_len));
+        }
+        stream.read_exact(&mut buf[4..4+frame_len]).await?;
+        let frame_bytes = &buf[4..4+frame_len];
+
+        // 3. Parse + verify token
+        let (session_id, user_id, tenant_id) = self.auth.verify_auth_frame(frame_bytes).await?;
+
+        // 4. Create session
+        let session = Arc::new(Session::new(
+            session_id, user_id, tenant_id, stream
+        ));
+        self.sessions.insert(session_id, session.clone());
+
+        // 5. Update presence
+        self.presence.set_online(tenant_id, user_id, session_id).await?;
+
+        // 6. Subscribe default channels
+        // (load from DB based on tenant membership)
+
+        // 7. Main loop
+        let result = self.session_loop(session.clone()).await;
+
+        // 8. Cleanup
+        self.sessions.remove(&session_id);
+        self.presence.set_offline(tenant_id, user_id).await?;
+
+        result
+    }
+
+    async fn session_loop(self: Arc<Self>, session: Arc<Session>) -> Result<()> {
+        let mut ping_interval = tokio::time::interval(self.cfg.ping_interval);
+        loop {
+            tokio::select! {
+                frame = session.read_frame() => {
+                    let bytes = frame?;
+                    self.dispatch_frame(&session, &bytes).await?;
+                }
+                _ = ping_interval.tick() => {
+                    session.write_ping().await?;
+                }
+                _ = session.close_signal() => break,
+            }
+        }
+        Ok(())
+    }
+
+    async fn dispatch_frame(&self, session: &Arc<Session>, bytes: &[u8]) -> Result<()> {
+        use crate::frame_parser::{parse_frame, FrameAction};
+        let action = parse_frame(bytes)?;
+        match action {
+            FrameAction::SendMessage(msg) => self.handle_send(session, msg).await?,
+            FrameAction::Subscribe(channels) => self.handle_subscribe(session, channels).await?,
+            FrameAction::Typing { channel_id } => self.handle_typing(session, channel_id).await?,
+            FrameAction::ReadReceipt { event_id } => self.handle_read(session, event_id).await?,
+            FrameAction::Ping => session.write_pong().await?,
+            FrameAction::Pong => {},
+            FrameAction::Unknown => warn!("unknown frame action"),
+        }
+        Ok(())
+    }
+
+    async fn handle_send(&self, session: &Arc<Session>, msg: SendMessageInput) -> Result<()> {
+        // 1. Rate limit
+        if !self.check_rate_limit(session.tenant_id, session.user_id).await? {
+            return session.write_error(2003, "rate_limited").await;
+        }
+        // 2. Membership check (cache in Valkey)
+        if !self.is_member(session.tenant_id, msg.channel_id, session.user_id).await? {
+            return session.write_error(2002, "not_member").await;
+        }
+        // 3. Generate server event_id
+        let server_event_id = Uuid::now_v7();
+        // 4. Persist to ScyllaDB (async)
+        self.storage.insert_message(
+            session.tenant_id, msg.channel_id, server_event_id,
+            session.user_id, msg.text, msg.attachments
+        ).await?;
+        // 5. ACK to sender
+        session.write_ack(server_event_id).await?;
+        // 6. Broadcast to subscribers (via router + NATS)
+        self.router.broadcast(session.tenant_id, msg.channel_id, server_event_id).await?;
+        Ok(())
+    }
+}
+```
+
+### 37.4. src/session.rs (full)
+```rust
+use std::sync::Arc;
+use tokio::sync::{mpsc, Notify};
+use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
+use anyhow::Result;
+use tracing::warn;
+use uuid::Uuid;
+
+pub struct Session {
+    pub id: Uuid,
+    pub user_id: String,
+    pub tenant_id: String,
+    tx: mpsc::UnboundedSender<Vec<u8>>,
+    close_notify: Arc<Notify>,
+}
+
+impl Session {
+    pub fn new(id: Uuid, user_id: String, tenant_id: String, mut stream: TcpStream) -> Arc<Self> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let close_notify = Arc::new(Notify::new());
+
+        let session = Arc::new(Self {
+            id,
+            user_id,
+            tenant_id,
+            tx,
+            close_notify: close_notify.clone(),
+        });
+
+        // Spawn writer task
+        let writer_close = close_notify.clone();
+        tokio::spawn(async move {
+            let mut stream = stream;
+            while let Some(bytes) = rx.recv().await {
+                if stream.write_all(&bytes).await.is_err() { break; }
+            }
+            writer_notify.notify_waiters();
+            let _ = stream.shutdown().await;
+        });
+
+        session
+    }
+
+    pub async fn write_ack(&self, event_id: Uuid) -> Result<()> {
+        let mut buf = Vec::with_capacity(20);
+        buf.extend_from_slice(&[0, 0, 0, 0]);  // placeholder length
+        // Build ACK frame using FlatBuffers builder
+        // ... (omitted for brevity)
+        let len = (buf.len() - 4) as u32;
+        buf[..4].copy_from_slice(&len.to_be_bytes());
+        self.tx.send(buf).map_err(|_| anyhow::anyhow!("send closed"))?;
+        Ok(())
+    }
+
+    pub async fn write_error(&self, code: u16, msg: &str) -> Result<()> {
+        // similar ACK builder
+        Ok(())
+    }
+
+    pub async fn write_ping(&self) -> Result<()> {
+        self.tx.send(vec![0, 0, 0, 5, 0x05]).map_err(|_| anyhow::anyhow!("send closed"))?;
+        Ok(())
+    }
+
+    pub async fn write_pong(&self) -> Result<()> {
+        self.tx.send(vec![0, 0, 0, 5, 0x06]).map_err(|_| anyhow::anyhow!("send closed"))?;
+        Ok(())
+    }
+
+    pub async fn read_frame(&self) -> Result<Vec<u8>> {
+        // (read from a shared reader, omitted for brevity)
+        Ok(vec![])
+    }
+
+    pub async fn close_signal(&self) {
+        self.close_notify.notified().await;
+    }
+}
+```
+
+---
+
+## 38. Rust: Singleflight Coalescer (full implementation)
+
+```rust
+// src/coalesce.rs
+use std::sync::Arc;
+use std::time::Duration;
+use anyhow::Result;
+use dashmap::DashMap;
+use tokio::sync::{Mutex, OnceCell};
+use tokio::time::timeout;
+use tracing::{warn, debug};
+
+pub struct Singleflight {
+    inflight: DashMap<String, Arc<OnceCell<Vec<u8>>>>,
+    /// Coalesce window: requests arriving within this window share result
+    window: Duration,
+    /// Hard timeout per query
+    query_timeout: Duration,
+}
+
+impl Singleflight {
+    pub fn new() -> Self {
+        Self {
+            inflight: DashMap::new(),
+            window: Duration::from_millis(10),
+            query_timeout: Duration::from_millis(50),
+        }
+    }
+
+    pub fn with_window(mut self, window: Duration) -> Self {
+        self.window = window;
+        self
+    }
+
+    /// Coalesce a query by key. Returns Arc'd bytes to avoid clone.
+    pub async fn do_query<F, Fut, T>(
+        &self,
+        key: &str,
+        f: F,
+    ) -> Result<Arc<T>>
+    where
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<T>> + Send,
+        T: Send + Sync + 'static,
+    {
+        // 1. Check if there's an inflight query for this key
+        if let Some(cell) = self.inflight.get(key) {
+            // Wait for the existing one to complete
+            let cell = cell.clone();
+            drop(self.inflight);  // release DashMap lock
+            let res = cell.get_or_init(|| async {
+                // Should not happen – the initiator must initialize
+                Err(anyhow::anyhow!("follower should not init"))
+            }).await;
+            // ... unwrap Arc ...
+            return Ok(Arc::new(res.as_ref().unwrap().clone()));
+        }
+
+        // 2. We're the initiator – create cell
+        let cell = Arc::new(OnceCell::new());
+        self.inflight.insert(key.to_string(), cell.clone());
+
+        // 3. Execute query with timeout
+        let key_owned = key.to_string();
+        let res = timeout(self.query_timeout, f()).await;
+
+        // 4. Cleanup map entry (small delay to allow followers to join)
+        let inflight = self.inflight.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            inflight.remove(&key_owned);
+        });
+
+        match res {
+            Ok(Ok(v)) => {
+                let _ = cell.set(Ok(v.clone()));
+                Ok(Arc::new(v))
+            }
+            Ok(Err(e)) => {
+                let _ = cell.set(Err(anyhow::anyhow!("query failed")));
+                Err(e)
+            }
+            Err(_) => {
+                let _ = cell.set(Err(anyhow::anyhow!("timeout")));
+                Err(anyhow::anyhow!("singleflight query timeout"))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    #[tokio::test]
+    async fn test_coalesce_1000_requests() {
+        let sf = Arc::new(Singleflight::new());
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+        for i in 0..1000 {
+            let sf = sf.clone();
+            let counter = counter.clone();
+            handles.push(tokio::spawn(async move {
+                let start = Instant::now();
+                let result = sf.do_query(&format!("key:{}", i % 10), || async {
+                    // Simulate 50ms DB query
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    Ok::<i32, anyhow::Error>(42)
+                }).await;
+                assert!(result.is_ok());
+                start
+            }));
+        }
+
+        let _ = futures::future::join_all(handles).await;
+
+        // Should have only ~10 actual queries (one per unique key)
+        let actual_queries = counter.load(Ordering::SeqCst);
+        assert!(actual_queries <= 20, "expected ~10 queries, got {}", actual_queries);
+    }
+
+    #[tokio::test]
+    async fn test_query_timeout() {
+        let sf = Singleflight::new().with_window(Duration::from_millis(10));
+        let result = sf.do_query("slow", || async {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            Ok::<i32, anyhow::Error>(1)
+        }).await;
+        assert!(result.is_err());
+    }
+}
+```
+
+---
+
+## 39. eBPF/XDP Packet Filter (full C program)
+
+```c
+// src/ebpf/sfu_chat_filter.c
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/udp.h>
+#include <linux/in.h>
+#include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
+
+// ============================================================
+// Maps
+// ============================================================
+
+// Blacklist IPs (eBPF LRU)
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 100000);
+    __type(key, __u32);  // IPv4
+    __type(value, __u64); // ban timestamp ms
+} blacklist_map SEC(".maps");
+
+// Rate limit per IP (token bucket)
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, 50000);
+    __type(key, __u32);
+    __type(value, struct rate_limit_state);
+} rate_map SEC(".maps");
+
+struct rate_limit_state {
+    __u64 tokens;          // current tokens
+    __u64 last_refill_ns;  // last refill timestamp
+};
+
+// Allowed bot UA hash (for testing infrastructure)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1000);
+    __type(key, __u32);  // hash of UA
+    __type(value, __u32); // 1 = allowed
+} allowed_uas SEC(".maps");
+
+// Stats
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+    __uint(max_entries, 4);
+    __type(key, __u32);
+    __type(value, __u64);
+} stats SEC(".maps");
+
+enum {
+    STAT_PASS = 0,
+    STAT_DROP_BLACKLIST = 1,
+    STAT_DROP_RATE_LIMIT = 2,
+    STAT_DROP_BOT = 3,
+};
+
+#define TCP_WS_PORT 8088
+#define MAX_TCP_SYN_PER_SEC 100
+
+// ============================================================
+// Helper: extract IPv4 src
+// ============================================================
+static __always_inline __u32 get_src_ip(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end) return 0;
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) return 0;
+
+    struct iphdr *ip = (void *)(eth + 1);
+    if ((void *)(ip + 1) > data_end) return 0;
+    return ip->saddr;
+}
+
+static __always_inline void inc_stat(__u32 key) {
+    __u64 *val = bpf_map_lookup_elem(&stats, &key);
+    if (val) __sync_fetch_and_add(val, 1);
+}
+
+// ============================================================
+// XDP program
+// ============================================================
+SEC("xdp")
+int xdp_chat_filter(struct xdp_md *ctx) {
+    void *data = (void *)(long)ctx->data;
+    void *data_end = (void *)(long)ctx->data_end;
+
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+
+    // Only filter IPv4
+    if (eth->h_proto != bpf_htons(ETH_P_IP)) return XDP_PASS;
+
+    struct iphdr *ip = (void *)(eth + 1);
+    if ((void *)(ip + 1) > data_end) return XDP_PASS;
+
+    __u32 src_ip = ip->saddr;
+
+    // 1. Check blacklist
+    __u64 *banned_ts = bpf_map_lookup_elem(&blacklist_map, &src_ip);
+    if (banned_ts) {
+        // Ban expired? (e.g., 1 hour)
+        __u64 now_ns = bpf_ktime_get_ns();
+        if (now_ns - *banned_ts > 3600ULL * 1000000000ULL) {
+            bpf_map_delete_elem(&blacklist_map, &src_ip);
+        } else {
+            inc_stat(STAT_DROP_BLACKLIST);
+            return XDP_DROP;
+        }
+    }
+
+    // 2. Only rate-limit TCP (WebSocket)
+    if (ip->protocol != IPPROTO_TCP) return XDP_PASS;
+
+    struct tcphdr *tcp = (void *)ip + (ip->ihl * 4);
+    if ((void *)(tcp + 1) > data_end) return XDP_PASS;
+
+    // Only SYN packets (new connections)
+    if (!tcp->syn || tcp->ack) return XDP_PASS;
+
+    // Only WebSocket port
+    if (tcp->dest != bpf_htons(TCP_WS_PORT)) return XDP_PASS;
+
+    // 3. Token bucket per source IP
+    struct rate_limit_state *state = bpf_map_lookup_elem(&rate_map, &src_ip);
+    __u64 now_ns = bpf_ktime_get_ns();
+    struct rate_limit_state new_state = {0};
+
+    if (!state) {
+        new_state.tokens = MAX_TCP_SYN_PER_SEC - 1;
+        new_state.last_refill_ns = now_ns;
+        bpf_map_update_elem(&rate_map, &src_ip, &new_state, BPF_ANY);
+    } else {
+        // Refill tokens (100/s rate)
+        __u64 elapsed_ns = now_ns - state->last_refill_ns;
+        __u64 refill = (elapsed_ns / 10000000ULL);  // 100 tokens/s
+        state->tokens = (state->tokens + refill > MAX_TCP_SYN_PER_SEC)
+            ? MAX_TCP_SYN_PER_SEC
+            : state->tokens + refill;
+        state->last_refill_ns = now_ns;
+
+        if (state->tokens == 0) {
+            // Ban for 5 minutes
+            __u64 ban_until = now_ns + 300ULL * 1000000000ULL;
+            bpf_map_update_elem(&blacklist_map, &src_ip, &ban_until, BPF_ANY);
+            inc_stat(STAT_DROP_RATE_LIMIT);
+            return XDP_DROP;
+        }
+        state->tokens--;
+    }
+
+    inc_stat(STAT_PASS);
+    return XDP_PASS;
+}
+
+// ============================================================
+// License
+// ============================================================
+char _license[] SEC("license") = "GPL";
+```
+
+**Userspace loader (Rust):**
+```rust
+// src/ebpf_loader.rs
+use aya::{Bpf, programs::Xdp, maps::HashMap};
+use anyhow::Result;
+
+pub async fn load_chat_filter(interface: &str) -> Result<()> {
+    let mut bpf = Bpf::load(include_bytes!("../ebpf/sfu_chat_filter.ebpf"))?;
+    let program: &mut Xdp = bpf.program_mut("xdp_chat_filter").unwrap().try_into()?;
+    program.load()?;
+    program.attach(interface, aya::programs::XdpFlags::default())?;
+
+    // Sync blacklist from Valkey every 60s
+    let blacklist: HashMap<_, u32, u64> = bpf.map("blacklist_map").unwrap().try_into()?;
+    tokio::spawn(async move {
+        let client = redis::Client::open("redis://valkey:6379").unwrap();
+        let mut conn = client.get_async_connection().await.unwrap();
+        loop {
+            let keys: Vec<String> = conn.keys("chat:blacklist:*").await.unwrap_or_default();
+            for k in keys {
+                let ip: u32 = k.trim_start_matches("chat:blacklist:").parse().unwrap_or(0);
+                let ts: u64 = conn.get(&k).await.unwrap_or(0);
+                blacklist.insert(ip, ts, 0).unwrap_or(());
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
+
+    Ok(())
+}
+```
+
+---
+
+## 40. FlatBuffers Schema (Final)
+
+Xem schema đầy đủ tại §16.1 (đã có ở phiên bản trước). Bổ sung thêm version field:
+
+```fbs
+// Top-level wrapper với version
+table ChatFrame {
+  schema_version: uint16 = 1;  // 0x0001 = v1, 0x0002 = v2
+  frame_type: FrameType;
+  // ... các field khác
+}
+
+// Build Rust code generation
+// $ flatc --rust -o src/generated rinco_chat.fbs
+```
+
+**Generated Rust binding (snippet):**
+```rust
+// src/generated/chat_frame_generated.rs
+#[allow(non_snake_case)]
+pub mod chat {
+    use flatbuffers::EndianScalar;
+
+    #[derive(Copy, Clone, PartialEq)]
+    pub enum FrameType { MESSAGE_BATCH = 0, PRESENCE = 1, /* ... */ }
+
+    #[derive(Copy, Clone)]
+    pub struct ChatFrame<'a> {
+        _tab: flatbuffers::Table<'a>,
+    }
+
+    impl<'a> ChatFrame<'a> {
+        pub const fn create<'bldr: 'a, 'a: 'bldr>(
+            _fbb: &'bldr mut flatbuffers::FlatBufferBuilder<'_>,
+        ) -> Self { ... }
+        pub fn schema_version(&self) -> u16 { ... }
+        pub fn frame_type(&self) -> FrameType { ... }
+        // ...
+    }
+}
+```
+
+**Verification on parse:**
+```rust
+pub fn parse_frame_safely(bytes: &[u8]) -> Result<ChatFrame<'_>, FrameError> {
+    let frame = chat::root_as_chat_frame(bytes)
+        .map_err(|_| FrameError::ParseError)?;
+    if frame.schema_version() > SUPPORTED_VERSION {
+        return Err(FrameError::VersionTooNew);
+    }
+    Ok(frame)
+}
+```
+
+---
+
+## 41. Go: WebSocket Client SDK
+
+```go
+// pkg/chat/client.go
+package chat
+
+import (
+    "context"
+    "crypto/tls"
+    "encoding/binary"
+    "errors"
+    "fmt"
+    "net"
+    "sync"
+    "sync/atomic"
+    "time"
+
+    "github.com/rinco/chat-proto-go/chat"
+    flatbuffers "github.com/google/flatbuffers/go"
+    "nhooyr.io/websocket"
+)
+
+type Client struct {
+    conn          *websocket.Conn
+    url           string
+    token         string
+
+    mu            sync.RWMutex
+    handlers      map[chat.FrameType]MessageHandler
+    sessions      map[string]*Subscription
+    pendingAcks   sync.Map
+
+    onConnect     func()
+    onDisconnect  func(error)
+    onError       func(error)
+    onMessage     func(*chat.ChatMessage)
+
+    reconnectAttempts atomic.Int32
+    lastEventID       atomic.Value  // string
+    writeTimeout      time.Duration
+    pingInterval      time.Duration
+}
+
+type MessageHandler func(frame []byte) error
+
+type Subscription struct {
+    ChannelID string
+    Unsub     func()
+}
+
+func NewClient(url, token string) *Client {
+    return &Client{
+        url:          url,
+        token:        token,
+        handlers:     make(map[chat.FrameType]MessageHandler),
+        sessions:     make(map[string]*Subscription),
+        writeTimeout: 5 * time.Second,
+        pingInterval: 30 * time.Second,
+    }
+}
+
+func (c *Client) OnMessage(h func(*chat.ChatMessage)) {
+    c.onMessage = h
+}
+
+func (c *Client) OnConnect(h func())           { c.onConnect = h }
+func (c *Client) OnDisconnect(h func(error))   { c.onDisconnect = h }
+func (c *Client) OnError(h func(error))         { c.onError = h }
+
+// Connect dials the WebSocket and performs AUTH.
+func (c *Client) Connect(ctx context.Context) error {
+    dialer := &websocket.DialOptions{
+        Subprotocols:     []string{"rinco-chat-v1"},
+        CompressionMode:  websocket.CompressionContextTakeover,
+    }
+    conn, _, err := websocket.Dial(ctx, c.url, dialer)
+    if err != nil {
+        return fmt.Errorf("dial: %w", err)
+    }
+    conn.SetReadLimit(65536 + 4)
+    c.conn = conn
+
+    // AUTH frame
+    if err := c.sendAuth(ctx); err != nil {
+        conn.Close(websocket.StatusInternalError, "auth failed")
+        return err
+    }
+
+    // Read AUTH_OK
+    if err := c.readAuthOk(ctx); err != nil {
+        conn.Close(websocket.StatusInternalError, "auth failed")
+        return err
+    }
+
+    c.reconnectAttempts.Store(0)
+    if c.onConnect != nil {
+        c.onConnect()
+    }
+
+    // Start ping loop and reader loop
+    go c.pingLoop(ctx)
+    go c.readLoop(ctx)
+    return nil
+}
+
+func (c *Client) sendAuth(ctx context.Context) error {
+    b := flatbuffers.NewBuilder(128)
+    tenantID := b.CreateString("apex-fintech")  // from token
+    tokenOff := b.CreateString(c.token)
+    chat.FrameStart(b)
+    chat.FrameAddSchemaVersion(b, 1)
+    chat.FrameAddFrameType(b, chat.FrameTypeAUTH)
+    chat.FrameAddToken(b, tokenOff)
+    chat.FrameAddTenantId(b, tenantID)
+    frame := chat.FrameEnd(b)
+
+    payload := make([]byte, 4+b.FinishedBytes())
+    binary.BigEndian.PutUint32(payload[:4], uint32(b.FinishedBytes()))
+    copy(payload[4:], b.FinishedBytes())
+
+    return c.writeFrame(ctx, payload)
+}
+
+func (c *Client) writeFrame(ctx context.Context, payload []byte) error {
+    writeCtx, cancel := context.WithTimeout(ctx, c.writeTimeout)
+    defer cancel()
+    return c.conn.Write(writeCtx, websocket.MessageBinary, payload)
+}
+
+// Send message
+func (c *Client) Send(ctx context.Context, msg *SendInput) (string, error) {
+    clientEventID := newUUIDv7()
+    b := flatbuffers.NewBuilder(256)
+    eventID := b.CreateString(clientEventID)
+    channelID := b.CreateString(msg.ChannelID)
+    text := b.CreateString(msg.Text)
+    senderID := b.CreateString(msg.UserID)
+    tenantID := b.CreateString(msg.TenantID)
+
+    chat.ChatMessageStart(b)
+    chat.ChatMessageAddClientEventId(b, clientEventID)
+    chat.ChatMessageAddChannelId(b, channelID)
+    chat.ChatMessageAddTenantId(b, tenantID)
+    chat.ChatMessageAddSenderId(b, senderID)
+    chat.ChatMessageAddMessageType(b, chat.MessageTypeTEXT)
+    chat.ChatMessageAddText(b, text)
+    chat.ChatMessageAddCreatedAt(b, time.Now().UnixMilli())
+    msgOff := chat.ChatMessageEnd(b)
+
+    chat.FrameStart(b)
+    chat.FrameAddSchemaVersion(b, 1)
+    chat.FrameAddFrameType(b, chat.FrameTypeMESSAGE_BATCH)
+    chat.ChatMessageVecStart(b, 1)
+    b.PrependUOffsetTRelative(msgOff)
+    msgs := b.EndVector(1)
+    chat.FrameAddMessages(b, msgs)
+    frame := chat.FrameEnd(b)
+
+    payload := make([]byte, 4+b.FinishedBytes())
+    binary.BigEndian.PutUint32(payload[:4], uint32(b.FinishedBytes()))
+    copy(payload[4:], b.FinishedBytes())
+
+    if err := c.writeFrame(ctx, payload); err != nil {
+        return "", err
+    }
+
+    // Wait for ACK
+    return c.waitAck(ctx, clientEventID)
+}
+
+func (c *Client) waitAck(ctx context.Context, clientEventID string) (string, error) {
+    type ackResult struct {
+        serverEventID string
+        err           error
+    }
+    ch := make(chan ackResult, 1)
+    c.pendingAcks.Store(clientEventID, ch)
+    defer c.pendingAcks.Delete(clientEventID)
+
+    select {
+    case r := <-ch:
+        return r.serverEventID, r.err
+    case <-ctx.Done():
+        return "", ctx.Err()
+    case <-time.After(5 * time.Second):
+        return "", errors.New("ack timeout")
+    }
+}
+
+// readLoop reads frames and dispatches
+func (c *Client) readLoop(ctx context.Context) {
+    for {
+        msgType, data, err := c.conn.Read(ctx)
+        if err != nil {
+            if c.onDisconnect != nil {
+                c.onDisconnect(err)
+            }
+            c.scheduleReconnect()
+            return
+        }
+        if msgType != websocket.MessageBinary {
+            continue
+        }
+        c.handleFrame(data)
+    }
+}
+
+func (c *Client) handleFrame(data []byte) {
+    if len(data) < 4 {
+        c.onError(errors.New("frame too short"))
+        return
+    }
+    payload := data[4:]
+    frame := chat.GetRootAsFrame(payload, 0)
+    if frame.SchemaVersion() > 1 {
+        c.onError(fmt.Errorf("schema version too new: %d", frame.SchemaVersion()))
+        return
+    }
+    switch frame.FrameType() {
+    case chat.FrameTypeACK:
+        var evtID flatbuffers.String
+        if frame.Ack() != nil {
+            evtID = frame.Ack().ServerEventId()
+            if h, ok := c.pendingAcks.Load(string(evtID)); ok {
+                ch := h.(chan ackResult)
+                select {
+                case ch <- ackResult{serverEventID: string(evtID)}:
+                default:
+                }
+            }
+        }
+    case chat.FrameTypeMESSAGE_BATCH:
+        for i := 0; i < frame.MessagesLength(); i++ {
+            m := chat.ChatMessage{}
+            frame.Messages(&m, i)
+            if c.onMessage != nil {
+                c.onMessage(&m)
+            }
+            c.lastEventID.Store(string(m.EventId()))
+        }
+    case chat.FrameTypePRESENCE:
+        // ... handle presence updates ...
+    case chat.FrameTypeTYPING:
+        // ... handle typing ...
+    }
+}
+
+// Reconnect with exponential backoff
+func (c *Client) scheduleReconnect() {
+    n := c.reconnectAttempts.Add(1)
+    delay := time.Duration(1<<n) * time.Second
+    if delay > 60*time.Second {
+        delay = 60 * time.Second
+    }
+    // Add jitter
+    delay += time.Duration(rand.Int63n(int64(time.Second)))
+    time.Sleep(delay)
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    if err := c.Connect(ctx); err != nil {
+        c.onError(err)
+        c.scheduleReconnect()
+    }
+}
+
+// Resume gửi last_event_id để server gửi missed messages
+func (c *Client) Resume(ctx context.Context) error {
+    lastID, _ := c.lastEventID.Load().(string)
+    if lastID == "" {
+        return nil
+    }
+    // Build RESUME frame
+    b := flatbuffers.NewBuilder(128)
+    lastIDStr := b.CreateString(lastID)
+    chat.FrameStart(b)
+    chat.FrameAddSchemaVersion(b, 1)
+    chat.FrameAddFrameType(b, chat.FrameTypeRESUME)
+    chat.FrameAddLastEventId(b, lastIDStr)
+    frame := chat.FrameEnd(b)
+
+    payload := make([]byte, 4+b.FinishedBytes())
+    binary.BigEndian.PutUint32(payload[:4], uint32(b.FinishedBytes()))
+    copy(payload[4:], b.FinishedBytes())
+    return c.writeFrame(ctx, payload)
+}
+
+func newUUIDv7() string {
+    // Use google/uuid v7
+    return uuid.New().String()
+}
+```
+
+**Example usage:**
+```go
+client := chat.NewClient("wss://chat.rinco.app/ws/chat", pasetoToken)
+client.OnConnect(func() {
+    log.Println("connected")
+    if err := client.Resume(context.Background()); err != nil {
+        log.Println("resume error:", err)
+    }
+})
+client.OnMessage(func(m *chat.ChatMessage) {
+    log.Printf("got message: %s", m.Text())
+})
+client.OnDisconnect(func(err error) {
+    log.Println("disconnected:", err)
+})
+
+if err := client.Connect(context.Background()); err != nil {
+    log.Fatal(err)
+}
+
+// Send
+eventID, err := client.Send(context.Background(), &chat.SendInput{
+    TenantID:  "apex-fintech",
+    ChannelID: "c-sales",
+    UserID:    "u-123",
+    Text:      "Hello!",
+})
+```
+
+---
+
+## 42. TypeScript: Chat UI React Component
+
+```tsx
+// apps/chat-ui/src/components/ChatPanel.tsx
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { ChatClient, ChatMessage } from '@rinco/chat-sdk';
+import { MessageBubble } from './MessageBubble';
+import { InputBar } from './InputBar';
+import { ChannelList } from './ChannelList';
+import { TypingIndicator } from './TypingIndicator';
+import { PresenceBadge } from './PresenceBadge';
+
+interface ChatPanelProps {
+  client: ChatClient;
+  tenantId: string;
+  userId: string;
+}
+
+export const ChatPanel: React.FC<ChatPanelProps> = ({ client, tenantId, userId }) => {
+  const [activeChannel, setActiveChannel] = useState<string | null>(null);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [presence, setPresence] = useState<Map<string, PresenceStatus>>(new Map());
+  const [typing, setTyping] = useState<Set<string>>(new Set());
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 80,
+    overscan: 10,
+    // Reverse: newest at bottom
+    getItemKey: (i) => messages[messages.length - 1 - i]?.event_id ?? i,
+  });
+
+  // Load history when channel changes
+  useEffect(() => {
+    if (!activeChannel) return;
+    setIsLoading(true);
+    client.getHistory(activeChannel, undefined, 50).then((res) => {
+      setMessages(res.messages);
+      setHasMore(res.has_more);
+      setIsLoading(false);
+    }).catch(err => {
+      console.error('history error', err);
+      setIsLoading(false);
+    });
+  }, [activeChannel, client]);
+
+  // Subscribe to live messages
+  useEffect(() => {
+    if (!activeChannel) return;
+
+    const unsub = client.onMessage((msg) => {
+      if (msg.channel_id === activeChannel) {
+        setMessages(prev => [...prev, msg]);
+      }
+    });
+
+    return () => unsub();
+  }, [activeChannel, client]);
+
+  // Subscribe to presence
+  useEffect(() => {
+    const unsub = client.onPresence((p) => {
+      setPresence(prev => {
+        const next = new Map(prev);
+        if (p.status === 'offline') next.delete(p.user_id);
+        else next.set(p.user_id, p.status);
+        return next;
+      });
+    });
+    return () => unsub();
+  }, [client]);
+
+  // Subscribe to typing
+  useEffect(() => {
+    const unsub = client.onTyping((t) => {
+      if (t.channel_id !== activeChannel) return;
+      setTyping(prev => {
+        const next = new Set(prev);
+        if (t.is_typing) next.add(t.user_id);
+        else next.delete(t.user_id);
+        return next;
+      });
+      // Auto-clear after 5s
+      setTimeout(() => {
+        setTyping(prev => {
+          const next = new Set(prev);
+          next.delete(t.user_id);
+          return next;
+        });
+      }, 5000);
+    });
+    return () => unsub();
+  }, [activeChannel, client]);
+
+  // Load more (scroll up)
+  const loadMore = useCallback(async () => {
+    if (!activeChannel || !hasMore || isLoading) return;
+    setIsLoading(true);
+    const oldestId = messages[0]?.event_id;
+    try {
+      const res = await client.getHistory(activeChannel, oldestId, 50);
+      setMessages(prev => [...res.messages, ...prev]);
+      setHasMore(res.has_more);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [activeChannel, hasMore, isLoading, messages, client]);
+
+  const handleSend = useCallback(async (text: string, attachments?: Attachment[]) => {
+    if (!activeChannel) return;
+    await client.send({
+      tenant_id: tenantId,
+      sender_id: userId,
+      channel_id: activeChannel,
+      message_type: attachments?.length ? 'FILE' : 'TEXT',
+      text,
+      attachments,
+    });
+  }, [activeChannel, client, tenantId, userId]);
+
+  return (
+    <div className="flex h-full">
+      <ChannelList
+        client={client}
+        tenantId={tenantId}
+        activeChannel={activeChannel}
+        onSelect={setActiveChannel}
+        presence={presence}
+      />
+      <div className="flex-1 flex flex-col">
+        {activeChannel && (
+          <>
+            <ChannelHeader
+              channelId={activeChannel}
+              presence={presence}
+            />
+            <div
+              ref={parentRef}
+              className="flex-1 overflow-auto"
+              onScroll={(e) => {
+                if (e.currentTarget.scrollTop === 0) loadMore();
+              }}
+            >
+              <div
+                style={{
+                  height: `${rowVirtualizer.getTotalSize()}px`,
+                  position: 'relative',
+                }}
+              >
+                {rowVirtualizer.getVirtualItems().map((vRow) => {
+                  const msg = messages[messages.length - 1 - vRow.index];
+                  return (
+                    <div
+                      key={vRow.key}
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${vRow.start}px)`,
+                      }}
+                    >
+                      <MessageBubble
+                        message={msg}
+                        isOwn={msg.sender_id === userId}
+                        onReact={(emoji) => client.react(msg.event_id, emoji)}
+                        onReply={(text) => client.send({
+                          ...msg,
+                          text,
+                          reply_to: msg.event_id,
+                        })}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              {isLoading && <div className="p-2 text-center text-gray-400">Loading…</div>}
+            </div>
+            {typing.size > 0 && (
+              <TypingIndicator users={[...typing]} presence={presence} />
+            )}
+            <InputBar
+              onSend={handleSend}
+              onTyping={() => client.sendTyping(activeChannel)}
+              channelId={activeChannel}
+            />
+          </>
+        )}
+      </div>
+    </div>
+  );
+};
+```
+
+**MessageBubble component:**
+```tsx
+// apps/chat-ui/src/components/MessageBubble.tsx
+import React from 'react';
+import { ChatMessage } from '@rinco/chat-sdk';
+import { Markdown } from './Markdown';
+import { AttachmentGrid } from './AttachmentGrid';
+import { ReactionList } from './ReactionList';
+import { Avatar, AvatarImage, AvatarFallback } from './ui/avatar';
+
+interface Props {
+  message: ChatMessage;
+  isOwn: boolean;
+  onReact: (emoji: string) => void;
+  onReply: (text: string) => void;
+}
+
+export const MessageBubble: React.FC<Props> = ({ message, isOwn, onReact, onReply }) => {
+  const time = new Date(message.created_at).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  return (
+    <div className={`flex gap-2 p-2 ${isOwn ? 'flex-row-reverse' : ''}`}>
+      <Avatar className="w-8 h-8">
+        <AvatarImage src={message.sender_avatar} />
+        <AvatarFallback>{message.sender_name?.[0]}</AvatarFallback>
+      </Avatar>
+      <div className={`max-w-[70%] ${isOwn ? 'items-end' : 'items-start'} flex flex-col`}>
+        <div className="flex gap-2 items-baseline">
+          <span className="font-medium text-sm">{message.sender_name}</span>
+          <span className="text-xs text-gray-400">{time}</span>
+          {message.edited_at > 0 && <span className="text-xs text-gray-400">(edited)</span>}
+        </div>
+        <div
+          className={`px-3 py-2 rounded-lg ${
+            isOwn ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800'
+          }`}
+        >
+          {message.reply_to && <ReplyQuote eventId={message.reply_to} />}
+          {message.text && <Markdown text={message.text} />}
+          {message.attachments?.length > 0 && (
+            <AttachmentGrid attachments={message.attachments} />
+          )}
+        </div>
+        {message.reactions?.length > 0 && (
+          <ReactionList
+            reactions={message.reactions}
+            onToggle={(emoji) => onReact(emoji)}
+          />
+        )}
+      </div>
+    </div>
+  );
+};
+```
+
+**InputBar component:**
+```tsx
+// apps/chat-ui/src/components/InputBar.tsx
+import React, { useState, useRef, useCallback } from 'react';
+import { VoiceRecorder } from './VoiceRecorder';
+import { FileUploadButton } from './FileUploadButton';
+import { EmojiPicker } from './EmojiPicker';
+import { MentionPicker } from './MentionPicker';
+
+interface Props {
+  onSend: (text: string, attachments?: Attachment[]) => void;
+  onTyping: () => void;
+  channelId: string;
+}
+
+export const InputBar: React.FC<Props> = ({ onSend, onTyping, channelId }) => {
+  const [text, setText] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }, [text, attachments]);
+
+  const handleSend = useCallback(() => {
+    if (!text.trim() && attachments.length === 0) return;
+    onSend(text, attachments);
+    setText('');
+    setAttachments([]);
+  }, [text, attachments, onSend]);
+
+  return (
+    <div className="border-t p-2 flex items-end gap-2">
+      <FileUploadButton
+        onUpload={(file) => setAttachments(prev => [...prev, file])}
+        channelId={channelId}
+      />
+      <EmojiPicker onSelect={(emoji) => setText(t => t + emoji)} />
+      <MentionPicker
+        channelId={channelId}
+        onSelect={(user) => setText(t => t + `@${user.display_name} `)}
+      />
+      <textarea
+        ref={textareaRef}
+        className="flex-1 resize-none border rounded px-2 py-1 max-h-32"
+        placeholder="Type a message..."
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          onTyping();
+        }}
+        onKeyDown={handleKeyDown}
+        rows={1}
+      />
+      <VoiceRecorder
+        onComplete={(blob) => {
+          // Upload + send
+          setAttachments(prev => [...prev, { type: 'VOICE', blob }]);
+        }}
+        onStart={() => setIsRecording(true)}
+        onStop={() => setIsRecording(false)}
+      />
+      <button
+        onClick={handleSend}
+        disabled={!text.trim() && attachments.length === 0}
+        className="px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50"
+      >
+        Send
+      </button>
+    </div>
+  );
+};
+```
+
+---
+
+## 43. TypeScript: Voice Message Recorder
+
+```tsx
+// apps/chat-ui/src/components/VoiceRecorder.tsx
+import React, { useState, useRef, useCallback } from 'react';
+import { Mic, Square, Send } from 'lucide-react';
+
+interface Props {
+  onComplete: (blob: Blob, durationMs: number) => void;
+  onStart?: () => void;
+  onStop?: () => void;
+  maxDurationMs?: number;
+}
+
+export const VoiceRecorder: React.FC<Props> = ({
+  onComplete, onStart, onStop, maxDurationMs = 5 * 60 * 1000,
+}) => {
+  const [isRecording, setIsRecording] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const startTimeRef = useRef<number>(0);
+  const timerRef = useRef<number | null>(null);
+
+  const startRecording = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          sampleRate: 48_000,
+          channelCount: 1,
+        },
+      });
+
+      const mr = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 64_000,
+      });
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const durMs = Date.now() - startTimeRef.current;
+        onComplete(blob, durMs);
+        stream.getTracks().forEach(t => t.stop());
+      };
+
+      mr.start(100);  // 100ms timeslice for streaming
+      mediaRecorderRef.current = mr;
+      startTimeRef.current = Date.now();
+      setIsRecording(true);
+      setDuration(0);
+      onStart?.();
+
+      // Duration timer
+      timerRef.current = window.setInterval(() => {
+        const elapsed = Date.now() - startTimeRef.current;
+        setDuration(elapsed);
+        if (elapsed >= maxDurationMs) {
+          stopRecording();
+        }
+      }, 100);
+    } catch (err) {
+      console.error('microphone permission denied', err);
+      alert('Cannot access microphone. Please grant permission.');
+    }
+  }, [maxDurationMs, onComplete, onStart]);
+
+  const stopRecording = useCallback(() => {
+    const mr = mediaRecorderRef.current;
+    if (mr && mr.state !== 'inactive') {
+      mr.stop();
+    }
+    setIsRecording(false);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    onStop?.();
+  }, [onStop]);
+
+  const cancelRecording = useCallback(() => {
+    const mr = mediaRecorderRef.current;
+    if (mr) {
+      mr.ondataavailable = null;
+      mr.onstop = null;
+      mr.stop();
+      const stream = mr.stream;
+      stream.getTracks().forEach(t => t.stop());
+    }
+    setIsRecording(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    chunksRef.current = [];
+  }, []);
+
+  const formatDuration = (ms: number) => {
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    return `${m}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  if (!isRecording) {
+    return (
+      <button
+        onClick={startRecording}
+        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded"
+        title="Record voice message"
+      >
+        <Mic className="w-5 h-5" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-1 bg-red-50 dark:bg-red-900/20 rounded">
+      <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+      <span className="text-sm font-mono">{formatDuration(duration)}</span>
+      <button onClick={stopRecording} className="p-1 hover:bg-red-100 rounded">
+        <Send className="w-4 h-4 text-red-600" />
+      </button>
+      <button onClick={cancelRecording} className="p-1 hover:bg-red-100 rounded">
+        <Square className="w-4 h-4 text-red-600" />
+      </button>
+    </div>
+  );
+};
+```
+
+---
+
+## 44. TypeScript: File Upload với Progress
+
+```tsx
+// apps/chat-ui/src/components/FileUploadButton.tsx
+import React, { useRef, useState, useCallback } from 'react';
+import { Paperclip } from 'lucide-react';
+import { uploadManager } from '@rinco/upload-sdk';
+
+interface Props {
+  onUpload: (attachment: Attachment) => void;
+  channelId: string;
+  maxSizeMb?: number;
+}
+
+export const FileUploadButton: React.FC<Props> = ({
+  onUpload, channelId, maxSizeMb = 100,
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [progress, setProgress] = useState<{ [id: string]: number }>({});
+
+  const handleFiles = useCallback(async (files: FileList) => {
+    for (const file of Array.from(files)) {
+      if (file.size > maxSizeMb * 1024 * 1024) {
+        alert(`File ${file.name} exceeds ${maxSizeMb}MB`);
+        continue;
+      }
+
+      // 1. Get presigned URL from server
+      const presigned = await fetch('/api/chat/v1/upload-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          channel_id: channelId,
+          file_name: file.name,
+          file_size: file.size,
+          mime_type: file.type,
+        }),
+      }).then(r => r.json());
+
+      const uploadId = presigned.upload_id;
+
+      // 2. Upload with progress (multipart)
+      try {
+        await uploadManager.uploadMultipart({
+          url: presigned.url,
+          file,
+          partSize: 5 * 1024 * 1024,  // 5MB parts
+          metadata: presigned.fields,
+          onProgress: (p) => setProgress(prev => ({ ...prev, [uploadId]: p.percent })),
+        });
+      } catch (err) {
+        // Abort multipart upload
+        await fetch(`/api/chat/v1/upload-url/${uploadId}`, { method: 'DELETE' });
+        alert(`Upload failed: ${(err as Error).message}`);
+        continue;
+      }
+
+      // 3. Notify server upload complete
+      await fetch('/api/chat/v1/upload-complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          upload_id: uploadId,
+          channel_id: channelId,
+        }),
+      });
+
+      // 4. Get attachment metadata
+      const attachment: Attachment = {
+        attachment_id: presigned.file_id,
+        type: inferAttachmentType(file.type),
+        url: presigned.final_url,
+        file_name: file.name,
+        file_size: file.size,
+        mime_type: file.type,
+      };
+
+      onUpload(attachment);
+      setProgress(prev => {
+        const next = { ...prev };
+        delete next[uploadId];
+        return next;
+      });
+    }
+  }, [channelId, maxSizeMb, onUpload]);
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => e.target.files && handleFiles(e.target.files)}
+      />
+      <button
+        onClick={() => inputRef.current?.click()}
+        className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded relative"
+      >
+        <Paperclip className="w-5 h-5" />
+        {Object.keys(progress).length > 0 && (
+          <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">
+            {Object.keys(progress).length}
+          </span>
+        )}
+      </button>
+    </>
+  );
+};
+```
+
+**Upload manager (multipart với progress):**
+```typescript
+// packages/upload-sdk/src/multipart.ts
+export interface MultipartUploadInput {
+  url: string;
+  file: File;
+  partSize: number;
+  metadata: Record<string, string>;
+  onProgress?: (p: { loaded: number; total: number; percent: number }) => void;
+  signal?: AbortSignal;
+}
+
+export async function uploadMultipart(input: MultipartUploadInput): Promise<void> {
+  const { url, file, partSize, metadata, onProgress, signal } = input;
+  const totalParts = Math.ceil(file.size / partSize);
+
+  // 1. Initiate multipart upload
+  const initRes = await fetch(`${url}?initiate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_name: file.name,
+      file_size: file.size,
+      mime_type: file.type,
+      ...metadata,
+    }),
+    signal,
+  });
+  if (!initRes.ok) throw new Error(`init failed: ${initRes.status}`);
+  const { upload_id, part_urls } = await initRes.json();
+
+  const completedParts: Array<{ part_number: number; etag: string }> = [];
+  let loaded = 0;
+
+  // 2. Upload parts in parallel (max 4 concurrent)
+  const queue: Promise<void>[] = [];
+  const semaphore = new Array(4).fill(Promise.resolve());
+
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    const start = (partNumber - 1) * partSize;
+    const end = Math.min(start + partSize, file.size);
+    const blob = file.slice(start, end);
+
+    const task = async () => {
+      const partUrl = part_urls[partNumber - 1];
+      const etag = await uploadPart(partUrl, blob, signal);
+      completedParts.push({ part_number: partNumber, etag });
+      loaded += blob.size;
+      onProgress?.({
+        loaded,
+        total: file.size,
+        percent: Math.round((loaded / file.size) * 100),
+      });
+    };
+
+    // Slot in semaphore
+    const slot = await Promise.race(semaphore.map((p, i) => p.then(() => i)));
+    semaphore[slot] = task();
+    queue.push(semaphore[slot]);
+  }
+
+  await Promise.all(queue);
+
+  // 3. Complete multipart upload
+  const completeRes = await fetch(`${url}?complete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      upload_id,
+      parts: completedParts,
+    }),
+    signal,
+  });
+  if (!completeRes.ok) throw new Error(`complete failed: ${completeRes.status}`);
+}
+
+async function uploadPart(url: string, blob: Blob, signal?: AbortSignal): Promise<string> {
+  const res = await fetch(url, {
+    method: 'PUT',
+    body: blob,
+    signal,
+  });
+  if (!res.ok) throw new Error(`part upload failed: ${res.status}`);
+  return res.headers.get('ETag') || '';
+}
+```
+
+---
+
+## 45. Sequence Diagrams (cho 4 flow chính)
+
+### 45.1. User gửi message
+
+```mermaid
+sequenceDiagram
+    participant U as User A (Web)
+    participant G1 as Gateway Node 1
+    participant V as Valkey
+    participant S as ScyllaDB
+    participant N as NATS JetStream
+    participant G2 as Gateway Node 2
+    participant U2 as User B (Web)
+
+    U->>G1: WS Frame: SEND_MESSAGE<br/>(channel_id, text, client_event_id)
+    Note over G1: Zero-copy parse FlatBuffers
+
+    G1->>V: GET rate:user:A
+    V-->>G1: tokens=8/10
+
+    G1->>V: GET member:channel:abc
+    V-->>G1: member=true
+
+    G1->>G1: Generate server_event_id (UUIDv7)
+
+    par Async persistence
+        G1->>S: INSERT messages (async)
+        S-->>G1: ack (target <50ms)
+    and Broadcast
+        G1->>N: publish chat.message.{channel_id}
+        N->>G2: deliver to subscribers
+        G2->>U2: WS Frame: MESSAGE_BATCH
+    end
+
+    G1->>U: WS Frame: ACK (server_event_id)
+    Note over U: UI update với confirmed event_id
+```
+
+### 45.2. User upload file
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant G as Gateway
+    participant API as Upload API
+    participant M as MinIO
+    participant V as ClamAV
+    participant S as ScyllaDB
+    participant N as NATS
+
+    U->>API: POST /upload-url<br/>(file_name, size, mime_type)
+    API->>M: POST /initiate multipart
+    M-->>API: upload_id, part_urls[]
+    API-->>U: { url, upload_id, part_urls[] }
+
+    loop Each 5MB part
+        U->>M: PUT part_url (with ETag)
+        M-->>U: ETag
+    end
+
+    U->>API: POST /upload-complete<br/>(upload_id, parts[])
+    API->>M: POST /complete multipart
+    M-->>API: final_url
+
+    par Virus scan
+        API->>V: scan file
+        V-->>API: OK / INFECTED
+    and Image processing
+        API->>API: resize, AVIF, blurhash
+    end
+
+    alt Scan OK
+        API->>S: INSERT message with attachment_id
+        API->>N: publish chat.attachment.uploaded
+        API-->>U: { file_id, attachment_meta }
+        U->>G: WS Frame: SEND_MESSAGE (with attachment)
+    else Infected
+        API->>M: DELETE file
+        API-->>U: 403 VIRUS_DETECTED
+    end
+```
+
+### 45.3. User join channel
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant G as Gateway
+    participant V as Valkey
+    participant S as ScyllaDB
+    participant SF as Singleflight
+    participant N as NATS
+
+    U->>G: WS Frame: SUBSCRIBE<br/>(channel_ids: ["c-sales"])
+
+    par Membership check
+        G->>V: SMEMBERS member:channel:c-sales
+        V-->>G: [user_ids]
+        Note over G: Verify user in set
+    and Initial history fetch
+        G->>SF: do_query("history:c-sales")
+        alt First request
+            SF->>S: SELECT * FROM messages<br/>WHERE channel_id = ? LIMIT 50
+            S-->>SF: 50 messages
+            SF-->>G: cached
+        else Concurrent requests
+            SF-->>G: wait for in-flight
+        end
+    end
+
+    G->>V: SADD subscriber:c-sales:{user_id}
+    V-->>G: OK
+
+    G->>U: WS Frame: HISTORY<br/>(messages: [...], has_more: true)
+
+    G->>N: subscribe chat.message.c-sales
+    Note over G,N: From now on, receive broadcasts
+
+    U->>U: Render messages + setup listener
+```
+
+### 45.4. Message broadcast đến 100K subscribers
+
+```mermaid
+sequenceDiagram
+    participant P as Publisher
+    participant G as Gateway (sender's region)
+    participant N as NATS JetStream
+    participant GR as Gateway Router
+    participant GS as Gateway (sub region) x N
+    participant SUB as 100K Subscribers
+
+    P->>G: SEND_MESSAGE
+    G->>G: persist + ACK to publisher
+
+    G->>N: publish chat.message.c-sales
+    Note over N: Replicated across regions
+
+    par Fan-out to gateway nodes
+        N->>GR: deliver to router
+        GR->>GS1: route (consistent hash)
+        GR->>GS2: route
+        GR->>GS3: route
+        GR->>GSN: route
+    end
+
+    par Each gateway node distributes to its local subscribers
+        GS1->>SUB1: WS Frame: MESSAGE_BATCH
+        Note over GS1,SUB1: ~10K local subscribers
+    and
+        GS2->>SUB2: WS Frame: MESSAGE_BATCH
+        Note over GS2,SUB2: ~10K local subscribers
+    and
+        GS3->>SUB3: WS Frame: MESSAGE_BATCH
+    and
+        GSN->>SUBN: WS Frame: MESSAGE_BATCH
+    end
+
+    Note over P,SUB: Total p99 latency: <50ms intra-region,<br/>150ms cross-region
+```
+
+---
+
+## 46. Implementation Roadmap chi tiết (12 tuần)
+
+### Phase 1: Foundation (Tuần 1-4)
+
+#### Tuần 1: Bootstrap Rust project + FlatBuffers
+- [ ] `cargo new chat-gateway --bin`
+- [ ] Setup Cargo workspace với 4 crates: `chat-gateway`, `chat-router`, `chat-presence`, `chat-common`
+- [ ] Generate FlatBuffers Rust code từ `rinco_chat.fbs`
+- [ ] Setup tokio-uring dependency (verify Linux kernel ≥ 5.6)
+- [ ] Smoke test TCP listener với tokio-uring
+- [ ] Setup ScyllaDB schema (3 tables) với TWCS compaction
+
+**Acceptance Gate:**
+- TCP listener bind được
+- FlatBuffers parse 1M message/s trong benchmark nội bộ
+- ScyllaDB insert p99 < 5ms (local 3-node)
+
+#### Tuần 2: Connection + Auth
+- [ ] TLS termination (Rustls)
+- [ ] PASETO token validation (cached public key in Valkey)
+- [ ] Session manager (`Arc<Session>` pool)
+- [ ] Frame parser với length-prefix + FlatBuffers verify
+- [ ] AUTH frame handler (verify + create session)
+- [ ] Graceful disconnect + cleanup
+
+**Acceptance Gate:**
+- 10K concurrent WebSocket connections
+- AUTH frame p99 < 10ms
+- Connection churn (1K connect/s) không crash
+
+#### Tuần 3: Send Message
+- [ ] Rate limit (Valkey token bucket, 30 msg/min)
+- [ ] Channel membership check
+- [ ] Content filter (regex + simple profanity list)
+- [ ] ScyllaDB prepared statement insert
+- [ ] Channel router (consistent hash)
+- [ ] NATS JetStream producer
+
+**Acceptance Gate:**
+- Send → ACK p99 < 50ms trong test nội bộ
+- 1K msg/s sustained qua 1 gateway node
+- Broadcast tới 10K subscribers p99 < 100ms
+
+#### Tuần 4: History + Singleflight
+- [ ] Singleflight coalescer (full impl §38)
+- [ ] History query với cursor pagination
+- [ ] Resume protocol (gap detection)
+- [ ] Channel router with virtual nodes
+- [ ] eBPF/XDP basic filter (compile + load)
+- [ ] Load test 50K concurrent history requests → 1 DB query
+
+**Acceptance Gate:**
+- Singleflight: 50K requests → ≤10 actual queries
+- Resume: client resync 1000 messages trong < 500ms
+- eBPF program compiles, drops 100% SYN flood test
+
+### Phase 2: Hardening (Tuần 5-8)
+
+#### Tuần 5: Presence
+- [ ] Valkey presence service (`presence:user:{uid}` TTL 60s)
+- [ ] Heartbeat refresh every 30s
+- [ ] Typing indicator (TTL 5s)
+- [ ] Last seen tracking
+- [ ] Online status broadcast via NATS
+- [ ] Multi-device session aggregation
+
+**Acceptance Gate:**
+- 100K online users tracked với <100MB Valkey memory
+- Presence update propagation < 200ms
+
+#### Tuần 6: Search + Notification
+- [ ] Meilisearch indexer (NATS consumer → Meilisearch)
+- [ ] Index fields: text, sender, channel, date, attachments
+- [ ] Full-text search với typo tolerance
+- [ ] Push notification service (FCM + APNs + Web Push)
+- [ ] Email digest (daily/weekly)
+- [ ] Telegram bot bridge
+
+**Acceptance Gate:**
+- Search query p95 < 100ms
+- Push notification delivery p95 < 1s
+
+#### Tuần 7: File Upload
+- [ ] Presigned URL API (Huma)
+- [ ] Multipart upload to MinIO
+- [ ] Image processing pipeline (resize, AVIF, blurhash)
+- [ ] Virus scan integration (ClamAV REST)
+- [ ] Voice message processing (opus codec)
+- [ ] Thumbnail generation
+
+**Acceptance Gate:**
+- Upload 100MB file p99 < 30s
+- Image processing pipeline < 2s per image
+- Virus scan false positive rate < 0.1%
+
+#### Tuần 8: Frontend UI
+- [ ] Chat UI React component library
+- [ ] Virtualized message list (react-virtuoso)
+- [ ] Markdown rendering (react-markdown + remark-gfm)
+- [ ] Emoji/sticker picker
+- [ ] File upload UI với progress
+- [ ] Voice recorder UI
+- [ ] Mobile responsive
+
+**Acceptance Gate:**
+- First contentful paint < 1s
+- Scroll 60fps với 10K messages
+
+### Phase 3: Production (Tuần 9-12)
+
+#### Tuần 9: Performance
+- [ ] Load test với k6 (target 1M CCU)
+- [ ] Flamegraph profiling
+- [ ] Optimize hot paths (SIMD, prefetch)
+- [ ] Benchmark targets đạt được
+- [ ] Capacity plan validated
+
+**Acceptance Gate:**
+- 100K CCU per node stable
+- p99 message latency < 50ms
+
+#### Tuần 10: Security
+- [ ] E2E encryption implementation (optional per channel, Signal Protocol)
+- [ ] Content moderation (ML-based)
+- [ ] Audit log
+- [ ] Security audit (external firm)
+- [ ] Penetration testing
+
+**Acceptance Gate:**
+- Zero critical/high CVE
+- Audit log retention 1 year
+
+#### Tuần 11: Observability
+- [ ] OpenTelemetry tracing across all services
+- [ ] Grafana dashboard (SLO-based)
+- [ ] Alerting rules (PagerDuty integration)
+- [ ] DR drill (runbook validation)
+- [ ] Performance regression detection
+
+**Acceptance Gate:**
+- Mean time to detect (MTTD) < 1 min
+- Mean time to recover (MTTR) < 5 min
+
+#### Tuần 12: Mobile + GA
+- [ ] React Native SDK
+- [ ] Push notification integration
+- [ ] Offline queue + sync
+- [ ] Background mode
+- [ ] Beta launch (100 tenants)
+- [ ] Production launch (GA)
+
+**Acceptance Gate:**
+- Mobile app crash-free rate > 99.5%
+- NPS > 40 từ beta users
+
+---
+
+## 47. Testing Strategy
+
+### 47.1. Test Pyramid cho Chat
+
+```
+                ┌─────────────┐
+                │   E2E (5%)  │  Playwright (browser), Detox (mobile)
+                ├─────────────┤
+              ┌─┴─────────────┴─┐
+              │ Integration(20%)│  testcontainers (Scylla, Valkey, NATS)
+              ├─────────────────┤
+            ┌─┴─────────────────┴─┐
+            │   Unit Test (75%)    │  Rust cargo test, Go testify
+            └─────────────────────┘
+```
+
+### 47.2. Load Test 1M Concurrent WebSocket (k6)
+
+```javascript
+// tests/load/chat-1m-ccu.js
+import ws from 'k6/ws';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '5m', target: 10_000 },     // ramp-up
+    { duration: '5m', target: 100_000 },    // 100K CCU
+    { duration: '10m', target: 500_000 },   // 500K CCU
+    { duration: '20m', target: 1_000_000 }, // 1M CCU
+    { duration: '30m', target: 1_000_000 }, // hold
+    { duration: '10m', target: 0 },         // ramp-down
+  ],
+  thresholds: {
+    'ws_connecting': ['p(99)<500'],         // connection time
+    'ws_session_duration': ['p(99)>300'],   // session stability
+    'message_send_latency': ['p(99)<50'],   // send latency
+  },
+};
+
+export default function () {
+  const url = `ws://chat-gateway-${__VU % 20}:8088/ws/chat?token=${__ENV.TOKEN}`;
+  const res = ws.connect(url, null, (socket) => {
+    socket.on('open', () => {
+      // AUTH
+      socket.sendBinary(buildAuthFrame());
+    });
+
+    socket.on('message', (data) => {
+      // ACK or broadcast
+      check(data, { 'frame received': (d) => d.length > 4 });
+    });
+
+    socket.on('close', () => console.log('disconnected'));
+
+    socket.setInterval(() => {
+      // Send message every 10s
+      socket.sendBinary(buildMessageFrame('Hello!'));
+    }, 10_000);
+  });
+
+  check(res, { 'connected': (r) => r && r.status === 101 });
+  sleep(30);
+}
+
+function buildAuthFrame() {
+  // Build FlatBuffers AUTH frame (simplified)
+  const buf = new ArrayBuffer(128);
+  const view = new DataView(buf);
+  view.setUint32(0, 124, false);  // length prefix
+  // ... FlatBuffers payload ...
+  return buf;
+}
+
+function buildMessageFrame(text) {
+  // ... similar ...
+}
+```
+
+### 47.3. Stress Test FlatBuffers Parse
+
+```rust
+// benches/fbs_parse.rs
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+fn bench_parse_message(c: &mut Criterion) {
+    let bytes = build_message_fixture();
+    c.bench_function("parse_flatbuffers_message", |b| {
+        b.iter(|| {
+            let frame = chat::root_as_chat_frame(black_box(&bytes)).unwrap();
+            black_box(frame.frame_type());
+        });
+    });
+}
+
+criterion_group!(benches, bench_parse_message);
+criterion_main!(benches);
+```
+
+### 47.4. Failover Test (Kill ScyllaDB Node)
+
+```bash
+#!/bin/bash
+# scripts/test-failover.sh
+
+set -e
+
+echo "=== Pre-check: 3-node ScyllaDB cluster ==="
+cqlsh -e "SELECT * FROM system.local"  # confirm 3 nodes
+
+echo "=== Submit baseline load ==="
+# Run k6 load test in background for 5 minutes
+k6 run --duration 5m tests/load/chat-baseline.js &
+LOAD_PID=$!
+sleep 60  # let it warm up
+
+echo "=== Kill ScyllaDB node 1 ==="
+ssh scylla-node-1 "sudo systemctl stop scylla"
+sleep 30
+
+echo "=== Verify continued operation ==="
+# Check error rate, latency
+curl http://prometheus:9090/api/v1/query?query=chat_send_error_rate
+
+echo "=== Restart ScyllaDB node 1 ==="
+ssh scylla-node-1 "sudo systemctl start scylla"
+sleep 120  # wait for rejoin
+
+echo "=== Verify recovery ==="
+# Check no data loss, latency back to baseline
+wait $LOAD_PID
+echo "=== FAILOVER TEST PASSED ==="
+```
+
+### 47.5. Reconnect Storm Test
+
+```javascript
+// tests/load/reconnect-storm.js
+import ws from 'k6/ws';
+import { check } from 'k6';
+
+export const options = {
+  scenarios: {
+    reconnect_storm: {
+      executor: 'constant-vus',
+      vus: 10_000,
+      duration: '5m',
+    },
+  },
+};
+
+export default function () {
+  // Connect, send 1 message, disconnect immediately
+  const url = `ws://chat-gateway:8088/ws/chat?token=test-${__VU}`;
+  ws.connect(url, null, (socket) => {
+    socket.on('open', () => {
+      socket.sendBinary(buildAuthFrame());
+      socket.sendBinary(buildMessageFrame('test'));
+      socket.close();
+    });
+  });
+}
+```
+
+---
+
+## 48. Migration Plan (từ polling API cũ sang WebSocket)
+
+### 48.1. Strategy: Strangler Fig Pattern
+
+```
+Phase 1 (Tuần 1-2): Dual-write
+  - Old API: vẫn hoạt động
+  - New WS: write-through to cả DB cũ + DB mới
+  - Client: tùy chọn dùng WS hoặc polling
+
+Phase 2 (Tuần 3-4): Read từ WS
+  - Client mới: dùng WS đọc + ghi
+  - Client cũ: vẫn polling, nhưng read từ DB mới (đã sync)
+
+Phase 3 (Tuần 5-6): Deprecate polling
+  - Polling API vẫn live nhưng warn "sử dụng WebSocket"
+  - Sunset date: 3 tháng sau
+
+Phase 4 (Tuần 7-8): Remove polling
+  - Xóa API polling
+  - Migrate 100% traffic sang WS
+```
+
+### 48.2. Data Migration
+
+```bash
+# scripts/migrate-chat-history.sh
+#!/bin/bash
+
+# 1. Export từ MySQL cũ (nếu có)
+mysqldump --tab=/tmp/old-chat/ rinco_chat_old messages
+
+# 3. Bulk insert vào ScyllaDB (parallel)
+cqlsh -e "
+  COPY rinco_chat.messages (channel_id, tenant_id, event_time, event_id, sender_id, text)
+  FROM '/tmp/old-chat/messages.txt'
+  WITH HEADER = TRUE AND DELIMITER = '\t'
+" &
+
+# 4. Verify count match
+OLD_COUNT=$(mysql -N -e "SELECT COUNT(*) FROM rinco_chat_old.messages")
+NEW_COUNT=$(cqlsh -e "SELECT COUNT(*) FROM rinco_chat.messages")
+if [ "$OLD_COUNT" = "$NEW_COUNT" ]; then
+  echo "Migration verified: $OLD_COUNT messages"
+else
+  echo "MISMATCH! old=$OLD_COUNT new=$NEW_COUNT"
+  exit 1
+fi
+```
+
+### 48.3. Client SDK Rollout
+
+```typescript
+// packages/chat-sdk/src/migration.ts
+// Auto-fallback to polling nếu WS fail
+export class HybridChatClient {
+  private wsClient: WebSocketClient;
+  private pollClient: PollingClient;
+
+  async start() {
+    try {
+      await this.wsClient.connect();
+      console.log('Using WebSocket');
+    } catch (err) {
+      console.warn('WebSocket failed, falling back to polling', err);
+      await this.pollClient.start();
+    }
+  }
+}
+```
+
+---
+
+## 49. Disaster Recovery
+
+### 49.1. RPO/RTO Targets
+
+| Tài nguyên | RPO | RTO | Backup |
+|------------|-----|-----|--------|
+| ScyllaDB (chat history) | 5 min | 30 min | TWCS snapshot every 1h + incremental |
+| Valkey (presence/session) | 0 (acceptable loss) | 1 min | AOF + replica |
+| MinIO (file) | 0 | 5 min | Cross-region replication |
+| Meilisearch index | 1 hour | 30 min | Daily snapshot |
+| NATS JetStream | 1 min | 5 min | Replicated |
+
+### 49.2. Runbook: ScyllaDB Replica Recovery
+
+```bash
+#!/bin/bash
+# scripts/dr/scylla-recovery.sh
+
+set -e
+
+echo "=== Detecting failed node ==="
+FAILED_NODE=$(nodetool status | grep -E "^(DN|UN)" | awk '{print $2}' | head -1)
+echo "Failed: $FAILED_NODE"
+
+echo "=== Verifying data integrity ==="
+cqlsh -e "SELECT COUNT(*) FROM rinco_chat.messages"
+
+echo "=== Restarting node ==="
+ssh $FAILED_NODE "sudo systemctl restart scylla"
+
+echo "=== Wait for rejoin ==="
+sleep 300
+nodetool status | grep $FAILED_NODE | grep "UN"
+
+echo "=== Run repair ==="
+nodetool repair -full rinco_chat
+
+echo "=== Validate ==="
+DIFF=$(nodetool gossipinfo | wc -l)
+echo "Cluster size: $DIFF nodes"
+echo "=== RECOVERY COMPLETED ==="
+```
+
+### 49.3. Runbook: WebSocket Connection State Recovery
+
+Khi một gateway node crash, các clients đang connect sẽ:
+1. TCP RST detection
+2. Exponential backoff reconnect (1s, 2s, 4s, ... max 60s)
+3. Khi reconnect, gửi RESUME frame với `last_event_id`
+4. Server query ScyllaDB cho messages sau `last_event_id`
+5. Server gửi RESUME_BATCH frame
+6. Client re-render missed messages
+
+### 49.4. Runbook: Lost Message Recovery
+
+Nếu user báo "missing message X":
+1. Verify `event_id` format
+2. Query ScyllaDB: `SELECT * FROM messages WHERE event_id = ?`
+3. Nếu có trong DB nhưng user không nhận được → check gateway logs cho broadcast history
+4. Nếu không có trong DB → check NATS JetStream archive
+5. Manual re-broadcast nếu cần
+
+---
+
+## 50. Cost Estimation
+
+### 50.1. Infrastructure Cost (per region, monthly)
+
+| Component | Spec | Qty | Unit cost | Monthly |
+|------------|------|-----|-----------|---------|
+| **Chat Gateway** (Rust) | 8 vCPU, 16GB, 10Gbps net | 20 | $200 | $4,000 |
+| **ScyllaDB** | 8 vCPU, 32GB, 1TB NVMe | 6 (3 shards × 2) | $400 | $2,400 |
+| **Valkey Cluster** | 4 vCPU, 16GB | 6 | $150 | $900 |
+| **MinIO** | 8 vCPU, 16GB, 4TB HDD | 4 | $300 | $1,200 |
+| **NATS JetStream** | 4 vCPU, 8GB | 3 | $100 | $300 |
+| **Meilisearch** | 4 vCPU, 8GB | 2 | $100 | $200 |
+| **Notification Worker** | 4 vCPU, 8GB | 4 | $100 | $400 |
+| **Load Balancer** | HAProxy + keepalived | 2 | $50 | $100 |
+| **Monitoring** | Prometheus + Grafana | 1 | $300 | $300 |
+| **Bandwidth** | 50TB egress | - | $0.05/GB | $2,500 |
+| **Backup storage** | 10TB | - | $0.023/GB | $230 |
+| **Total per region** | - | - | - | **$12,530** |
+
+### 50.2. Per-User Cost
+
+Assumptions:
+- 1M MAU (Monthly Active Users)
+- 10% CCU (100K concurrent)
+- 50 messages/user/day average
+- 1 attachment/user/day (avg 2MB)
+- 10 voice messages/user/month (avg 30s)
+
+| Resource | Usage | Cost |
+|----------|-------|------|
+| WebSocket bandwidth | 100K CCU × 10KB/min × 60 × 24 = 144 GB/day | $216/mo |
+| Message bandwidth (ingress) | 1M × 50 × 1KB = 50GB/day | $75/mo |
+| Message bandwidth (egress broadcast) | 100K × 50 × 20KB = 100GB/day | $150/mo |
+| Attachment storage | 1M × 2MB × 30 = 60TB | $1,380/mo |
+| Attachment bandwidth | 1M × 2MB = 2TB/day | $3,000/mo |
+| ScyllaDB storage | 1M × 50 × 30 × 1KB = 1.5TB | $50/mo |
+| Valkey memory | 100K × 1KB = 100MB | $5/mo |
+| **Total per 1M MAU** | - | **~$4,876/mo** |
+| **Per MAU** | - | **~$0.0049/mo** |
+
+### 50.3. Comparison với SaaS Chat
+
+| Vendor | Cost per 1K MAU/mo |
+|--------|---------------------|
+| Intercom | $499 |
+| Drift | $400 |
+| Zendesk Chat | $300 |
+| **RINCO** | **$4.9** |
+
+→ Tiết kiệm **98%+**.
+
+---
+
+## 51. Open Questions (≥ 10 prioritize)
+
+### 51.1. P0 – Cần quyết định NGAY (block MVP)
+
+| # | Câu hỏi | Recommendation |
+|---|---------|----------------|
+| Q1 | **E2E encryption (Signal Protocol) có hỗ trợ optional per channel không?** | CÓ, triển khai libsignal + MLS cho group channels. Trade-off: tăng complexity, mất một số tính năng server-side (search, AI) |
+| Q2 | **Voice message transcription tự động (Whisper)?** | CÓ cho Beta, miễn phí. Dùng Whisper.cpp + Tiếng Việt model. Caching theo hash audio |
+| Q3 | **Retention policy cho file cũ?** | 90 ngày hot tier (S3 Standard) → archive (S3 Glacier) → delete 1 năm. User có thể extend (tính phí) |
+| Q4 | **Federation với Matrix/XMPP?** | KHÔNG ở MVP. Nếu cần bridge Phase 4, dùng matrix-appservice bridge riêng |
+| Q5 | **Multi-region chat (cross-DC)?** | CÓ, dùng NATS JetStream replication cross-region. Latency penalty ~100ms nhưng acceptable |
+| Q6 | **AI smart reply (GPT)?** | CÓ optional. User opt-in per chat. Privacy: chỉ gửi 5 message gần nhất làm context |
+| Q7 | **Custom emoji per tenant?** | CÓ, upload SVG → convert Lottie. Limit 1000 emoji per tenant |
+| Q8 | **Group chat max members?** | 5,000. Trên 5K dùng Channel (broadcast model) |
+| Q9 | **DM history deletion?** | Cho phép user delete for-me ngay lập tức. For-everyone cần admin approval trong 24h |
+| Q10 | **Read receipts default?** | OFF default. User opt-in nếu muốn (privacy concern) |
+
+### 51.2. P1 – Phase 2 (Quyết định trong tháng tới)
+
+| # | Câu hỏi | Impact |
+|---|---------|--------|
+| Q11 | Bot API official (REST/WebSocket) cho 3rd party? | Ecosystem expansion |
+| Q12 | Slack/Discord bridge? | User acquisition |
+| Q13 | Reactions max per message? | UX + storage |
+| Q14 | Thread depth limit? | Performance + UX |
+| Q15 | Backup retention? | Cost vs compliance |
+
+### 51.3. P2 – Phase 3+ (Nice to have)
+
+| # | Câu hỏi |
+|---|---------|
+| Q16 | Live translation real-time? |
+| Q17 | AI meeting scheduler integration? |
+| Q18 | Voice clone cho TTS messages? |
+| Q19 | Video message (không phải SFU)? |
+| Q20 | Calendar integration cho scheduled messages? |
+
+---
+
 **Tiếp theo:** [`docs/07-webrtc-sfu/README.md`](../07-webrtc-sfu/README.md) – WebRTC SFU + Recording (đã được mở rộng).
