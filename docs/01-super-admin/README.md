@@ -7,6 +7,7 @@
 ---
 
 ## Mục lục
+
 1. [Mục tiêu & Nguyên tắc](#1-mục-tiêu--nguyên-tắc)
 2. [Kiến trúc](#2-kiến-trúc)
 3. [Phân quyền & RBAC](#3-phân-quyền--rbac)
@@ -17,6 +18,18 @@
 8. [Realtime Pipeline](#8-realtime-pipeline)
 9. [Observability cho Admin](#9-observability-cho-admin)
 10. [Bảo mật Dark Admin](#10-bảo-mật-dark-admin)
+
+**Mục lục mở rộng (phần bổ sung – v1.1)**
+
+11. [Audit – Đánh giá nội dung hiện tại](#11-audit--đánh-giá-nội-dung-hiện-tại)
+12. [Edge Cases & Error Scenarios chi tiết](#12-edge-cases--error-scenarios-chi-tiết)
+13. [Code Examples chi tiết](#13-code-examples-chi-tiết)
+14. [Implementation Roadmap chi tiết](#14-implementation-roadmap-chi-tiết)
+15. [Testing Strategy](#15-testing-strategy)
+16. [Migration Plan](#16-migration-plan)
+17. [Disaster Recovery](#17-disaster-recovery)
+18. [Cost Estimation](#18-cost-estimation)
+19. [Open Questions / Cần user xác nhận](#19-open-questions--cần-user-xác-nhận)
 
 ---
 
@@ -374,6 +387,57 @@ CREATE TABLE quorum_requests (
 );
 ```
 
+### 5.8. Bảng `notification_templates` (MỚI – v1.1)
+```sql
+CREATE TABLE notification_templates (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT UNIQUE NOT NULL,            -- 'maintenance.scheduled', 'billing.invoice_failed'
+  category TEXT NOT NULL CHECK (category IN ('CRITICAL','WARNING','INFO','MARKETING')),
+  channel TEXT NOT NULL CHECK (channel IN ('IN_APP','EMAIL','TELEGRAM','PUSH','SMS')),
+  subject TEXT NOT NULL,
+  body_template TEXT NOT NULL,          -- Go text/template
+  variables JSONB NOT NULL DEFAULT '[]', -- Schema: [{name, type, required}]
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX idx_notification_templates_code ON notification_templates(code);
+```
+
+### 5.9. Bảng `notification_dispatch_log` (MỚI – v1.1)
+```sql
+CREATE TABLE notification_dispatch_log (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id UUID REFERENCES notification_templates(id),
+  recipient_type TEXT NOT NULL CHECK (recipient_type IN ('SUPER_ADMIN','TENANT','USER')),
+  recipient_id UUID,
+  channel TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('PENDING','SENT','FAILED','BOUNCED')),
+  error_message TEXT,
+  trace_id UUID,
+  sent_at TIMESTAMPTZ DEFAULT now(),
+  delivered_at TIMESTAMPTZ,
+  opened_at TIMESTAMPTZ,
+  clicked_at TIMESTAMPTZ
+);
+CREATE INDEX idx_dispatch_recipient ON notification_dispatch_log(recipient_type, recipient_id, sent_at DESC);
+```
+
+### 5.10. Bảng `impersonation_sessions` (MỚI – v1.1)
+```sql
+CREATE TABLE impersonation_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  admin_id UUID REFERENCES super_admins(id),
+  tenant_id UUID REFERENCES tenants(id),
+  reason TEXT NOT NULL,                -- Lý do impersonation (audit)
+  started_at TIMESTAMPTZ DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL,     -- Mặc định +24h
+  ended_at TIMESTAMPTZ,
+  actions_performed JSONB DEFAULT '[]' -- Mọi action trong session
+);
+CREATE INDEX idx_impers_admin ON impersonation_sessions(admin_id);
+CREATE INDEX idx_impers_tenant ON impersonation_sessions(tenant_id);
+```
+
 ---
 
 ## 6. API Surface
@@ -438,6 +502,19 @@ GET    /api/admin/v1/billing/usage
 - `/ws/admin/realtime` – Server-Sent Events cho dashboard.
 - `/ws/admin/logs` – Live tail logs.
 
+### 6.3. Notification API (MỚI – v1.1)
+```
+GET    /api/admin/v1/notifications/templates
+POST   /api/admin/v1/notifications/templates
+PATCH  /api/admin/v1/notifications/templates/:id
+DELETE /api/admin/v1/notifications/templates/:id
+
+POST   /api/admin/v1/notifications/broadcast      # Gửi tới tất cả
+POST   /api/admin/v1/notifications/targeted        # Gửi tới role/region
+GET    /api/admin/v1/notifications/dispatch-log   # Tracking
+GET    /api/admin/v1/notifications/stats           # Open/click rates
+```
+
 ---
 
 ## 7. UI/UX & Components
@@ -499,6 +576,7 @@ GET    /api/admin/v1/billing/usage
 13. **Resources** – Cluster + Nodes + Services.
 14. **System** – Cluster health + Mesh status.
 15. **Settings** – Global config, Branding, Notifications.
+16. **Notification Center** – In-app notifications + Templates (MỚI – v1.1).
 
 ---
 
@@ -590,7 +668,922 @@ GET /admin/health
 
 ---
 
-## Phụ lục: Acceptance Criteria
+# PHẦN MỞ RỘNG (v1.1) – AUDIT, CODE EXAMPLES, EDGE CASES
+
+## 11. Audit – Đánh giá nội dung hiện tại
+
+### 11.1. Phần đã đủ chi tiết ✓
+
+| Mục | Nội dung | Mức đủ |
+|-----|---------|--------|
+| 4 – 130 tính năng | Chia rõ 9 nhóm, mỗi nhóm ≥ 10 tính năng | ✓ |
+| 5 – Database Schema | 7 bảng + 2 bảng bổ sung | ✓ |
+| 6 – API Surface | REST + WebSocket/SSE + Connect-RPC | ✓ |
+| 7 – UI/UX Components | 12 components được định nghĩa | ✓ |
+| 10 – Bảo mật Dark Admin | SPA + YubiKey + Audit | ✓ |
+
+### 11.2. Phần còn thiếu ⚠
+
+| Mục | Vấn đề | Hướng bổ sung |
+|-----|--------|---------------|
+| 5.5 – audit_log | Lưu ScyllaDB nhưng chưa có RLS/partition key đầy đủ | Bổ sung retention policy |
+| 6 – API | Thiếu error response format chuẩn | Bổ sung envelope chuẩn |
+| 7.3 – Components | Thiếu `NotificationComposer` (4.9 mới thêm) | Bổ sung vào UI |
+| 8.3 – Backpressure | "Drop oldest" có thể mất alert P0 | Bổ sung priority queue |
+| 9 – Observability | Chưa có SLO/SLA dashboard riêng | Bổ sung §9.3 SLO Dashboard |
+| 10 – Dark Admin | Chưa mô tả rõ key rotation mechanism | Bổ sung key ceremony |
+| – Tổng thể | Thiếu **team ownership matrix** | Bổ sung §20 |
+| – Tổng thể | Thiếu **Disaster Recovery** chi tiết | Bổ sung §17 |
+
+### 11.3. Mâu thuẫn nội bộ ✗
+
+| Vị trí | Mâu thuẫn |
+|--------|-----------|
+| 6 – API §6.1 (admin) | Có route `/api/admin/v1/*` nhưng §2.1 sơ đồ chỉ có 1 cổng 8891 → cần làm rõ ingress |
+| 5.3 – tenants.status | Có `DELETING` nhưng §4.1 (item 4) lại ghi "hard delete" → không khớp |
+| 4.7 – Billing | "Stripe, VNPay, Momo" nhưng §3 không có FINANCE_ADMIN permission cho việc config payment provider |
+| 10.2 – Auth Flow | Bước "1. Mở SPA Tool" chưa nói rõ SPA tool chạy ở đâu (admin laptop?) |
+
+### 11.4. Phần cần code example cụ thể 💡
+
+| Mục | Cần code cho |
+|-----|--------------|
+| 2 – Kiến trúc | `admin-gateway` Go service skeleton |
+| 5 – Schema | sqlc.yaml + migration file |
+| 6 – API | Echo handler + Huma schema cho login flow |
+| 8 – Realtime | SSE handler + NATS consumer |
+| 10 – Dark Admin | WebAuthn registration + YubiKey challenge |
+
+## 12. Edge Cases & Error Scenarios chi tiết
+
+### 12.1. Edge Cases – Authentication
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| A1 | Admin quên password | Reset flow cần YubiKey | Force WebAuthn re-register |
+| A2 | YubiKey mất → backup YubiKey | Khi login fail | Allow dùng backup key (đã đăng ký) |
+| A3 | YubiKey cả 2 mất | Không vào được | Recovery key dạng paper (sinh lúc setup) |
+| A4 | Brute force WebAuthn challenge | 5 lần fail | Lock account 30 phút + alert |
+| A5 | YubiKey device lạ (không đăng ký) | WebAuthn reject | Log + alert + lock |
+| A6 | PASETO token bị replay | Signature + nonce | Verify timestamp window 5min |
+| A7 | Concurrent login 2 thiết bị | Session count > N | Force logout session cũ nhất |
+| A8 | Admin login từ IP bất thường | Geo anomaly | Email + Telegram alert |
+| A9 | WireGuard key bị compromise | Handshake pattern detect | Force rekey tất cả node |
+| A10 | SPA packet bị sniff (khó) | Challenge-response one-time | Reject, log |
+
+### 12.2. Edge Cases – Tenant Management
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| T1 | Tạo tenant với slug trùng | UNIQUE constraint → 409 Conflict |
+| T2 | Xóa tenant có hơn 1000 user | Cascade delete background job + grace period |
+| T3 | Tenant bị khóa nhưng WebSocket connections vẫn live | Force disconnect tại gateway + 30s timeout |
+| T4 | Move tenant từ cluster A → B mà fail giữa chừng | Rollback + retry, idempotency_key |
+| T5 | Admin clone tenant nhưng DB size 100GB | Background async job + progress UI |
+| T6 | 2 admin cùng edit tenant plan | Optimistic locking với `version` column |
+| T7 | Tenant có hơn 100 domains | List query phải paginate |
+| T8 | SSL cert renewal fail 3 lần liên tiếp | Alert + fallback cert (manual upload) |
+| T9 | Custom domain chưa verify mà user truy cập | 521 SSL handshake fail + troubleshooting page |
+| T10 | Tenant bị FROZEN mà vẫn có scheduled job | Cancel all NATS subscriptions |
+
+### 12.3. Edge Cases – Realtime Dashboard
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| R1 | SSE connection bị drop giữa chừng | Client auto-reconnect với Last-Event-ID |
+| R2 | Quá nhiều admin connect cùng lúc | Limit 100 concurrent, dùng pub/sub backpressure |
+| R3 | ClickHouse chậm → dashboard lag | Cache metric trong Valkey 1s |
+| R4 | Grafana query timeout | Materialized view refresh mỗi 30s |
+| R5 | Client subscribe filter lỗi | Default subscribe tất cả + log warning |
+| R6 | Disk full trên admin node | Auto cleanup old logs + alert |
+| R7 | Admin mở 10 tab cùng lúc | Tối đa 3 session active, các tab sau bị kick |
+| R8 | Server time skew giữa các metric service | NTP enforce, log warning nếu skew > 1s |
+
+### 12.4. Edge Cases – Quorum & Multi-Party
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| Q1 | Quorum request hết hạn giữa 2 admin đang ký | Auto cancel, log |
+| Q2 | 2 admin ký cùng lúc (race condition) | Atomic update collected_signatures |
+| Q3 | Admin tạo quorum cho chính mình | Block, require initiator ≠ signer |
+| Q4 | YubiKey fail khi đang ký quorum | Cho phép retry trong 5 phút |
+| Q5 | Quorum approved nhưng action fail | Auto-rollback + notify admin |
+| Q6 | Audit log của quorum bị tamper | ScyllaDB Merkle hash chain (immutable log) |
+
+### 12.5. Edge Cases – Notification System (MỚI – v1.1)
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| N1 | Telegram bot bị rate-limit | Queue lại, retry với exponential backoff |
+| N2 | Email bị bounce (invalid address) | Auto disable notification cho user đó |
+| N3 | SMS provider (Twilio) downtime | Fallback qua VNPay SMS gateway |
+| N4 | Thông báo P0 nhưng admin offline | SMS + phone call (PagerDuty) |
+| N5 | Thông báo marketing nhưng user quiet hours | Defer sang 7:00 sáng hôm sau |
+| N6 | Template biến thiếu (variable không match) | Send "unknown" placeholder + alert dev |
+| N7 | Notification queue quá tải (>1M pending) | Bulk thành batch digest (1 email/ngày) |
+| N8 | A/B test 2 variant mà data skew | Auto-revert về variant A |
+| N9 | User unsubscribe khỏi category | Honor immediately |
+| N10 | Tracking pixel block bởi email client | Open rate ≈ 20% thực → adjust metric |
+
+### 12.6. Edge Cases – Impersonation
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| I1 | Admin impersonate xong quên end session | 24h hard expiry, force logout |
+| I2 | Admin impersonate nhưng mất mạng | Session persist, khi reconnect vẫn impersonate |
+| I3 | Trong lúc impersonate, có 2 admin cùng impersonate cùng tenant | Cho phép 2 session parallel (audit đầy đủ) |
+| I4 | Impersonate để xóa data, sau đó khiếu nại | Audit log đầy đủ lưu ScyllaDB |
+| I5 | Support admin impersonate vượt quyền | RBAC vẫn áp dụng + alert SECURITY_ADMIN |
+
+## 13. Code Examples chi tiết
+
+### 13.1. Service `admin-gateway` – Skeleton (Go + Echo + Huma)
+
+```
+services/admin-gateway/
+├── cmd/
+│   └── main.go
+├── internal/
+│   ├── api/
+│   │   ├── auth.go
+│   │   ├── tenants.go
+│   │   ├── dashboard.go
+│   │   └── audit.go
+│   ├── domain/
+│   │   ├── admin.go
+│   │   ├── tenant.go
+│   │   └── audit.go
+│   ├── repository/
+│   │   ├── admin_repo.go
+│   │   ├── tenant_repo.go
+│   │   └── audit_repo.go
+│   ├── service/
+│   │   ├── auth_service.go
+│   │   └── tenant_service.go
+│   ├── middleware/
+│   │   ├── trace.go
+│   │   ├── auth.go
+│   │   └── ratelimit.go
+│   └── config/
+│       └── config.go
+├── migrations/
+├── Dockerfile
+└── go.mod
+```
+
+**main.go:**
+```go
+package main
+
+import (
+    "context"
+    "log/slog"
+    "net/http"
+    "os"
+    "os/signal"
+    "syscall"
+    "time"
+
+    "github.com/danielgtaylor/huma/v2"
+    "github.com/danielgtaylor/huma/v2/adapters/echoadaptor"
+    "github.com/labstack/echo/v4"
+    "github.com/labstack/echo/v4/middleware"
+
+    "rinco/admin-gateway/internal/api"
+    "rinco/admin-gateway/internal/config"
+    "rinco/admin-gateway/internal/middleware/trace"
+)
+
+func main() {
+    cfg := config.Load()
+    logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+    slog.SetDefault(logger)
+
+    e := echo.New()
+    e.HideBanner = true
+
+    // Middleware
+    e.Use(trace.TraceMiddleware())
+    e.Use(middleware.Recover())
+    e.Use(middleware.RequestID())
+
+    // Health endpoints
+    e.GET("/health/live", func(c echo.Context) error { return c.JSON(200, map[string]string{"status": "ok"}) })
+    e.GET("/health/ready", api.ReadinessHandler)
+
+    // Huma API
+    api := huma.NewAPI(echoadaptor.New(e, huma.DefaultConfig("RINCO Admin API", "1.0.0")))
+    api.UseMiddleware(trace.HumaMiddleware())
+
+    // Register endpoints
+    api.RegisterRoutes()
+
+    srv := &http.Server{
+        Addr:              cfg.ListenAddr, // ":8891"
+        Handler:           e,
+        ReadHeaderTimeout: 5 * time.Second,
+    }
+
+    // Graceful shutdown
+    go func() {
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+            slog.Error("server failed", "err", err)
+            os.Exit(1)
+        }
+    }()
+
+    slog.Info("admin-gateway started", "addr", cfg.ListenAddr)
+
+    quit := make(chan os.Signal, 1)
+    signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+    <-quit
+
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+    if err := srv.Shutdown(ctx); err != nil {
+        slog.Error("shutdown failed", "err", err)
+    }
+}
+```
+
+### 13.2. WebAuthn Login Flow
+
+**auth_service.go (Go):**
+```go
+package service
+
+import (
+    "context"
+    "crypto/rand"
+    "encoding/base64"
+    "errors"
+    "time"
+
+    "github.com/go-webauthn/webauthn/protocol"
+    "github.com/go-webauthn/webauthn/webauthn"
+    "github.com/google/uuid"
+    "github.com/o1egl/paseto"
+
+    "rinco/admin-gateway/internal/domain"
+)
+
+type AuthService struct {
+    repo       AdminRepository
+    webauthn   *webauthn.WebAuthn
+    pasetoKey  paseto.V4SymmetricKey
+    valkey     RedisClient
+    challengeCache map[string]ChallengeData // In-memory cache với TTL
+}
+
+type ChallengeData struct {
+    Challenge   string
+    UserID      string
+    ExpiresAt   time.Time
+}
+
+func (s *AuthService) BeginWebAuthnLogin(ctx context.Context, email string) (*protocol.CredentialAssertion, error) {
+    admin, err := s.repo.FindByEmail(ctx, email)
+    if err != nil {
+        return nil, ErrInvalidCredentials // Generic error để chống enumeration
+    }
+    if admin.Status != "ACTIVE" {
+        return nil, ErrAccountDisabled
+    }
+    if admin.FailedLoginCount >= 5 {
+        if admin.LockedUntil.After(time.Now()) {
+            return nil, ErrAccountLocked
+        }
+    }
+
+    options, sessionData, err := s.webauthn.BeginLogin(admin)
+    if err != nil {
+        return nil, err
+    }
+
+    // Cache challenge với TTL 5 phút
+    s.challengeCache[admin.ID.String()] = ChallengeData{
+        Challenge: sessionData.Challenge,
+        UserID:    admin.ID.String(),
+        ExpiresAt: time.Now().Add(5 * time.Minute),
+    }
+
+    return options, nil
+}
+
+func (s *AuthService) FinishWebAuthnLogin(ctx context.Context, email string, response *protocol.ParsedCredentialAssertionData) (string, error) {
+    admin, err := s.repo.FindByEmail(ctx, email)
+    if err != nil {
+        return nil, ErrInvalidCredentials
+    }
+
+    cached, ok := s.challengeCache[admin.ID.String()]
+    if !ok || cached.ExpiresAt.Before(time.Now()) {
+        return nil, ErrChallengeExpired
+    }
+    delete(s.challengeCache, admin.ID.String())
+
+    credential, err := s.webauthn.ValidateLogin(admin, *cached, response)
+    if err != nil {
+        // Increment failed count
+        admin.FailedLoginCount++
+        if admin.FailedLoginCount >= 5 {
+            admin.LockedUntil = time.Now().Add(30 * time.Minute)
+        }
+        s.repo.Update(ctx, admin)
+
+        // Alert SECURITY_ADMIN
+        s.notifyFailedLogin(ctx, admin, err)
+
+        return "", ErrInvalidCredentials
+    }
+
+    // Update counter
+    for _, cred := range admin.Credentials {
+        if string(cred.CredentialID) == string(credential.ID) {
+            cred.Counter = credential.Authenticator.Count
+        }
+    }
+    admin.FailedLoginCount = 0
+    admin.LastLoginAt = time.Now()
+    s.repo.Update(ctx, admin)
+
+    // Issue PASETO token
+    token := s.issuePASETO(admin)
+
+    // Audit
+    s.auditLog.Record(ctx, domain.AuditEntry{
+        ActorID:   admin.ID,
+        Action:    "admin.login",
+        IPAddress: getIPFromContext(ctx),
+        TraceID:   getTraceID(ctx),
+    })
+
+    return token, nil
+}
+
+func (s *AuthService) issuePASETO(admin *domain.SuperAdmin) (string, error) {
+    token := paseto.NewToken()
+    token.SetIssuer("rinco-admin")
+    token.SetSubject(admin.ID.String())
+    token.SetExpiration(time.Now().Add(8 * time.Hour))
+    token.Set("email", admin.Email)
+    token.Set("role", admin.Role)
+
+    encrypted := token.Encrypt(s.pasetoKey)
+    return encrypted, nil
+}
+```
+
+### 13.3. Tenant CRUD với Audit Log (sqlc + Ent hybrid)
+
+**tenants.go:**
+```go
+package api
+
+import (
+    "context"
+    "net/http"
+    "time"
+
+    "github.com/danielgtaylor/huma/v2"
+    "github.com/google/uuid"
+
+    "rinco/admin-gateway/internal/domain"
+    "rinco/admin-gateway/internal/service"
+)
+
+type CreateTenantRequest struct {
+    Body struct {
+        Name         string `json:"name" minLength:"3" maxLength:"100" required:"true"`
+        Slug         string `json:"slug" pattern:"^[a-z0-9-]{3,30}$" required:"true"`
+        Plan         string `json:"plan" enum:"FREE,PRO,BUSINESS,ENTERPRISE" required:"true"`
+        Region       string `json:"region" required:"true"`
+        Template     string `json:"template" default:"default"`
+        AdminEmail   string `json:"admin_email" format:"email" required:"true"`
+    }
+}
+
+type CreateTenantResponse struct {
+    Body struct {
+        ID         string    `json:"id"`
+        Slug       string    `json:"slug"`
+        CreatedAt  time.Time `json:"created_at"`
+        AdminURL   string    `json:"admin_url"`
+    }
+}
+
+func (h *Handler) CreateTenant(ctx context.Context, input *CreateTenantRequest) (*CreateTenantResponse, error) {
+    actor := getActorFromContext(ctx) // From middleware
+
+    // 1. Validate slug uniqueness
+    exists, err := h.tenantSvc.ExistsBySlug(ctx, input.Body.Slug)
+    if err != nil {
+        return nil, huma.Error500InternalServerError("failed to check slug", err)
+    }
+    if exists {
+        return nil, huma.Error409Conflict("slug already exists", nil)
+    }
+
+    // 2. Create tenant transaction
+    tenant, adminUser, err := h.tenantSvc.CreateWithAdmin(ctx, domain.TenantCreateInput{
+        Name:       input.Body.Name,
+        Slug:       input.Body.Slug,
+        Plan:       input.Body.Plan,
+        Region:     input.Body.Region,
+        Template:   input.Body.Template,
+        AdminEmail: input.Body.AdminEmail,
+        ActorID:    actor.ID,
+    })
+    if err != nil {
+        return nil, huma.Error500InternalServerError("failed to create tenant", err)
+    }
+
+    // 3. Audit log
+    h.auditSvc.Record(ctx, domain.AuditEntry{
+        TraceID:    getTraceID(ctx),
+        ActorID:    actor.ID,
+        ActorEmail: actor.Email,
+        TenantID:   tenant.ID,
+        Action:     "tenant.create",
+        TargetType: "tenant",
+        TargetID:   tenant.ID,
+        Payload: map[string]any{
+            "plan":   tenant.Plan,
+            "region": tenant.Region,
+        },
+        IPAddress: getIPFromContext(ctx),
+    })
+
+    return &CreateTenantResponse{
+        Body: struct {
+            ID         string    `json:"id"`
+            Slug       string    `json:"slug"`
+            CreatedAt  time.Time `json:"created_at"`
+            AdminURL   string    `json:"admin_url"`
+        }{
+            ID:        tenant.ID.String(),
+            Slug:      tenant.Slug,
+            CreatedAt: tenant.CreatedAt,
+            AdminURL:  fmt.Sprintf("https://%s.hanghoaphaisinh.net", tenant.Slug),
+        },
+    }, nil
+}
+```
+
+### 13.4. SSE Realtime Dashboard
+
+**dashboard.go:**
+```go
+package api
+
+import (
+    "context"
+    "encoding/json"
+    "net/http"
+    "time"
+
+    "github.com/labstack/echo/v4"
+    "github.com/nats-io/nats.go"
+
+    "rinco/admin-gateway/internal/metrics"
+)
+
+type DashboardEvent struct {
+    Type    string          `json:"type"`
+    Payload json.RawMessage `json:"payload"`
+    TS      int64           `json:"ts"`
+}
+
+func (h *Handler) StreamDashboard(c echo.Context) error {
+    ctx := c.Request().Context()
+
+    // Set SSE headers
+    c.Response().Header().Set("Content-Type", "text/event-stream")
+    c.Response().Header().Set("Cache-Control", "no-cache")
+    c.Response().Header().Set("Connection", "keep-alive")
+    c.Response().Header().Set("X-Accel-Buffering", "no")
+
+    // Subscribe to NATS topic
+    sub, err := h.nats.Subscribe("admin.metrics.>", func(msg *nats.Msg) {
+        event := parseMetricEvent(msg.Data)
+        data, _ := json.Marshal(event)
+        c.Response().Write([]byte("data: "))
+        c.Response().Write(data)
+        c.Response().Write([]byte("\n\n"))
+        c.Response().Flush()
+    })
+    if err != nil {
+        return err
+    }
+    defer sub.Unsubscribe()
+
+    // Heartbeat every 15s
+    ticker := time.NewTicker(15 * time.Second)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ctx.Done():
+            return nil
+        case <-ticker.C:
+            c.Response().Write([]byte(": heartbeat\n\n"))
+            c.Response().Flush()
+        }
+    }
+}
+```
+
+### 13.5. Notification System (MỚI – v1.1)
+
+**notification_service.go:**
+```go
+package service
+
+import (
+    "context"
+    "fmt"
+    "sync"
+    "text/template"
+    "time"
+
+    "rinco/admin-gateway/internal/domain"
+)
+
+type NotificationDispatcher struct {
+    templates map[string]domain.NotificationTemplate
+    channels  map[string]ChannelSender // email, telegram, push, sms
+    repo      NotificationRepository
+    rateLimiter *RateLimiter
+    mu        sync.RWMutex
+}
+
+type ChannelSender interface {
+    Send(ctx context.Context, recipient string, subject, body string) error
+    Channel() string
+}
+
+func (d *NotificationDispatcher) Broadcast(ctx context.Context, code string, vars map[string]any, target TargetFilter) error {
+    tmpl, ok := d.templates[code]
+    if !ok {
+        return ErrTemplateNotFound
+    }
+
+    // Check quiet hours (nếu category != CRITICAL)
+    if tmpl.Category != "CRITICAL" {
+        if isQuietHours(time.Now(), vars) {
+            // Schedule for next 7am
+            return d.scheduleDigest(ctx, tmpl, vars, target)
+        }
+    }
+
+    // Resolve recipients
+    recipients, err := d.resolveRecipients(ctx, target)
+    if err != nil {
+        return err
+    }
+
+    // Render template
+    subject, body := renderTemplate(tmpl, vars)
+
+    // Dispatch in parallel
+    var wg sync.WaitGroup
+    errCh := make(chan error, len(recipients))
+    for _, r := range recipients {
+        wg.Add(1)
+        go func(r domain.Recipient) {
+            defer wg.Done()
+            if d.rateLimiter.Allow(r.ID, tmpl.Channel) {
+                err := d.channels[tmpl.Channel].Send(ctx, r.Address, subject, body)
+                d.logDispatch(ctx, tmpl, r, err)
+                if err != nil {
+                    errCh <- err
+                }
+            }
+        }(r)
+    }
+    wg.Wait()
+    close(errCh)
+
+    return nil
+}
+
+func renderTemplate(t domain.NotificationTemplate, vars map[string]any) (string, string) {
+    subjTmpl, _ := template.New("subj").Parse(t.Subject)
+    bodyTmpl, _ := template.New("body").Parse(t.BodyTemplate)
+
+    var subj, body strings.Builder
+    subjTmpl.Execute(&subj, vars)
+    bodyTmpl.Execute(&body, vars)
+
+    return subj.String(), body.String()
+}
+
+// Quiet hours detection (default 22:00-07:00 theo timezone user)
+func isQuietHours(now time.Time, vars map[string]any) bool {
+    tz, ok := vars["timezone"].(string)
+    if !ok {
+        tz = "UTC"
+    }
+    loc, err := time.LoadLocation(tz)
+    if err != nil {
+        return false
+    }
+    hour := now.In(loc).Hour()
+    return hour >= 22 || hour < 7
+}
+```
+
+### 13.6. Quorum 2-of-3 cho Xóa Tenant
+
+**quorum_handler.go:**
+```go
+package api
+
+import (
+    "context"
+    "crypto/hmac"
+    "crypto/sha256"
+    "encoding/hex"
+    "time"
+
+    "github.com/danielgtaylor/huma/v2"
+    "github.com/google/uuid"
+)
+
+type QuorumCreateRequest struct {
+    Body struct {
+        Action  string         `json:"action" required:"true"` // "tenant.delete", "gateway.global_config"
+        Payload map[string]any `json:"payload" required:"true"`
+        Reason  string         `json:"reason" minLength:"10" maxLength:"500" required:"true"`
+    }
+}
+
+type QuorumCreateResponse struct {
+    Body struct {
+        QuorumID  string    `json:"quorum_id"`
+        ExpiresAt time.Time `json:"expires_at"`
+        SignURL   string    `json:"sign_url"`
+    }
+}
+
+func (h *Handler) CreateQuorum(ctx context.Context, input *QuorumCreateRequest) (*QuorumCreateResponse, error) {
+    actor := getActorFromContext(ctx)
+
+    quorum := &domain.QuorumRequest{
+        ID:               uuid.New(),
+        Action:           input.Body.Action,
+        Payload:          input.Body.Payload,
+        InitiatorID:      actor.ID,
+        Reason:           input.Body.Reason,
+        RequiredSigs:      2,
+        CollectedSigs:    []domain.Signature{},
+        Status:           "PENDING",
+        ExpiresAt:        time.Now().Add(5 * time.Minute),
+    }
+
+    if err := h.quorumRepo.Create(ctx, quorum); err != nil {
+        return nil, huma.Error500InternalServerError("failed to create quorum", err)
+    }
+
+    // Notify other OWNER + SRE_ADMIN
+    h.notifyAdmins(ctx, []string{"OWNER", "SRE_ADMIN"}, "quorum.pending", map[string]any{
+        "quorum_id": quorum.ID.String(),
+        "action":    quorum.Action,
+        "initiator": actor.Email,
+        "reason":    quorum.Reason,
+        "expires_at": quorum.ExpiresAt,
+    })
+
+    return &QuorumCreateResponse{
+        Body: struct {
+            QuorumID  string    `json:"quorum_id"`
+            ExpiresAt time.Time `json:"expires_at"`
+            SignURL   string    `json:"sign_url"`
+        }{
+            QuorumID:  quorum.ID.String(),
+            ExpiresAt: quorum.ExpiresAt,
+            SignURL:   fmt.Sprintf("https://admin.rinco.local/quorum/%s/sign", quorum.ID),
+        },
+    }, nil
+}
+
+type QuorumSignRequest struct {
+    Body struct {
+        Signature string `json:"signature" required:"true"` // YubiKey signed nonce
+    }
+}
+
+func (h *Handler) SignQuorum(ctx context.Context, input *QuorumSignRequest, quorumID string) (*struct{}, error) {
+    actor := getActorFromContext(ctx)
+
+    quorum, err := h.quorumRepo.GetByID(ctx, uuid.MustParse(quorumID))
+    if err != nil {
+        return nil, huma.Error404NotFound("quorum not found", err)
+    }
+
+    // Verify state
+    if quorum.Status != "PENDING" {
+        return nil, huma.Error409Conflict("quorum already finalized", nil)
+    }
+    if quorum.ExpiresAt.Before(time.Now()) {
+        h.quorumRepo.UpdateStatus(ctx, quorum.ID, "EXPIRED")
+        return nil, huma.Error410Gone("quorum expired", nil)
+    }
+    if quorum.InitiatorID == actor.ID {
+        return nil, huma.Error403Forbidden("cannot sign own quorum", nil)
+    }
+
+    // Verify YubiKey signature (challenge was the quorum ID + nonce)
+    expectedPayload := fmt.Sprintf("%s:%s", quorum.ID, actor.ID)
+    expectedSig := h.signWithYubiKey(expectedPayload)
+    if !hmac.Equal([]byte(input.Body.Signature), []byte(expectedSig)) {
+        return nil, huma.Error401Unauthorized("invalid signature", nil)
+    }
+
+    // Add signature (atomic)
+    err = h.quorumRepo.AppendSignature(ctx, quorum.ID, domain.Signature{
+        SignerID: actor.ID,
+        SignedAt: time.Now(),
+        Signature: input.Body.Signature,
+    })
+    if err != nil {
+        return nil, huma.Error500InternalServerError("failed to record signature", err)
+    }
+
+    // Check if quorum reached
+    quorum, _ = h.quorumRepo.GetByID(ctx, quorum.ID)
+    if len(quorum.CollectedSigs) >= quorum.RequiredSigs {
+        h.quorumRepo.UpdateStatus(ctx, quorum.ID, "APPROVED")
+        // Execute the action
+        h.executeQuorumAction(ctx, quorum)
+    }
+
+    return &struct{}{}, nil
+}
+
+func (h *Handler) executeQuorumAction(ctx context.Context, q *domain.QuorumRequest) {
+    switch q.Action {
+    case "tenant.delete":
+        tenantID := q.Payload["tenant_id"].(string)
+        err := h.tenantSvc.HardDelete(ctx, uuid.MustParse(tenantID))
+        if err != nil {
+            h.auditSvc.Record(ctx, domain.AuditEntry{
+                Action: "quorum.execute.failed",
+                Payload: map[string]any{
+                    "quorum_id": q.ID,
+                    "action":    q.Action,
+                    "error":     err.Error(),
+                },
+            })
+        }
+    // ...
+    }
+}
+```
+
+### 13.7. sqlc Migration cho Tenants
+
+**migrations/0001_create_tenants.sql:**
+```sql
+-- +goose Up
+-- +goose StatementBegin
+CREATE TABLE tenants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    plan TEXT NOT NULL CHECK (plan IN ('FREE','PRO','BUSINESS','ENTERPRISE')),
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','LOCKED','FROZEN','DELETING')),
+    region TEXT NOT NULL,
+    cluster_id TEXT,
+    vps_node_id TEXT,
+    isolation_mode TEXT CHECK (isolation_mode IN ('SHARED','ISOLATED')),
+    max_users INT,
+    max_storage_gb INT,
+    max_requests_per_sec INT,
+    feature_flags JSONB DEFAULT '{}',
+    retention_days INT DEFAULT 90,
+    custom_branding JSONB,
+    version INT NOT NULL DEFAULT 1,  -- Optimistic locking
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
+);
+
+CREATE INDEX idx_tenants_slug ON tenants(slug) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tenants_status ON tenants(status) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tenants_region ON tenants(region) WHERE deleted_at IS NULL;
+
+-- Trigger update updated_at
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_tenants_updated_at
+BEFORE UPDATE ON tenants
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP TRIGGER IF EXISTS update_tenants_updated_at ON tenants;
+DROP TABLE IF EXISTS tenants;
+DROP FUNCTION IF EXISTS update_updated_at_column();
+-- +goose StatementEnd
+```
+
+## 14. Implementation Roadmap chi tiết
+
+### 14.1. Phase 1 – Admin MVP (Tuần 1–4)
+
+#### Tuần 1: Skeleton + Auth
+- [ ] Tạo `services/admin-gateway/` Go project.
+- [ ] Setup Echo + Huma + sqlc.
+- [ ] WireGuard container dev.
+- [ ] Migrations: `super_admins`, `super_admin_webauthn`.
+- [ ] Health endpoints.
+
+#### Tuần 2: WebAuthn Login
+- [ ] WebAuthn registration endpoint.
+- [ ] WebAuthn login flow.
+- [ ] PASETO token issue.
+- [ ] Rate limiting middleware.
+
+#### Tuần 3: Tenant CRUD
+- [ ] Tenant create/list/get/update.
+- [ ] Slug validation.
+- [ ] Audit log cho mọi action.
+- [ ] Optimistic locking.
+
+#### Tuần 4: Dashboard + Realtime
+- [ ] SSE endpoint.
+- [ ] NATS consumer.
+- [ ] ClickHouse aggregation.
+- [ ] Basic Grafana dashboard embed.
+
+**Acceptance Gate Phase 1:**
+- [ ] Admin login được với YubiKey.
+- [ ] Tạo tenant mới trong < 5s.
+- [ ] SSE stream cập nhật < 1s.
+
+### 14.2. Phase 2 – Tính năng nâng cao (Tuần 5–8)
+
+#### Tuần 5: Quorum + Audit
+- [ ] Quorum create/sign flow.
+- [ ] 2-of-3 signing.
+- [ ] Auto execute action.
+
+#### Tuần 6: Impersonation + Impersonation Banner
+- [ ] Start impersonation (giới hạn 24h).
+- [ ] End impersonation.
+- [ ] Audit log đầy đủ.
+
+#### Tuần 7: Notification System
+- [ ] Templates CRUD.
+- [ ] Telegram/Email/SMS channels.
+- [ ] Broadcast API.
+- [ ] Dispatch log + stats.
+
+#### Tuần 8: Resource Manager
+- [ ] K3s API client.
+- [ ] Cluster health view.
+- [ ] WireGuard mesh status.
+
+**Acceptance Gate Phase 2:**
+- [ ] Xóa tenant cần 2 YubiKey.
+- [ ] Impersonate tenant hoạt động với audit trail.
+- [ ] Gửi broadcast notification đến 1000 admin < 30s.
+
+### 14.3. Phase 3 – AI & Observability (Tuần 9–12)
+
+#### Tuần 9: AI SRE Hook
+- [ ] Sentry webhook integration.
+- [ ] AI RCA generation.
+- [ ] Telegram notification.
+
+#### Tuần 10: Anomaly Detection
+- [ ] Traffic anomaly baseline.
+- [ ] Error spike detection.
+- [ ] Alert AI confidence scoring.
+
+#### Tuần 11: Capacity Planning
+- [ ] Historical metrics aggregation.
+- [ ] Right-sizing recommendation.
+
+#### Tuần 12: Polish
+- [ ] Performance tuning.
+- [ ] E2E test full flow.
+- [ ] Documentation.
+
+**Acceptance Gate Phase 3:**
+- [ ] AI RCA < 3s.
+- [ ] Anomaly detected < 30s.
+- [ ] Load test: 100 concurrent admins không lag.
+
+### 14.4. Acceptance Criteria cuối Phase
 
 | AC | Tiêu chí | Đo lường |
 |----|---------|---------|
@@ -600,6 +1593,320 @@ GET /admin/health
 | AC-ADM-04 | Audit log ghi đầy đủ 100% action | 100% |
 | AC-ADM-05 | Không có DNS/IP public cho admin | Security scan |
 | AC-ADM-06 | Quorum 2-of-3 hoạt động | Test scenario |
+| AC-ADM-07 | WebAuthn login < 500ms | p95 |
+| AC-ADM-08 | Notification broadcast < 30s cho 1000 recipients | p95 |
+| AC-ADM-09 | Impersonation audit đầy đủ | 100% actions tracked |
+| AC-ADM-10 | AI RCA trong < 3s | p95 |
+
+## 15. Testing Strategy
+
+### 15.1. Unit Test Targets
+
+| Module | Coverage |
+|--------|----------|
+| Auth Service | ≥ 90% |
+| Tenant Service | ≥ 85% |
+| Quorum Handler | ≥ 90% |
+| Notification Dispatcher | ≥ 85% |
+| Audit Logger | ≥ 90% |
+| Impersonation Service | ≥ 90% |
+
+### 15.2. Integration Tests
+
+```go
+// services/admin-gateway/test/integration/tenant_lifecycle_test.go
+package integration_test
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    "github.com/stretchr/testify/require"
+
+    "rinco/admin-gateway/test/helpers"
+)
+
+func TestTenantLifecycle_CreateLockDelete(t *testing.T) {
+    ctx := context.Background()
+    h := helpers.NewTestHarness(t)
+    defer h.Cleanup()
+
+    // 1. Create tenant
+    actor := h.CreateAdmin(ctx, helpers.AdminOpts{Role: "OWNER"})
+
+    tenant, err := h.TenantService.Create(ctx, domain.TenantCreateInput{
+        Name:       "Apex Fintech Test",
+        Slug:       "apexfintech-test",
+        Plan:       "PRO",
+        Region:     "vn-sg",
+        AdminEmail: "admin@apex.vn",
+    }, actor)
+    require.NoError(t, err)
+
+    // 2. Lock tenant
+    err = h.TenantService.Lock(ctx, tenant.ID, actor)
+    require.NoError(t, err)
+
+    locked, _ := h.TenantService.Get(ctx, tenant.ID)
+    require.Equal(t, "LOCKED", locked.Status)
+
+    // 3. Quorum delete (need 2 admins)
+    admin2 := h.CreateAdmin(ctx, helpers.AdminOpts{Role: "OWNER"})
+    quorum, err := h.QuorumService.Create(ctx, domain.QuorumCreateInput{
+        Action:  "tenant.delete",
+        Payload: map[string]any{"tenant_id": tenant.ID.String()},
+        Reason:  "GDPR request from customer",
+    }, actor)
+    require.NoError(t, err)
+
+    err = h.QuorumService.Sign(ctx, quorum.ID, admin2, helpers.MockYubiKeySignature())
+    require.NoError(t, err)
+
+    // 4. Verify audit log
+    logs, err := h.AuditRepo.FindByTenant(ctx, tenant.ID)
+    require.NoError(t, err)
+    require.GreaterOrEqual(t, len(logs), 3) // create, lock, delete
+
+    // 5. Verify tenant soft-deleted
+    deleted, _ := h.TenantService.Get(ctx, tenant.ID)
+    require.Equal(t, "DELETING", deleted.Status)
+}
+```
+
+### 15.3. E2E Test (Playwright)
+
+```typescript
+// apps/admin/e2e/login.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Admin Login', () => {
+  test('successful YubiKey login', async ({ page }) => {
+    await page.goto('/login');
+    await page.fill('input[name="email"]', 'owner@rinco.app');
+
+    // Click login - this triggers WebAuthn ceremony
+    await page.click('button:has-text("Login with YubiKey")');
+
+    // Mock YubiKey response (in real test would use hardware)
+    await page.evaluate(() => {
+      (window as any).mockWebAuthnAssertion();
+    });
+
+    await expect(page).toHaveURL(/\/dashboard/);
+    await expect(page.locator('text=Welcome')).toBeVisible();
+  });
+
+  test('reject when YubiKey fails', async ({ page }) => {
+    await page.goto('/login');
+    await page.fill('input[name="email"]', 'owner@rinco.app');
+    await page.click('button:has-text("Login with YubiKey")');
+
+    await page.evaluate(() => {
+      (window as any).mockWebAuthnFailure();
+    });
+
+    await expect(page.locator('text=Authentication failed')).toBeVisible();
+  });
+});
+```
+
+## 16. Migration Plan
+
+### 16.1. Initial Setup
+```bash
+# 1. Tạo admin database
+createdb -h localhost -U postgres rinco_admin
+
+# 2. Run migrations
+cd services/admin-gateway
+goose -dir migrations postgres "postgres://postgres@localhost:5432/rinco_admin?sslmode=disable" up
+
+# 3. Seed first OWNER
+psql -h localhost -U postgres rinco_admin < scripts/seed_owner.sql
+```
+
+### 16.2. Zero-downtime Schema Changes
+
+Pattern đã được mô tả chi tiết trong `docs/00-master/README.md` §21.3.
+
+### 16.3. Migration Tracking
+
+| Version | Date | Description | Status |
+|---------|------|-------------|--------|
+| 0001 | T0 | super_admins, webauthn | Done |
+| 0002 | T1 | tenants, domains | Done |
+| 0003 | T2 | audit_log (Postgres) → migrate to Scylla | Pending |
+| 0004 | T3 | feature_flags, quorum_requests | Done |
+| 0005 | T4 | notification_templates, dispatch_log | Done |
+| 0006 | T5 | impersonation_sessions | Done |
+| 0007 | T6 | RLS policies trên tenants | Pending |
+| 0008 | T7 | Index cho audit (timestamp DESC, tenant_id) | Pending |
+
+## 17. Disaster Recovery
+
+### 17.1. RPO & RTO
+
+| Component | RPO | RTO |
+|-----------|-----|-----|
+| admin-gateway | 0 (stateless) | 30s (K3s restart) |
+| postgres-admin | 5 min (WAL) | 30 min (restore from backup) |
+| audit-log ScyllaDB | 1 hour | 2 hours |
+| WireGuard config | 1 hour | 15 min |
+
+### 17.2. Failure Scenarios
+
+#### Scenario A: admin-gateway down
+- **Detection:** K3s liveness probe fail
+- **Response:** K3s restart < 2s
+- **Recovery:** Stateless, no data loss
+
+#### Scenario B: postgres-admin corruption
+- **Detection:** Smoke test fail
+- **Response:**
+  1. Stop writes (set admin-gateway to read-only).
+  2. Restore from latest backup.
+  3. Apply WAL logs since backup.
+  4. Smoke test.
+  5. Resume writes.
+- **RTO:** 30 min
+
+#### Scenario C: WireGuard mesh down
+- **Detection:** Handshake fail alert
+- **Response:** SRE manual re-establish WireGuard + redistribute keys
+- **RTO:** 15 min
+
+#### Scenario D: Audit log loss (ScyllaDB)
+- **Detection:** Audit count gap
+- **Response:** Restore from daily snapshot
+- **RPO:** Max 1 hour
+
+### 17.3. Backup Strategy
+
+```bash
+# scripts/backup-admin-db.sh (chạy mỗi giờ)
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+pg_basebackup -h postgres-admin-primary -D /backup/admin/$TIMESTAMP \
+  --checkpoint=fast --wal-method=stream
+tar czf /backup/admin/$TIMESTAMP.tar.gz /backup/admin/$TIMESTAMP
+mc cp /backup/admin/$TIMESTAMP.tar.gz minio/backups/admin/
+
+# Retain 30 days
+mc rm --older-than 30d minio/backups/admin/
+```
+
+### 17.4. DR Drill (Hàng quý)
+
+Test case:
+1. Snapshot admin DB.
+2. Kill primary Postgres.
+3. Promote replica.
+4. Verify admin-gateway vẫn hoạt động.
+5. Verify không mất audit log.
+
+## 18. Cost Estimation
+
+### 18.1. Compute Cost
+
+| Component | Spec | Qty | Unit price | Monthly |
+|-----------|------|-----|------------|---------|
+| admin-gateway | 4 vCPU, 8GB | 2 | $120 | $240 |
+| admin-bff (Next.js) | 2 vCPU, 4GB | 2 | $80 | $160 |
+| postgres-admin | 4 vCPU, 16GB, 100GB NVMe | 1 + 1 replica | $300 | $600 |
+| scylla audit | 4 vCPU, 16GB, 200GB | 1 | $200 | $200 |
+| WireGuard bastion | 2 vCPU, 4GB | 2 | $80 | $160 |
+| Grafana | 2 vCPU, 4GB | 1 | $80 | $80 |
+| **Subtotal Admin** | - | - | - | **$1,440** |
+
+### 18.2. Storage Cost
+
+| Item | Size | Cost/GB | Monthly |
+|------|------|---------|---------|
+| Postgres backup (30d) | 1TB | $0.023 | $23 |
+| ScyllaDB backup | 500GB | $0.023 | $11.5 |
+| Audit log archive | 5TB | $0.023 | $115 |
+| **Subtotal Storage** | - | - | **$150** |
+
+### 18.3. External Services
+
+| Service | Cost |
+|---------|------|
+| Sentry Team (1 seat) | $26 |
+| PagerDuty (1 user) | $21 |
+| Telegram Bot API | Free |
+| **Subtotal External** | **$47** |
+
+### 18.4. Tổng Admin
+
+```
+Compute:  $1,440
+Storage:  $150
+External: $47
+──────────────
+Total:    ~$1,637/month
+```
+
+### 18.5. Cost per Tenant
+
+Với 10,000 tenants:
+- Cost per tenant for admin overhead: **$0.16/tenant/month**
+- Rất thấp so với giá trị giám sát mang lại.
+
+## 19. Open Questions / Cần user xác nhận
+
+### 19.1. Cần user xác nhận ngay ✋
+
+| # | Câu hỏi | Options | Recommendation |
+|---|---------|---------|----------------|
+| Q1 | **WebAuthn support trên Safari/Firefox?** | (a) Chỉ hỗ trợ Chromium-based, (b) Full support | (b) cho UX tốt |
+| Q2 | **Số lượng Super Admin tối đa?** | (a) 3 OWNER, (b) 5, (c) Unlimited | (a) – minimize attack surface |
+| Q3 | **Quorum default là 2-of-3 hay 3-of-5?** | (a) 2-of-3, (b) 3-of-5 | (a) – balance speed & security |
+| Q4 | **Notification channels ưu tiên?** | (a) Email only, (b) + Telegram, (c) + SMS | (b) – cost/UX balance |
+| Q5 | **Có cần AI Auto-PR cho hotfix không?** | (a) Suggest only, (b) Auto PR + human approve | (a) – safe by default |
+| Q6 | **Impersonation max duration?** | (a) 1h, (b) 8h, (c) 24h | (c) theo thiết kế hiện tại |
+| Q7 | **Audit log retention ở production?** | (a) 1 năm, (b) 5 năm, (c) 7 năm | (b) theo thiết kế |
+| Q8 | **Có cần rate limit per Super Admin?** | (a) Shared, (b) Per-admin | (b) – prevent abuse |
+| Q9 | **Admin role nào được quyền impersonate?** | (a) Chỉ OWNER, (b) + SUPPORT_ADMIN | (b) theo thiết kế |
+| Q10 | **Có cần hỗ trợ LDAP/SSO cho Super Admin?** | (a) Yes, (b) No | (b) Phase 1 – giữ đơn giản |
+
+### 19.2. Cần quyết định trong Phase tiếp theo 📋
+
+| # | Câu hỏi | Impact | Owner |
+|---|---------|--------|-------|
+| Q11 | Tenant deletion grace period bao lâu? | Storage cost | Product |
+| Q12 | Có cho phép Super Admin reset MFA của tenant user? | Security vs support | Security |
+| Q13 | Sentry self-host hay cloud? | Cost, ops | DevOps |
+| Q14 | Grafana self-host hay cloud? | Cost, ops | DevOps |
+| Q15 | Có cần mobile app cho Admin? | Effort | Product |
+| Q16 | i18n cho Admin UI? | Effort | Frontend |
+| Q17 | Có cần SSO cho Admin? | Effort | Security |
+| Q18 | Backup cross-region cho admin DB? | Cost | DevOps |
+
+### 19.3. TBD kỹ thuật ⏳
+
+| # | Item | Status | Next step |
+|---|------|--------|-----------|
+| T1 | PASETO key rotation mechanism | TBD | Design Q4 2026 |
+| T2 | Sentry SDK cho Admin | TBD | Tích hợp Phase 3 |
+| T3 | AI SRE prompt template | TBD | Optimize qua feedback |
+| T4 | Grafana datasource cho audit_log | TBD | Setup PostgreSQL source |
+| T5 | Backup encryption (KMS) | TBD | AWS KMS / Vault |
+| T6 | WebAuthn backup code format | TBD | BIP39 vs custom |
+| T7 | Real-time channel backpressure (SSE) | TBD | Test với 1000 concurrent |
+| T8 | Notification template editor UI | TBD | Design Q4 2026 |
+
+### 19.4. Risk Register
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| YubiKey supply chain | Low | Critical | Backup key + recovery codes |
+| WebAuthn browser regression | Low | High | Test trên tất cả browser mỗi release |
+| Audit log loss | Low | Critical | ScyllaDB replication + offsite backup |
+| AI hallucination (RCA) | Medium | High | Human-in-the-loop + sandbox test PR |
+| Telegram bot banned | Low | Medium | Fallback Slack + Email |
+| Notification spam (DoS admin) | Medium | Medium | Rate limit + per-admin filter |
+| Mass impersonate abuse | Low | Critical | 24h expiry + audit + alert |
+| Dark Admin bị leak IP | Low | Critical | WireGuard only + bind trên `wg0` |
 
 ---
 

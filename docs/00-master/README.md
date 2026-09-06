@@ -1,6 +1,6 @@
 # RINCO – Bản Thiết Kế Hệ Thống Tổng Thể (Master Design)
 
-> **Phiên bản:** v1.0  
+> **Phiên bản:** v1.1 (mở rộng)  
 > **Tên dự án:** RINCO  
 > **Slogan:** *Kết Nối Toàn Năng – Vững Vàng Quản Trị*  
 > **Tầm nhìn:** Nền tảng Quản trị & Kết nối Doanh nghiệp Quốc dân.  
@@ -27,6 +27,18 @@
 14. [Cơ sở hạ tầng đề xuất](#14-cơ-sở-hạ-tầng-đề-xuất)
 15. [Lộ trình triển khai](#15-lộ-trình-triển-khai)
 16. [Danh sách tài liệu chi tiết](#16-danh-sách-tài-liệu-chi-tiết)
+
+**Mục lục mở rộng (phần bổ sung – v1.1)**
+
+17. [Audit – Đánh giá nội dung hiện tại](#17-audit--đánh-giá-nội-dung-hiện-tại)
+18. [Edge Cases & Error Scenarios chi tiết](#18-edge-cases--error-scenarios-chi-tiết)
+19. [Implementation Roadmap chi tiết](#19-implementation-roadmap-chi-tiết)
+20. [Testing Strategy End-to-End](#20-testing-strategy-end-to-end)
+21. [Migration Plan cho Schema & Service](#21-migration-plan-cho-schema--service)
+22. [Disaster Recovery](#22-disaster-recovery)
+23. [Cost Estimation (rough numbers)](#23-cost-estimation-rough-numbers)
+24. [Performance Budget & SLO Matrix](#24-performance-budget--slo-matrix)
+25. [Concrete Open Questions / TBD](#25-concrete-open-questions--tbd)
 
 ---
 
@@ -338,7 +350,7 @@ RINCO được sinh ra để giải quyết bài toán **"Quản trị đa doanh
 
 **Mục đích:** Mỗi công ty đối tác có trang web riêng (`apex.hanghoaphaisinh.net` hoặc custom domain).
 
-**Kiếu triển khai:**
+**Kiểu triển khai:**
 - **Shared Cluster:** Chạy chung cụm, tiết kiệm chi phí.
 - **Isolated VPS:** VPS riêng do khách mua, kết nối qua WireGuard.
 
@@ -615,4 +627,1061 @@ RINCO được sinh ra để giải quyết bài toán **"Quản trị đa doanh
 
 ---
 
-**Tài liệu này là bản thiết kế chính (master). Mọi phần chi tiết phải đọc kèm theo các file trong `docs/01-*` đến `docs/11-*`.**
+# PHẦN MỞ RỘNG (v1.1) – AUDIT, CODE EXAMPLES, EDGE CASES
+
+## 17. Audit – Đánh giá nội dung hiện tại
+
+### 17.1. Phần đã đủ chi tiết ✓
+
+| Mục | Nội dung | Mức đủ |
+|-----|---------|--------|
+| 4 – Tech Matrix | Liệt kê thư viện đầy đủ cho Go/Rust/TS/Python | ✓ |
+| 6 – Polyglot Persistence | Ma trận 9 database kèm quy tắc chọn | ✓ |
+| 9 – Chat Engine | Kiến trúc + tính năng chat | ✓ |
+| 10 – WebRTC SFU | Zero-Transcoding, AV1 SVC, GPU composite | ✓ |
+| 11 – Observability 4 tầng | Code-Level → Telemetry → Alerting → Self-Healing | ✓ |
+| 12 – Bảo mật Zero-Trust | 5 tầng (Network → Kernel) | ✓ |
+
+### 17.2. Phần còn thiếu ⚠
+
+| Mục | Vấn đề | Hướng bổ sung |
+|-----|--------|---------------|
+| 1.2 – Bài toán | Chưa liệt kê trade-off khi scale (vd: ScyllaDB không JOIN → cần denormalize) | Bổ sung bảng trade-off |
+| 2.3 – Văn hóa | CG1–CG4 chỉ liệt kê, chưa có cơ chế đo lường | Thêm OKR cho từng CG |
+| 3.1 – Kiến trúc | Chưa nói rõ disaster recovery giữa các tầng | Bổ sung DR section (§22) |
+| 5 – Microservices | Chưa có ownership matrix (team nào phụ trách service nào) | Bổ sung Team-Ownership Matrix |
+| 8 – Landing Page | Chưa có fallback khi FB CAPI fail | Bổ sung fallback flow |
+| 13 – AI | Thiếu guardrail chống prompt injection | Bổ sung §13.3 Guardrails |
+| 15 – Lộ trình | Chưa có Gantt chart chi tiết từng tuần | Bổ sung roadmap tuần |
+| – Tổng thể | Thiếu **khả năng chịu lỗi cụ thể** (vd: nếu ClickHouse chết 30 phút thì sao?) | Bổ sung Failure Mode Analysis |
+
+### 17.3. Mâu thuẫn nội bộ ✗
+
+| Vị trí | Mâu thuẫn |
+|--------|-----------|
+| §4.2.1 Go WebSocket | Đề cập `nhooyr/websocket` nhưng `nhooyr` đã deprecated → thay bằng `coder/websocket` |
+| §10 SFU Zero-Transcoding vs §13 AI STT | Nếu không transcode thì Whisper.cpp xử lý raw RTP như thế nào? → Cần middleware decode |
+| §3.2 AP2 (Zero-Copy) vs Go Gateway | Go GC xung đột với io_uring zero-copy đã được cảnh báo trong yeucauthietke.md – chưa phản ánh trong doc |
+| §12.4 Dark Admin + §14.3 Network | Subnet "Admin Mesh" chỉ có ở §14.3 nhưng §12 chưa gọi tên subnet này |
+
+### 17.4. Phần cần code example cụ thể 💡
+
+| Mục | Cần code cho |
+|-----|--------------|
+| 5 – Microservices | `service.go` skeleton, `Dockerfile`, K8s manifest |
+| 6 – Polyglot | sqlc.yaml + Ent schema definition |
+| 8 – FB CAPI | HMAC generation function + Worker pool |
+| 9 – Chat | FlatBuffers schema + Rust handler |
+| 11 – Observability | Zap logger wrapper + OTEL middleware |
+| 12 – Security | PASETO middleware + RLS policy template |
+
+## 18. Edge Cases & Error Scenarios chi tiết
+
+### 18.1. Edge Cases – Landing Ingest
+
+| # | Edge case | Phát hiện | Xử lý |
+|---|----------|-----------|-------|
+| E1 | Form submit 2 lần trong 100ms (double-click) | idempotency_key + Scylla LWT | Reject lần 2, trả về cùng `lead_id` |
+| E2 | Email là "user@" (không hợp lệ) | protovalidate + Zod | 422 ValidationError, không ghi DB |
+| E3 | UTM rỗng nhưng fbclid có | Conditional validation | Lưu UTM=NULL, fbclid bắt buộc hash |
+| E4 | IP nằm trong blacklist (bot) | Valkey lookup + eBPF Map | 403 Forbidden, log alert |
+| E5 | User submit nhưng không có JS (noscript) | Fallback `<noscript>` form | POST qua standard form endpoint, server vẫn validate |
+| E6 | Khách hàng nhập emoji vào tên | UTF-8 normalize | OK, lưu raw + normalized |
+| E7 | Form có 50 fields custom (Dynamic Schema) | Schema lookup Valkey | Validate theo JSON Schema đã cached |
+| E8 | Tenant quota Lead/day đã hết | Counter Valkey | 429 Too Many Requests + Retry-After |
+| E9 | FB CAPI bị rate-limit | gobreaker Open | Đẩy vào NATS retry queue, không block ingest |
+| E10 | ScyllaDB node fail giữa write | Retry với Token Aware | Re-route tới node khác trong 5s |
+
+### 18.2. Edge Cases – CRM Multi-Tenant
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| E11 | User A thuộc tenant X, thử query Lead của tenant Y | RLS + SET LOCAL → return 0 row |
+| E12 | Move subtree 1000 user xuống branch khác | Wrap transaction + ltree nlevel |
+| E13 | 2 admin cùng merge user cùng lúc | SELECT FOR UPDATE |
+| E14 | Tenant xóa mềm, user vẫn login | Token blacklist (Valkey) |
+| E15 | Cycle trong cây (A là parent của B, B là parent của A) | Pre-check trước UPDATE |
+| E16 | PASETO token hết hạn giữa session | Refresh token rotation |
+| E17 | User đổi role từ GD xuống NV trong khi đang đăng nhập | Force logout next request |
+| E18 | Department leader bị xóa | Auto-reassign leader hoặc báo lỗi |
+| E19 | Bulk move 10K user mà 1 user conflict | All-or-nothing transaction → rollback |
+| E20 | Lead được assign cho user không tồn tại | ON DELETE SET NULL |
+
+### 18.3. Edge Cases – Chat Real-time
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| E21 | User gửi 1000 msg/giây (spam) | Token bucket per user: 10 msg/s |
+| E22 | WebSocket disconnect giữa tin nhắn | Client resync từ last_event_id |
+| E23 | Tin nhắn đến khi user offline | Push notification + persist in ScyllaDB |
+| E24 | File 10GB upload | Client phải dùng multipart, server reject >100MB |
+| E25 | Typing indicator flood | Server ignore nếu >1 indicator/giây/user |
+| E26 | Mention không tồn tại | Server bỏ qua, không lỗi |
+| E27 | Channel bị xóa khi đang chat | 410 Gone, client refresh |
+| E28 | Encryption key rotate | Re-handshake + re-encrypt old messages |
+| E29 | 50K users mở cùng 1 channel | Singleflight coalescing → 1 query |
+| E30 | Server restart mid-message | Client retry với idempotency_key |
+
+### 18.4. Edge Cases – WebRTC Meeting
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| E31 | User mất mạng 5s rồi reconnect | ICE restart + RTCP PLI/NACK |
+| E32 | GPU crash khi đang record | Fallback sang CPU encode (chậm hơn) |
+| E33 | Egress Worker không đủ NVENC session | Queue meeting, scale worker |
+| E34 | 1 user trong call drop liên tục (network bad) | Auto-leave sau 3 lần fail |
+| E35 | AV1 không support trên trình duyệt cũ | Fallback VP9 → H.264 |
+| E36 | Recording file corrupt do MinIO network | Retry với S3 multipart, checksum |
+| E37 | Whisper STT quá chậm | Batch STT mỗi 30s thay vì real-time |
+| E38 | Background noise quá lớn | Bật noise suppression trong getUserMedia |
+| E39 | User share screen với resolution 4K | BBR giảm xuống 1080p |
+| E40 | Meeting vượt quá 4h (giới hạn) | Auto-end + notify user |
+
+### 18.5. Edge Cases – Multi-VPS Mesh
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| E41 | VPS của tenant A mất kết nối WireGuard | Auto-failover sang VPS B của tenant |
+| E42 | Resource sharing job chiếm 100% CPU VPS A | Cgroup limit + revert job |
+| E43 | 2 tenant cùng request share GPU | Token bucket per tenant |
+| E44 | Tenant A bị admin khóa nhưng VPS A vẫn share resource | Block ngay lập tức, revoke shares |
+| E45 | WireGuard key bị leak | Force rekey toàn mesh |
+| E46 | Backup replication lag > 1h | Alert SRE + manual run |
+| E47 | Mesh coordinator chết | Ten cluster có local control plane fallback |
+| E48 | Cross-region latency > 200ms | Block share job cross-region |
+
+### 18.6. Edge Cases – Security
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| E49 | SQL injection trong tenant_id | Parameterized queries + RLS (không trust input) |
+| E50 | CSRF trên form admin | SameSite=Strict + CSRF token |
+| E51 | Replay attack HMAC | Nonce + timestamp window 5min |
+| E52 | Prompt injection vào AI Chatbot | Strip system prompt + guardrail layer |
+| E53 | Admin key bị compromise | 2-of-3 Quorum rollback + key rotation |
+| E54 | DDoS 10Gbps | eBPF/XDP drop ở NIC |
+| E55 | Botnet vượt qua Wasm attestation | Argon2 PoW thêm layer 2 |
+| E56 | Insider attack (admin lạm quyền) | Audit log + anomaly detection AI |
+| E57 | ClickHouse data leak | RLS + column encryption |
+| E58 | Tenant A đọc file trong MinIO của tenant B | Presigned URL chỉ chứa tenant prefix |
+
+### 18.7. Edge Cases – Observability
+
+| # | Edge case | Xử lý |
+|---|----------|-------|
+| E59 | Trace_id bị trùng (collision) | UUIDv7 entropy 74 bits → ~0% |
+| E60 | Log volume > 1TB/giờ | Sampling 10% cho INFO, 100% ERROR |
+| E61 | Vector Agent crash | Systemd auto-restart, queue local buffer |
+| E62 | Sentry rate limit hit | Local GlitchTip fallback |
+| E63 | AI SRE hallucinate fix sai | Sandbox test PR trước khi merge |
+| E64 | Alert storm (1000 alert/phút) | Dedup by fingerprint |
+| E65 | Grafana query timeout | Cache materialized view |
+
+## 19. Implementation Roadmap chi tiết
+
+> **Lưu ý:** Roadmap này đã có ở §15 nhưng thiếu chi tiết từng tuần + acceptance gate. Phần này bổ sung.
+
+### 19.1. Phase 1 (Tuần 1–12): MVP Foundation
+
+#### Tuần 1–2: Bootstrap & Dev Environment
+```bash
+# 1. Khởi tạo monorepo
+git clone https://github.com/itdoanh/rinco.git
+cd rinco
+mkdir -p services/{api-gateway,landing-ingest,crm-core,tree-org,auth-service} \
+         apps/{landing,admin,crm} \
+         infra/{docker,k8s,terraform} \
+         docs/{00-master,01-super-admin,...}
+
+# 2. Setup Docker Compose
+cp .env.example .env
+docker compose --profile core up -d
+
+# 3. Verify services
+curl http://localhost:8080/health  # api-gateway
+psql -h localhost -U rinco -d rinco_crm  # postgres
+```
+
+**Acceptance Gate:** Tất cả container lên, health check pass.
+
+#### Tuần 3–4: API Gateway + Auth
+- [ ] Tạo `services/api-gateway/` (Echo + Huma).
+- [ ] Tạo `services/auth-service/` (PASETO + FIDO2 stub).
+- [ ] WireGuard container cho admin.
+- [ ] Valkey container với domain map.
+- [ ] Route `/api/v1/auth/*` qua api-gateway.
+
+**Acceptance Gate:** Login admin thành công, nhận PASETO token.
+
+#### Tuần 5–6: Landing Page Renderer
+- [ ] Tạo `apps/landing/` Next.js + Bun.
+- [ ] Migrate 100% content từ `chiase_cu/index.html`.
+- [ ] Replace jQuery/Bootstrap bằng Tailwind + Lucide.
+- [ ] Component `<LeadForm>` + Meta Pixel init.
+- [ ] Component `<TrackingProvider>` gửi UTM/fbclid.
+
+**Acceptance Gate:** Lighthouse FCP < 0.4s, LCP < 0.8s.
+
+#### Tuần 7–8: Landing Ingest
+- [ ] Tạo `services/landing-ingest/` (Huma + sqlc).
+- [ ] ScyllaDB schema: `CREATE TABLE rinco_chat.leads_raw (...)`.
+- [ ] HMAC middleware verify payload.
+- [ ] Circuit breaker quanh FB CAPI call.
+- [ ] NATS producer `apex-fintech.lead.created`.
+
+**Acceptance Gate:** Submit form → nhận Lead ID < 50ms.
+
+#### Tuần 9–10: CRM Core
+- [ ] Tạo `services/crm-core/` (Ent).
+- [ ] Tables: `leads`, `contacts`, `deals`, `activities`.
+- [ ] RLS policies trên PostgreSQL.
+- [ ] REST API `/api/crm/v1/leads` (CRUD).
+- [ ] Valkey cache hot reads.
+
+**Acceptance Gate:** Create Lead → list Lead → update Lead trong < 100ms.
+
+#### Tuần 11–12: Tree-Org + Admin Portal skeleton
+- [ ] Tạo `services/tree-org/` (sqlc + LTREE).
+- [ ] PASETO invitation service.
+- [ ] `apps/admin/` Next.js dashboard.
+- [ ] Login flow + YubiKey placeholder.
+
+**Acceptance Gate:** Tạo tenant mới → user root → mời 2 manager qua link.
+
+### 19.2. Phase 2 (Tuần 13–24): Tính năng chính
+
+#### Tuần 13–14: Chat Engine
+- [ ] Rust service `chat-engine` với tokio-uring.
+- [ ] ScyllaDB `messages` table với partition key `(channel_id, tenant_id)`.
+- [ ] FlatBuffers schema định nghĩa `Message`.
+- [ ] WebSocket endpoint `/ws/chat`.
+
+#### Tuần 15–17: WebRTC SFU + Recorder
+- [ ] Rust SFU service `media-sfu` (str0m).
+- [ ] AV1 codec integration.
+- [ ] eBPF program cho UDP routing (basic).
+- [ ] C++ Egress Worker với NVENC.
+- [ ] MinIO multipart upload.
+
+#### Tuần 18–19: Facebook CAPI Worker
+- [ ] Service `meta-capi` (Go).
+- [ ] SHA-256 normalize.
+- [ ] HMAC verify.
+- [ ] Worker pool xử lý NATS message.
+- [ ] Retry queue khi circuit open.
+
+#### Tuần 20–22: AI Scoring
+- [ ] Python service `ai-scoring` (XGBoost).
+- [ ] NATS consumer `lead.created`.
+- [ ] ONNX runtime < 5ms inference.
+- [ ] Score → PostgreSQL `leads.ai_score`.
+
+#### Tuần 23–24: Notification + Analytics
+- [ ] Service `notification` (Email/Push/Telegram).
+- [ ] ClickHouse schema `events_raw`.
+- [ ] Grafana dashboard "Realtime Funnel".
+
+### 19.3. Phase 3 (Tuần 25–36): Multi-Tenant đầy đủ
+
+#### Tuần 25–27: Dynamic Schema
+- [ ] Service `dynamic-schema` (Huma).
+- [ ] JSON Schema editor trong Admin.
+- [ ] Validator runtime compile sang Go.
+
+#### Tuần 28–30: Isolated VPS + Mesh
+- [ ] Service `mesh-controller` (Headscale wrapper).
+- [ ] Bootstrap script `bootstrap-vps.sh` production-ready.
+- [ ] Resource scheduler với scoring algorithm.
+
+#### Tuần 31–33: Dark Admin + FIDO2
+- [ ] SPA via WireGuard.
+- [ ] WebAuthn flow hoàn chỉnh.
+- [ ] 2-of-3 Quorum UI.
+
+#### Tuần 34–36: Billing
+- [ ] Service `billing` (Stripe + VNPay).
+- [ ] Usage tracking (API calls, storage, AI calls).
+- [ ] Invoice generator PDF.
+
+### 19.4. Phase 4 (Tuần 37–48): AI & Optimization
+
+#### Tuần 37–40: AI Conversation (vLLM)
+- [ ] vLLM cluster 3 node (A100).
+- [ ] Qdrant + pgvector setup.
+- [ ] Tenant-scoped cache key.
+- [ ] RAG pipeline cho CRM knowledge.
+
+#### Tuần 41–43: AI SRE (Code-LLM)
+- [ ] DeepSeek-Coder fine-tune trên codebase RINCO.
+- [ ] Sentry webhook integration.
+- [ ] Auto-PR generator.
+
+#### Tuần 44–46: Whisper STT cho Meeting
+- [ ] Whisper.cpp + TensorRT trên GPU node.
+- [ ] Real-time caption.
+- [ ] Action items extraction.
+
+#### Tuần 47–48: GPU Composite Recording
+- [ ] CUDA composite layout.
+- [ ] 4K@60fps recording.
+- [ ] Direct chunked upload to MinIO.
+
+### 19.5. Acceptance Gate chung cho mỗi Phase
+- [ ] Tất cả service pass integration test.
+- [ ] Lighthouse FCP/LCP đạt target.
+- [ ] Load test 10K RPS không lỗi.
+- [ ] Security scan không có critical CVE.
+- [ ] Audit log coverage 100%.
+- [ ] Documentation cập nhật.
+
+## 20. Testing Strategy End-to-End
+
+### 20.1. Test Pyramid
+
+```
+                    ┌─────────┐
+                    │   E2E   │  10% (Playwright + Cypress)
+                    ├─────────┤
+                  ┌─┴─────────┴─┐
+                  │ Integration │  20% (Testcontainers + dockertest)
+                  ├─────────────┤
+                ┌─┴─────────────┴─┐
+                │   Unit Test     │  70% (Go testify, Rust cargo test, Vitest)
+                └─────────────────┘
+```
+
+### 20.2. Unit Test Targets
+
+| Service | Coverage target | Tools |
+|---------|----------------|-------|
+| api-gateway | ≥ 85% | testify + gomock |
+| landing-ingest | ≥ 90% | testify + dockertest Scylla |
+| crm-core | ≥ 85% | testify + dockertest Postgres |
+| tree-org | ≥ 85% | testify + dockertest Postgres |
+| auth-service | ≥ 90% | testify + WebAuthn mock |
+| chat-engine | ≥ 80% | cargo test + scylla mock |
+| media-sfu | ≥ 70% | cargo test + str0m mock |
+| recorder | ≥ 70% | gtest + NVENC mock |
+| ai-scoring | ≥ 75% | pytest + ONNX mock |
+| ai-conversation | ≥ 70% | pytest + vLLM mock |
+| meta-capi | ≥ 85% | testify + httptest |
+| tenant-manager | ≥ 85% | testify + K3s fake client |
+
+### 20.3. Integration Tests (Test Pattern)
+
+Ví dụ test cho landing-ingest:
+```go
+// services/landing-ingest/internal/service/ingest_test.go
+package service_test
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    "github.com/stretchr/testify/require"
+    "github.com/testcontainers/testcontainers-go/modules/scylladb"
+    "github.com/testcontainers/testcontainers-go/modules/nats"
+
+    "rinco/landing-ingest/internal/service"
+)
+
+func TestIngestLead_EndToEnd(t *testing.T) {
+    ctx := context.Background()
+
+    // 1. Spin up ScyllaDB container
+    scylla, _ := scylladb.RunContainer(ctx, testcontainers.WithImage("scylladb/scylla:6"))
+    defer scylla.Terminate(ctx)
+
+    // 2. Spin up NATS container
+    natsC, _ := nats.RunContainer(ctx)
+    defer natsC.Terminate(ctx)
+
+    // 3. Init service
+    svc := service.New(service.Config{
+        ScyllaEndpoints: []string{scylla.ConnectionString()},
+        NATSEndpoint:    natsC.ConnectionString(),
+    })
+
+    // 4. Submit lead
+    leadID, err := svc.Ingest(ctx, service.IngestInput{
+        TenantID:  "test-tenant",
+        Email:     "user@example.com",
+        Phone:     "+84909123456",
+        FullName:  "Nguyen Van A",
+        UTMSource: "facebook",
+        FBCLID:    "fb.1.123456789.987654321",
+    })
+    require.NoError(t, err)
+    require.NotEmpty(t, leadID)
+
+    // 5. Verify event published to NATS
+    sub, _ := natsC.Subscribe("test-tenant.lead.created")
+    msg, err := sub.NextMsgWithTimeout(ctx, 5*time.Second)
+    require.NoError(t, err)
+    require.Contains(t, string(msg.Data), leadID)
+
+    // 6. Verify persisted to ScyllaDB
+    var stored service.IngestInput
+    err = scylla.Query("SELECT * FROM rinco_chat.leads_raw WHERE lead_id = ?", leadID).Scan(&stored)
+    require.NoError(t, err)
+    require.Equal(t, "user@example.com", stored.Email)
+}
+
+func TestIngestLead_DuplicateSubmission(t *testing.T) {
+    // Setup
+    ctx := context.Background()
+    scylla, _ := scylladb.RunContainer(ctx)
+    defer scylla.Terminate(ctx)
+    natsC, _ := nats.RunContainer(ctx)
+    defer natsC.Terminate(ctx)
+    svc := service.New(service.Config{
+        ScyllaEndpoints: []string{scylla.ConnectionString()},
+        NATSEndpoint:    natsC.ConnectionString(),
+    })
+
+    idempotencyKey := "idem-key-123"
+    input := service.IngestInput{
+        TenantID:       "test-tenant",
+        Email:          "user@example.com",
+        IdempotencyKey: idempotencyKey,
+    }
+
+    // First submission
+    leadID1, err := svc.Ingest(ctx, input)
+    require.NoError(t, err)
+
+    // Second submission (same idempotency key)
+    leadID2, err := svc.Ingest(ctx, input)
+    require.NoError(t, err)
+
+    // Should return same lead ID
+    require.Equal(t, leadID1, leadID2)
+}
+
+func TestIngestLead_InvalidEmail(t *testing.T) {
+    ctx := context.Background()
+    svc := setupTestService(t, ctx)
+    defer teardownTestService(t, svc)
+
+    _, err := svc.Ingest(ctx, service.IngestInput{
+        TenantID: "test-tenant",
+        Email:    "invalid-email",
+    })
+
+    require.Error(t, err)
+    require.Equal(t, service.ErrValidation, err)
+}
+```
+
+### 20.4. E2E Tests (Playwright Pattern)
+
+```typescript
+// apps/landing/e2e/lead-submission.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('Landing Page Lead Submission', () => {
+  test('happy path: submit form → lead appears in admin dashboard', async ({ page, request }) => {
+    // 1. Visit landing page
+    await page.goto('/apexfintech');
+    await expect(page.locator('h1')).toContainText('Apex Fintech');
+
+    // 2. Fill form
+    await page.fill('input[name="full_name"]', 'Nguyen Van Test');
+    await page.fill('input[name="phone"]', '0909123456');
+    await page.fill('input[name="email"]', 'test@example.com');
+
+    // 3. Intercept Meta Pixel call
+    const pixelCalls: any[] = [];
+    await page.exposeFunction('captureFbq', (event: any) => pixelCalls.push(event));
+    await page.addInitScript(() => {
+      (window as any).fbq = ((...args: any[]) => {
+        (window as any).captureFbq(args);
+      });
+    });
+
+    // 4. Submit
+    const [response] = await Promise.all([
+      page.waitForResponse('**/api/ingest/v1/leads'),
+      page.click('button[type="submit"]'),
+    ]);
+    expect(response.status()).toBe(200);
+
+    // 5. Verify Meta Pixel fired
+    expect(pixelCalls.some(c => c[1] === 'track' && c[2] === 'Lead')).toBeTruthy();
+
+    // 6. Login admin and verify lead appears
+    await page.goto('/admin/login');
+    await page.fill('input[name="email"]', 'admin@rinco.app');
+    await page.click('button:has-text("Login with YubiKey")');
+    // ... YubiKey mock ...
+
+    await page.goto('/admin/tenants/apexfintech/leads');
+    await expect(page.locator('table tbody tr').first()).toContainText('Nguyen Van Test');
+  });
+
+  test('rejects bot submission without Wasm attestation', async ({ page, request }) => {
+    // 1. Block Wasm
+    await page.route('**/attestation.wasm', route => route.abort());
+
+    // 2. Submit form
+    await page.goto('/apexfintech');
+    await page.fill('input[name="full_name"]', 'Bot User');
+    await page.fill('input[name="phone"]', '0000');
+    await page.click('button[type="submit"]');
+
+    // 3. Should get rejected
+    await expect(page.locator('text=Browser verification failed')).toBeVisible();
+  });
+});
+```
+
+### 20.5. Load Testing (k6 Pattern)
+
+```javascript
+// tests/load/landing-ingest.js
+import http from 'k6/http';
+import { check } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 1000 },
+    { duration: '1m', target: 10000 },
+    { duration: '2m', target: 50000 },
+    { duration: '30s', target: 0 },
+  ],
+  thresholds: {
+    http_req_duration: ['p(99)<50'],
+    http_req_failed: ['rate<0.001'],
+  },
+};
+
+export default function () {
+  const payload = JSON.stringify({
+    tenant_id: `load-test-${__VU % 100}`,
+    full_name: 'Load Test User',
+    phone: `0909${String(__VU).padStart(6, '0')}`,
+    email: `load${__VU}@example.com`,
+    event_id: crypto.randomUUID(),
+    idempotency_key: crypto.randomUUID(),
+  });
+
+  const res = http.post('http://api.rinco.local/api/ingest/v1/leads', payload, {
+    headers: {
+      'Content-Type': 'application/json',
+      'X-HMAC-Signature': __ENV.HMAC_SECRET, // Generated by setup script
+    },
+  });
+
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'latency < 50ms': (r) => r.timings.duration < 50,
+  });
+}
+```
+
+### 20.6. Security Testing
+
+```bash
+# OWASP ZAP baseline scan
+docker run -v $(pwd):/zap/wrk/:rw \
+  owasp/zap2docker-stable \
+  zap-baseline.py -t http://api.rinco.local
+
+# SQL injection fuzzing
+sqlmap -u "http://api.rinco.local/api/crm/v1/leads?id=1" \
+       --batch --level=5 --risk=3 \
+       --dbms=PostgreSQL
+
+# eBPF security scan
+bpftool prog show | grep rinco
+
+# Container security scan
+trivy image ghcr.io/itdoanh/rinco/crm-core:latest
+```
+
+## 21. Migration Plan cho Schema & Service
+
+### 21.1. Nguyên tắc Migration
+
+1. **Backward compatible:** Mọi migration phải tương thích ngược với code version cũ.
+2. **Zero-downtime:** Không được downtime > 30s.
+3. **Reversible:** Mỗi migration phải có file `down.sql` tương ứng.
+4. **Test trên staging:** Bắt buộc chạy trên staging trước.
+5. **Monitoring:** Theo dõi metric trong 24h sau deploy.
+
+### 21.2. Workflow Migration
+
+```
+[Dev] Tạo migration file
+   ↓
+[CI] Lint SQL + dry-run trên staging snapshot
+   ↓
+[Review] 2 reviewers approve
+   ↓
+[Merge] Vào main branch
+   ↓
+[ArgoCD] Auto-sync lên staging cluster
+   ↓
+[Staging Smoke] Run smoke test 30 phút
+   ↓
+[Canary 10%] Deploy lên 10% production nodes
+   ↓
+[Monitor 1h] Check error rate, latency
+   ↓
+[Canary 50%] Nếu OK → 50% nodes
+   ↓
+[Monitor 1h]
+   ↓
+[Full rollout] 100% production
+   ↓
+[Monitor 24h]
+```
+
+### 21.3. Pattern: Thêm cột mới (Zero-Downtime)
+
+```sql
+-- +goose Up
+-- +goose StatementBegin
+
+-- Step 1: Thêm nullable column
+ALTER TABLE leads ADD COLUMN ai_score DECIMAL(5,2);
+
+-- Step 2: Tạo partial index cho performance
+CREATE INDEX CONCURRENTLY idx_leads_ai_score 
+ON leads(tenant_id, ai_score DESC) 
+WHERE ai_score IS NOT NULL;
+
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+DROP INDEX IF EXISTS idx_leads_ai_score;
+ALTER TABLE leads DROP COLUMN IF EXISTS ai_score;
+-- +goose StatementEnd
+```
+
+Sau khi deploy migration, code sẽ bắt đầu ghi vào `ai_score`. Sau 7 ngày backfill xong, đánh `NOT NULL`:
+
+```sql
+-- +goose Up
+-- +goose StatementBegin
+ALTER TABLE leads ALTER COLUMN ai_score SET NOT NULL;
+ALTER TABLE leads ALTER COLUMN ai_score SET DEFAULT 0;
+-- +goose StatementEnd
+```
+
+### 21.4. Pattern: Đổi kiểu cột
+
+```sql
+-- +goose Up
+-- +goose StatementBegin
+-- Bước 1: Tạo cột mới
+ALTER TABLE leads ADD COLUMN phone_new TEXT;
+
+-- Bước 2: Backfill (chạy trong batch)
+DO $$
+DECLARE
+  last_id UUID;
+BEGIN
+  LOOP
+    UPDATE leads SET phone_new = phone
+    WHERE id > COALESCE(last_id, '00000000-0000-0000-0000-000000000000'::UUID)
+      AND phone_new IS NULL
+    LIMIT 1000
+    RETURNING id INTO last_id;
+    EXIT WHEN last_id IS NULL;
+    COMMIT;
+  END LOOP;
+END $$;
+
+-- Bước 3: Tạo trigger cho write đồng thời
+CREATE OR REPLACE FUNCTION sync_phone_new() RETURNS TRIGGER AS $$
+BEGIN
+  NEW.phone_new := NEW.phone;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER leads_phone_sync
+BEFORE INSERT OR UPDATE OF phone ON leads
+FOR EACH ROW EXECUTE FUNCTION sync_phone_new();
+-- +goose StatementEnd
+```
+
+Sau khi ứng dụng đọc từ `phone_new`, drop `phone`:
+
+```sql
+ALTER TABLE leads DROP COLUMN phone;
+ALTER TABLE leads RENAME COLUMN phone_new TO phone;
+DROP TRIGGER leads_phone_sync;
+DROP FUNCTION sync_phone_new();
+```
+
+### 21.5. Pattern: Microservice Decomposition
+
+Khi cần tách 1 service lớn thành nhiều service nhỏ:
+
+```
+Trước:                          Sau:
+[CRM-Core (monolith)]          [CRM-Lead Service]
+                               [CRM-Deal Service]
+                               [CRM-Activity Service]
+```
+
+Quy trình Strangler Fig Pattern:
+1. **Tạo service mới** với API tương đương.
+2. **Route 1% traffic** sang service mới (canary).
+3. **Compare** kết quả giữa 2 version.
+4. **Tăng dần** 10% → 50% → 100%.
+5. **Deprecate** service cũ.
+
+### 21.6. Migration Tracking Sheet
+
+| Date | Service | Type | Risk | Status |
+|------|---------|------|------|--------|
+| 2026-09-15 | crm-core | Add column ai_score | Low | Pending |
+| 2026-10-01 | crm-core | Change phone column | Medium | Pending |
+| 2026-10-15 | chat-engine | Strangler → chat-engine-v2 | High | Pending |
+| 2026-11-01 | tree-org | Refactor ltree path | Medium | Pending |
+
+## 22. Disaster Recovery
+
+### 22.1. RPO & RTO Targets
+
+| Service | RPO (max data loss) | RTO (recovery time) | Backup frequency |
+|---------|---------------------|---------------------|------------------|
+| **api-gateway** | 0 (stateless) | 30s | N/A |
+| **crm-core (Postgres)** | 5 min | 30 min | WAL continuous + daily |
+| **tree-org (Postgres)** | 5 min | 30 min | WAL continuous + daily |
+| **chat-engine (ScyllaDB)** | 1 hour | 2 hours | Daily snapshot |
+| **landing-ingest (ScyllaDB)** | 1 hour | 2 hours | Daily snapshot |
+| **analytics (ClickHouse)** | 1 hour | 4 hours | Daily |
+| **MinIO/S3 (Media)** | 0 (replicated) | 1 hour | Cross-region replication |
+| **Valkey (Cache)** | 0 (acceptable loss) | 5 min | AOF |
+| **Tenant config (Postgres)** | 1 min | 15 min | WAL continuous |
+
+### 22.2. Disaster Scenarios & Response
+
+#### Scenario A: 1 Service Crash
+**Detection:** K3s liveness probe fail sau 3 lần.
+**Response:**
+1. K3s restart pod (< 2s).
+2. Nếu vẫn fail → restart toàn deployment (rolling restart).
+3. Alert P2 tới SRE.
+4. Tự phục hồi, không cần can thiệp.
+
+#### Scenario B: 1 Node Fail
+**Detection:** Heartbeat miss sau 30s.
+**Response:**
+1. K3s reschedule pods sang node khác.
+2. WireGuard mesh route lại.
+3. Alert P1, on-call kiểm tra log.
+4. Recovery tự động trong 5-10 phút.
+
+#### Scenario C: Database Primary Down
+**Detection:** Health check fail.
+**Response:**
+1. PgBouncer route read sang replica.
+2. Manual promote replica thành primary (< 5 phút).
+3. WAL archive dùng để fill gap.
+4. Alert P0, SRE manual.
+
+#### Scenario D: Region Fail (Multi-Region)
+**Detection:** Traffic drop > 80% trong 1 region.
+**Response:**
+1. DNS failover sang region khác (< 30s).
+2. Replica region take over.
+3. RPO có thể lên tới 5 phút.
+4. Alert P0, war room.
+
+#### Scenario E: Cyber Attack (Ransomware)
+**Detection:** Anomaly AI score > threshold.
+**Response:**
+1. Auto-isolate infected tenant.
+2. Block IP via eBPF XDP_DROP.
+3. Restore từ backup ngày hôm qua.
+4. Forensic analysis.
+5. Alert P0, incident response team.
+
+#### Scenario F: Data Corruption (Bad Migration)
+**Detection:** Smoke test fail hoặc user report.
+**Response:**
+1. Rollback migration (`goose down`).
+2. Rollback code version.
+3. Restore data từ backup snapshot trước deploy.
+4. RTO: 30 phút – 1 giờ.
+
+### 22.3. Backup Strategy chi tiết
+
+```bash
+#!/bin/bash
+# scripts/backup-postgres.sh
+set -e
+
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/backup/postgres/$TIMESTAMP"
+
+# 1. Full backup
+pg_basebackup -h postgres-primary -D $BACKUP_DIR/base \
+  --checkpoint=fast --wal-method=stream
+
+# 2. Compress
+tar czf $BACKUP_DIR.tar.gz $BACKUP_DIR
+rm -rf $BACKUP_DIR
+
+# 3. Upload to MinIO
+mc cp $BACKUP_DIR.tar.gz minio/backups/postgres/
+
+# 4. Verify checksum
+sha256sum $BACKUP_DIR.tar.gz > $BACKUP_DIR.tar.gz.sha256
+
+# 5. Retain 30 days
+mc rm --recursive --force --older-than 30d minio/backups/postgres/
+
+echo "Backup completed: $BACKUP_DIR.tar.gz"
+```
+
+### 22.4. DR Drill (Hàng quý)
+
+```yaml
+# tests/dr/drill-job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dr-drill-q3-2026
+spec:
+  template:
+    spec:
+      containers:
+      - name: dr-drill
+        image: rinco/dr-drill:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          # 1. Tạo dummy tenant với 1000 Lead
+          # 2. Snapshot Postgres
+          # 3. Kill primary Postgres
+          # 4. Promote replica
+          # 5. Verify: tenant còn đọc/ghi được Lead không?
+          # 6. Verify: không mất data (so sánh checksum)
+          # 7. Pass/Fail report
+        env:
+        - name: SLACK_WEBHOOK
+          valueFrom:
+            secretKeyRef:
+              name: dr-secrets
+              key: slack-webhook
+      restartPolicy: Never
+```
+
+## 23. Cost Estimation (rough numbers)
+
+### 23.1. Infrastructure Cost (Cloud Provider – AWS/equivalent)
+
+| Component | Spec | Qty | Unit price | Monthly |
+|-----------|------|-----|------------|---------|
+| **K3s Control Plane** | 4 vCPU, 16GB RAM | 3 | $120 | $360 |
+| **Edge Gateway (Rust)** | 8 vCPU, 16GB, 10Gbps net | 4 | $200 | $800 |
+| **API Gateway (Go)** | 4 vCPU, 8GB | 4 | $120 | $480 |
+| **App Services** | 4 vCPU, 8GB | 12 | $120 | $1,440 |
+| **PostgreSQL Primary** | 8 vCPU, 32GB, 500GB NVMe | 1 | $400 | $400 |
+| **PostgreSQL Replica** | 8 vCPU, 32GB | 2 | $300 | $600 |
+| **ScyllaDB** | 8 vCPU, 32GB, 1TB NVMe | 3 | $400 | $1,200 |
+| **ClickHouse** | 16 vCPU, 64GB, 2TB NVMe | 3 | $600 | $1,800 |
+| **Valkey Cluster** | 4 vCPU, 16GB | 3 | $150 | $450 |
+| **MinIO Nodes** | 8 vCPU, 16GB, 4TB HDD | 4 | $300 | $1,200 |
+| **GPU Recorder Node** | 16 vCPU, 32GB, NVIDIA L4 | 2 | $1,500 | $3,000 |
+| **GPU AI Node (A100)** | 32 vCPU, 128GB, 1xA100 | 2 | $4,000 | $8,000 |
+| **MongoDB** | 4 vCPU, 16GB, 200GB | 2 | $200 | $400 |
+| **Meilisearch** | 4 vCPU, 8GB | 2 | $100 | $200 |
+| **Object Storage (Backups)** | - | - | $0.023/GB | $500 |
+| **Bandwidth** | 10TB egress | - | $0.05/GB | $500 |
+| **Load Balancer** | - | 2 | $30 | $60 |
+| **EIP** | - | 10 | $5 | $50 |
+| **Total Infrastructure** | - | - | - | **~$21,440/month** |
+
+### 23.2. AI Cost (GPU Inference)
+
+| Service | GPU | Cost/hour | Hours/month | Monthly |
+|---------|-----|-----------|-------------|---------|
+| vLLM (chatbot) | 2xA100 | $4 | 720 | $2,880 |
+| Whisper STT | 1xL4 | $0.7 | 720 | $504 |
+| Recording | 2xL4 | $1.4 | 720 | $1,008 |
+| AI Scoring | CPU only | - | - | $50 |
+| AI SRE | 1xA100 (burst) | $2 | 100 | $200 |
+| **Total AI** | - | - | - | **~$4,642/month** |
+
+### 23.3. External Service Cost
+
+| Service | Cost model | Monthly |
+|---------|-----------|---------|
+| Sentry (Team) | per seat | $300 |
+| Datadog (or VictoriaMetrics self-host) | - | $0 (self-host) |
+| Let's Encrypt | free | $0 |
+| Cloudflare (DNS + DDoS) | Pro plan | $200 |
+| GitHub (Team) | per seat | $400 |
+| **Total External** | - | **~$900/month** |
+
+### 23.4. Tổng chi phí hàng tháng
+
+```
+Infrastructure:  $21,440
+AI:               $4,642
+External:           $900
+─────────────────────────
+Tổng:            $26,982/month
+```
+
+Cho 10,000 tenants với 100K MAU mỗi tenant (~1M MAU tổng):
+- Chi phí trên mỗi MAU: **~$27 / 1000 MAU = $0.027/MAU**
+- Chi phí trên mỗi tenant: **$26,982 / 10,000 = ~$2.7/tenant/month**
+
+### 23.5. So sánh với SaaS truyền thống
+
+| SaaS | Chi phí/tenant/month (100 user) |
+|------|---------------------------------|
+| HubSpot Marketing Hub | $890 |
+| Salesforce Sales Cloud | $1,500 |
+| Intercom + Zoom + Calendly (bundle) | $500 |
+| **RINCO** | **~$2.7** (chưa tính giá bán) |
+
+→ **Tiết kiệm 90%+** so với SaaS truyền thống như cam kết trong OG2.
+
+### 23.6. Break-even Analysis
+
+| Giá bán/tenant/month | Số tenant để hòa vốn | Lợi nhuận ở 10K tenants |
+|----------------------|----------------------|--------------------------|
+| $50 | 540 | $473,018 |
+| $100 | 270 | $973,018 |
+| $200 | 135 | $1,973,018 |
+| $500 | 54 | $4,973,018 |
+
+## 24. Performance Budget & SLO Matrix
+
+### 24.1. Service-Level Objectives (SLO)
+
+| Service | Metric | Target | Measurement |
+|---------|--------|--------|-------------|
+| **api-gateway** | p99 latency | < 20ms | Prometheus histogram |
+| | availability | ≥ 99.95% | Uptime check |
+| | error rate | < 0.1% | 5xx / total |
+| **landing-ingest** | p99 latency | < 50ms | Prometheus |
+| | availability | ≥ 99.9% | Uptime |
+| | write throughput | > 100K/s | Scylla load test |
+| **crm-core** | p99 read latency | < 30ms | ClickHouse/Prom |
+| | p99 write latency | < 50ms | Prometheus |
+| | availability | ≥ 99.9% | Uptime |
+| **chat-engine** | p99 message latency | < 50ms | Custom metric |
+| | concurrent connections | > 100K per node | Load test |
+| | availability | ≥ 99.9% | Uptime |
+| **media-sfu** | p99 first frame | < 200ms | Custom metric |
+| | concurrent streams | > 500 per node | Load test |
+| | availability | ≥ 99.95% | Uptime |
+| **meta-capi** | success rate | > 95% | Worker metric |
+| | p99 latency to FB | < 500ms | Custom |
+| **ai-scoring** | p99 inference | < 5ms | Custom |
+| **ai-conversation** | first token | < 200ms | vLLM metric |
+| **analytics dashboard** | p99 query | < 1s | ClickHouse |
+
+### 24.2. Error Budget
+
+Monthly error budget = (1 - SLO) × Time × Request volume
+
+Ví dụ cho api-gateway:
+- SLO: 99.95% → error budget = 0.05%
+- 1 tháng = 2,592,000s
+- Nếu 100K req/s → ~7.776 × 10¹¹ requests/tháng
+- Error budget: 3.888 × 10⁸ errors
+
+Nếu vượt error budget → freeze deploy, chỉ hotfix.
+
+### 24.3. Performance Budget cho Frontend
+
+| Asset | Budget |
+|---|---|
+| HTML | < 50KB |
+| CSS | < 30KB (gzipped) |
+| JS (critical) | < 100KB (gzipped) |
+| Image (above fold) | < 200KB total |
+| Font | < 50KB |
+| **Total above fold** | **< 500KB** |
+| FCP | < 0.4s |
+| LCP | < 0.8s |
+| TTI | < 1.5s |
+| TBT | < 100ms |
+| CLS | < 0.05 |
+
+### 24.4. Capacity Planning
+
+| Phase | DAU | Peak CCU | Storage/mo | Bandwidth/mo |
+|-------|-----|----------|------------|--------------|
+| MVP (Q1) | 10K | 1K | 100GB | 1TB |
+| Phase 2 (Q2) | 100K | 10K | 1TB | 10TB |
+| Phase 3 (Q3) | 500K | 50K | 5TB | 50TB |
+| Phase 4 (Q4) | 1M | 100K | 10TB | 100TB |
+| Year 2 | 10M | 1M | 100TB | 1PB |
+
+## 25. Concrete Open Questions / TBD
+
+### 25.1. Cần user xác nhận ngay ✋
+
+| # | Câu hỏi | Options | Recommendation |
+|---|---------|---------|----------------|
+| Q1 | **Ngân sách ban đầu cho Phase 1?** | (a) Chỉ local Docker Compose, (b) + 1 VPS test, (c) Full K3s cluster | (b) – balance cost & reality |
+| Q2 | **Có cần Dedicated Server cho ScyllaDB không?** | (a) Yêu cầu NVMe bare-metal, (b) Cloud instance OK | (a) cho performance |
+| Q3 | **Phiên bản Go cụ thể?** | 1.22, 1.23, 1.24, 1.25, 1.26 | 1.26 (mới nhất 2026) |
+| Q4 | **Có hỗ trợ on-premise hoàn toàn không (no cloud)?** | (a) Cloud-first, (b) Hybrid, (c) Full on-prem | (b) cho flexibility |
+| Q5 | **Whisper model nào?** | tiny, base, small, medium, large | medium (best balance) |
+| Q6 | **LLM cho chatbot: open-source hay commercial API?** | (a) Llama-3 self-host, (b) GPT-4 API, (c) Both | (a) – cost & privacy |
+| Q7 | **Backup retention bao lâu?** | 7, 30, 90, 365 ngày | 90 ngày hot + 1 năm archive |
+| Q8 | **Có cần hỗ trợ LDAP/SSO cho Enterprise?** | (a) Phase 1, (b) Phase 2, (c) Phase 3 | (b) |
+| Q9 | **Mobile App native hay React Native?** | (a) Native (Swift/Kotlin), (b) RN, (c) Flutter | (c) Flutter – single codebase |
+| Q10 | **Có cần hỗ trợ Email Marketing tích hợp không?** | (a) Yes full, (b) Yes basic, (c) No | (b) |
+
+### 25.2. Cần quyết định trong Phase tiếp theo 📋
+
+| # | Câu hỏi | Impact | Owner |
+|---|---------|--------|-------|
+| Q11 | Tenant isolation: shared DB + RLS hay DB-per-tenant? | Performance vs security | Architecture team |
+| Q12 | Rate limit per tenant nên là bao nhiêu? | Quota, billing | Product |
+| Q13 | Có cần hỗ trợ tenant custom-branding sâu? | Effort, cost | Design |
+| Q14 | Có nên dùng CockroachDB thay Postgres để scale? | Operational complexity | Architecture |
+| Q15 | Có cần hỗ trợ multi-language UI (i18n)? | Effort | Frontend |
+| Q16 | GDPR/PDPA compliance level? | Legal, features | Legal |
+| Q17 | Notification channels ưu tiên? | Effort | Product |
+| Q18 | Cách tính usage-based billing? | Complexity | Finance |
+| Q19 | Có cần Edge locations (Cloudflare Workers)? | Cost, perf | Architecture |
+| Q20 | Data residency cho VN khách hàng? | Compliance | Legal |
+
+### 25.3. TBD kỹ thuật ⏳
+
+| # | Item | Status | Next step |
+|---|------|--------|-----------|
+| T1 | Chọn HAProxy vs Envoy cho API Gateway | TBD | Benchmark Q4 2026 |
+| T2 | ClickHouse cluster size ban đầu | TBD | Test với 1 node first |
+| T3 | NATS JetStream storage backend (file vs memory) | TBD | Test performance |
+| T4 | Valkey vs KeyDB so sánh | TBD | Valkey 9.x chosen (theo yeucauthietke) |
+| T5 | Meilisearch vs Typesense | TBD | Meilisearch chosen (Tiếng Việt tốt) |
+| T6 | Cargo workspace structure | TBD | Decide after Rust services > 5 |
+| T7 | WireGuard vs Tailscale vs Nebula | TBD | Headscale chosen (open source) |
+| T8 | Prometheus vs VictoriaMetrics vs Mimir | TBD | VictoriaMetrics chosen (scale) |
+| T9 | ClickHouse Grafana datasource vs custom BFF | TBD | Use direct Grafana plugin |
+| T10 | Frontend monorepo (Turborepo/Nx) | TBD | Decide after apps > 3 |
+
+### 25.4. Risk Register ⚠️
+
+| Risk | Probability | Impact | Mitigation |
+|------|-------------|--------|------------|
+| io_uring + Go GC conflict | High | Critical | Use Rust gateway only |
+| AI vendor lock-in | Medium | High | Self-host Llama-3 fallback |
+| ScyllaDB operational complexity | Medium | High | Hire DBA, automation |
+| Multi-region latency | Medium | Medium | Single-region Phase 1 |
+| WireGuard debugging | Medium | Medium | Mesh observability dashboard |
+| Customer data leak | Low | Critical | Multi-layer defense (RLS, encryption, audit) |
+| Vendor outage (Stripe, FB) | Medium | Medium | Multiple providers, offline mode |
+| Open-source dependency CVE | High | Medium | Dependabot + Renovate weekly |
+
+---
+
+**Tài liệu này là bản thiết kế chính (master) phiên bản 1.1 đã được mở rộng. Mọi phần chi tiết phải đọc kèm theo các file trong `docs/01-*` đến `docs/11-*`.**
