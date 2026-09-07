@@ -1,29 +1,118 @@
 [package]
 name = "chat-engine"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.81"
+description = "RINCO Chat Engine with end-to-end encryption (Signal Protocol) + ScyllaDB + Valkey"
+license = "Proprietary"
 
 [[bin]]
 name = "chat-engine"
 path = "src/main.rs"
 
+[lib]
+name = "chat_engine"
+path = "src/lib.rs"
+
+[features]
+default = ["scylla-driver"]
+# GPU/CPU code path switches (always compile both, choose at runtime)
+gpu = []
+# Optional native OpenCV binding (off by default; CPU compositor fallback used)
+opencv = []
+
 [dependencies]
+# Async runtime
 tokio = { version = "1.40", features = ["full"] }
-axum = "0.7"
+tokio-stream = "0.1"
+tokio-tungstenite = "0.24"
+futures = "0.3"
+futures-util = "0.3"
+async-trait = "0.1"
+
+# HTTP / WS
+axum = { version = "0.7", features = ["ws", "macros"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
+hyper = "1.4"
+
+# gRPC / Connect-RPC
+tonic = { version = "0.12", features = ["transport", "tls", "gzip"] }
+prost = "0.13"
+prost-types = "0.13"
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-uuid = { version = "1.10", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-gocql = "0.8"
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+flatbuffers = "24.3"
+bytes = "1.7"
+
+# Database – ScyllaDB
+scylla = { version = "0.13", optional = true }
+# Database – Valkey (Redis compatible)
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager", "aio", "streams"] }
+
+# NATS
+async-nats = "0.37"
+
+# Crypto (Signal Protocol primitives)
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+chacha20poly1305 = "0.10"
+aes-gcm = "0.10"
+hkdf = "0.12"
+sha2 = "0.10"
+sha3 = "0.10"
+hmac = "0.12"
+blake3 = "1.5"
+rand = "0.8"
+rand_core = "0.6"
+ring = "0.17"
+argon2 = "0.5"
+zeroize = { version = "1.7", features = ["derive"] }
+subtle = "2.6"
+
+# Telemetry
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+opentelemetry = { version = "0.24", features = ["trace"] }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.17", features = ["tonic", "trace"] }
+tracing-opentelemetry = "0.25"
+
+# Metrics
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false }
+
+# Config / errors
+config = { version = "0.14", default-features = false, features = ["toml", "yaml"] }
 anyhow = "1.0"
 thiserror = "2.0"
-async-graphql = "7.0"
-async-graphql-axum = "7.0"
-futures = "0.3"
+
+# Concurrency primitives
 parking_lot = "0.12"
 dashmap = "6.0"
+
+# IDs / Time
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Encoding
+base64 = "0.22"
+hex = "0.4"
+url = "2.5"
+
+# Logging context
+tracing-futures = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["test-util", "macros"] }
+proptest = "1.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+mockall = "0.13"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

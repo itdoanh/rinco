@@ -1,76 +1,76 @@
-//! Presence Manager - tracks user online/offline status qua Valkey.
+//! Presence + typing + read-receipt orchestration.
 
-use anyhow::Result;
 use chrono::Utc;
-use redis::AsyncCommands;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub struct PresenceManager {
-    redis: redis::Client,
+use crate::api::types::Presence;
+use crate::db::redis::RedisStore;
+use crate::error::ChatResult;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresenceEvent {
+    pub user_id: Uuid,
+    pub device_id: u64,
+    pub online: bool,
+    pub last_seen: chrono::DateTime<Utc>,
 }
 
-impl PresenceManager {
-    pub fn new(redis: redis::Client) -> Self {
-        Self { redis }
-    }
-
-    pub async fn update(
-        &self,
-        tenant_id: Uuid,
-        user_id: Uuid,
-        status: &str,
-    ) -> Result<()> {
-        let mut conn = self.redis.get_async_connection().await?;
-        let key = format!("presence:{}:{}", tenant_id, user_id);
-        let now = Utc::now().timestamp();
-
-        // Set status with TTL based on status
-        let ttl = match status {
-            "online" => 60,     // 60s heartbeat
-            "away" => 300,      // 5 minutes
-            "dnd" => 86400,     // 24 hours
-            _ => 0,
-        };
-
-        let _: () = conn
-            .hset_multiple(
-                &key,
-                &[
-                    ("status", status),
-                    ("last_seen", &now.to_string()),
-                ],
-            )
-            .await?;
-
-        if ttl > 0 {
-            let _: () = conn.expire(&key, ttl as i64).await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn get(
-        &self,
-        tenant_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<Option<PresenceInfo>> {
-        let mut conn = self.redis.get_async_connection().await?;
-        let key = format!("presence:{}:{}", tenant_id, user_id);
-
-        let status: Option<String> = conn.hget(&key, "status").await?;
-        let last_seen: Option<i64> = conn.hget(&key, "last_seen").await?;
-
-        Ok(status.map(|s| PresenceInfo {
-            user_id: user_id.to_string(),
-            status: s,
-            last_seen: last_seen.unwrap_or(0),
-        }))
-    }
+/// Periodic heartbeat task. Refreshes the `presence:{user_id}` key and emits
+/// `presence_changed` events to `user:{user_id}` so subscribers learn that the
+/// user is still online.
+pub async fn heartbeat(
+    redis: &RedisStore,
+    user_id: Uuid,
+    device_id: u64,
+) -> ChatResult<()> {
+    let p = Presence {
+        user_id,
+        device_id,
+        online: true,
+        last_seen: Utc::now(),
+    };
+    redis.set_presence(&p).await?;
+    let event = PresenceEvent {
+        user_id,
+        device_id,
+        online: true,
+        last_seen: p.last_seen,
+    };
+    redis
+        .publish_json(
+            &format!("user:{}", user_id),
+            &serde_json::to_value(&event)?,
+        )
+        .await?;
+    Ok(())
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PresenceInfo {
-    pub user_id: String,
-    pub status: String,
-    pub last_seen: i64,
+/// Mark a user as offline (used by graceful WebSocket close).
+pub async fn mark_offline(
+    redis: &RedisStore,
+    user_id: Uuid,
+    device_id: u64,
+) -> ChatResult<()> {
+    let event = PresenceEvent {
+        user_id,
+        device_id,
+        online: false,
+        last_seen: Utc::now(),
+    };
+    redis
+        .publish_json(
+            &format!("user:{}", user_id),
+            &serde_json::to_value(&event)?,
+        )
+        .await?;
+    Ok(())
+}
+
+/// Fetch presence for a list of user ids in one round-trip.
+pub async fn presence_for(
+    redis: &RedisStore,
+    user_ids: &[Uuid],
+) -> ChatResult<Vec<Presence>> {
+    redis.get_presences(user_ids).await
 }
