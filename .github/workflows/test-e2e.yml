@@ -1,0 +1,164 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '20'
+  PLAYWRIGHT_VERSION: '1.48.0'
+
+jobs:
+  e2e-landing:
+    name: E2E Landing Page
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      landing:
+        image: node:20-alpine
+        ports:
+          - 3000:3000
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8080
+        options: >-
+          --health-cmd "curl -f http://localhost:3000"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/landing/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend/landing
+          npm ci
+
+      - name: Install Playwright
+        run: |
+          npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: |
+          cd frontend/landing
+          npm run build
+
+      - name: Start server
+        run: |
+          cd frontend/landing
+          npm run start &
+          sleep 5
+
+      - name: Run E2E tests
+        run: |
+          cd frontend/landing
+          npx playwright test e2e/landing.spec.ts --reporter=list
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-landing
+          path: frontend/landing/playwright-report/
+          retention-days: 7
+
+      - name: Upload test screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-screenshots-landing
+          path: frontend/landing/test-results/
+          retention-days: 7
+
+  e2e-admin:
+    name: E2E Admin Portal
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/admin-portal/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend/admin-portal
+          npm ci
+
+      - name: Install Playwright
+        run: |
+          npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: |
+          cd frontend/admin-portal
+          npm run build
+
+      - name: Run E2E tests
+        run: |
+          cd frontend/admin-portal
+          npx playwright test e2e/auth.spec.ts e2e/tenant.spec.ts --reporter=list
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-admin
+          path: frontend/admin-portal/playwright-report/
+          retention-days: 7
+
+  e2e-tenant:
+    name: E2E Tenant Site
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/tenant-site/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd frontend/tenant-site
+          npm ci
+
+      - name: Install Playwright
+        run: |
+          npx playwright install --with-deps chromium
+
+      - name: Build application
+        run: |
+          cd frontend/tenant-site
+          npm run build
+
+      - name: Run E2E tests
+        run: |
+          cd frontend/tenant-site
+          npx playwright test --reporter=list
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-tenant
+          path: frontend/tenant-site/playwright-report/
+          retention-days: 7
