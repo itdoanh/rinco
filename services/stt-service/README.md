@@ -1,128 +1,87 @@
-# STT Service (Speech-to-Text)
+# STT Service
 
-Service chuyển đổi giọng nói thành text sử dụng faster-whisper.
+Speech-to-text transcription service powered by **faster-whisper** (Whisper large-v3) with optional speaker diarization via **pyannote.audio**.
 
-## Tính năng
+## Quick Start
 
-- **High Accuracy**: Whisper large-v3 model
-- **Vietnamese Support**: Hỗ trợ tốt tiếng Việt
-- **GPU Acceleration**: CUDA support cho inference nhanh
-- **Multi-language**: 99+ languages
-- **Streaming**: Real-time transcription
-- **Speaker Diarization**: Phân biệt người nói
-- **Timestamps**: Word-level và segment-level timestamps
-- **Format Support**: MP3, WAV, M4A, FLAC, OGG
-
-## Công nghệ
-
-- **Language**: Python 3.11+
-- **Framework**: FastAPI
-- **STT Model**: faster-whisper (CTranslate2-based)
-- **Models**: Whisper tiny/base/small/medium/large-v3
-- **GPU**: CUDA (NVIDIA)
-
-## API Endpoints
-
-```
-POST   /transcribe             - Upload file và transcribe
-POST   /transcribe-url         - Transcribe từ URL
-POST   /transcribe/stream      - Streaming với WebSocket
-GET    /models                 - List available models
-POST   /models/download        - Download model
-GET    /health                 - Health check
+```bash
+pip install -r requirements.txt
+python main.py
 ```
 
-## Transcribe Request
-
-```
-POST /transcribe
-Content-Type: multipart/form-data
-
-{
-  "file": <audio binary>,
-  "language": "vi",        # Auto-detect if not specified
-  "model": "large-v3",     # tiny/base/small/medium/large-v3
-  "task": "transcribe",    # transcribe or translate
-  "diarize": false,
-  "word_timestamps": true
-}
-```
-
-## Transcribe Response
-
-```json
-{
-  "task": "transcribe",
-  "language": "vi",
-  "duration": 120.5,
-  "segments": [
-    {
-      "id": 0,
-      "start": 0.0,
-      "end": 3.5,
-      "text": "Xin chào, tôi là nhân viên tư vấn.",
-      "words": [
-        {"word": "Xin", "start": 0.0, "end": 0.3, "probability": 0.98},
-        {"word": "chào", "start": 0.3, "end": 0.7, "probability": 0.99},
-        ...
-      ]
-    }
-  ],
-  "text": "Xin chào, tôi là nhân viên tư vấn...",
-  "model": "large-v3",
-  "compute_time": 8.2
-}
-```
-
-## Model Performance
-
-| Model | VRAM | Speed | Accuracy (WER) |
-|-------|------|-------|----------------|
-| tiny | 1GB | 30x realtime | 12% |
-| base | 1GB | 15x realtime | 8% |
-| small | 2GB | 8x realtime | 6% |
-| medium | 5GB | 4x realtime | 4% |
-| large-v3 | 10GB | 1.5x realtime | 2.5% |
-
-(với GPU NVIDIA A100, audio tiếng Việt)
+The service runs on `http://0.0.0.0:8093`.
 
 ## Environment Variables
 
+| Variable | Default | Description |
+|---|---|---|
+| `WHISPER_MODEL` | `large-v3` | Whisper model size |
+| `WHISPER_DEVICE` | `cuda` | Device (`cuda` or `cpu`) |
+| `WHISPER_COMPUTE` | `float16` | Compute type (`float16`, `int8`, etc.) |
+| `AUDIO_SAMPLE_RATE` | `16000` | Target audio sample rate |
+
+## Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/health` | Health check |
+| `GET` | `/v1/metrics` | Prometheus metrics |
+| `GET` | `/v1/languages` | List supported languages |
+| `POST` | `/v1/transcribe` | Transcribe audio file |
+| `POST` | `/v1/transcribe/stream` | Stream transcription via SSE |
+| `POST` | `/v1/detect-language` | Detect spoken language |
+| `POST` | `/v1/align` | Forced word-level alignment |
+
+## API Examples
+
+### Transcribe audio
+
 ```bash
-STT_SERVICE_PORT=8089
-MODEL_SIZE=large-v3
-DEVICE=cuda                  # cuda or cpu
-COMPUTE_TYPE=float16         # float16, int8, float32
-BEAM_SIZE=5
-VAD_FILTER=true              # Voice Activity Detection
-DOWNLOAD_ROOT=/models/whisper
-MAX_FILE_SIZE=524288000      # 500MB
+curl -X POST http://localhost:8093/v1/transcribe \
+  -F "file=@audio.wav" \
+  -F "language=vi"
 ```
+
+### Stream transcription
+
+```bash
+curl -X POST http://localhost:8093/v1/transcribe/stream \
+  -F "file=@audio.wav" \
+  -F "language=vi"
+```
+
+### Detect language
+
+```bash
+curl -X POST http://localhost:8093/v1/detect-language \
+  -F "file=@audio.wav"
+```
+
+### Word-level alignment
+
+```bash
+curl -X POST http://localhost:8093/v1/align \
+  -F "file=@audio.wav" \
+  -F "reference_text=Hello world" \
+  -F "language=en"
+```
+
+## Supported Languages
+
+Vietnamese (vi), English (en), Chinese (zh), Japanese (ja), Korean (ko), French (fr), German (de), Spanish (es), Portuguese (pt), Russian (ru), Arabic (ar), Hindi (hi), Thai (th), Indonesian (id), Malay (ms), Tagalog (tl), Burmese (my), Khmer (km), Lao (lo).
 
 ## Development
 
 ```bash
-pip install -r requirements.txt
+# Run tests
+pytest tests/
 
-# CPU mode
-uvicorn main:app --host 0.0.0.0 --port 8089
-
-# GPU mode
-CUDA_VISIBLE_DEVICES=0 uvicorn main:app --host 0.0.0.0 --port 8089
+# Run with hot reload
+uvicorn app.main:app --reload --port 8093
 ```
 
-## Use Cases
+## Optional Dependencies
 
-1. **Meeting Transcription**: Tự động tạo transcript cho cuộc họp
-2. **Call Center Analytics**: Phân tích cuộc gọi
-3. **Voice Notes**: Chuyển voice message thành text
-4. **Subtitle Generation**: Tạo phụ đề cho video
-5. **Voice Commands**: Speech-to-text cho AI assistant
-
-## Performance Optimization
-
-- **VAD Filter**: Skip silent segments (30% speedup)
-- **Beam Search**: Tune beam_size vs speed
-- **Batch Processing**: Process multiple files in parallel
-- **Caching**: Cache model in memory
-- **Quantization**: Use int8 for 2x speedup
+- **pyannote.audio** — speaker diarization (`pip install pyannote-audio`)
+- **whisperx** — forced word-level alignment (`pip install whisperx`)
+- **ffmpeg** — audio preprocessing (install separately)

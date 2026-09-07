@@ -1,122 +1,56 @@
-# Lead Scoring Service (RINCO)
+# lead-scoring
 
-> **Phân hệ #11.3 — AI Predictive** · Ensemble ML scoring 0-100 với tier + recommended_action + SHAP explanations.
-> Multi-tenant (model per tenant + global fallback). Pull features từ PostgreSQL/ClickHouse/MongoDB, publish `lead.scored` qua NATS JetStream, writeback score vào PG.
+RINCO AI service: predicts a 0–100 score, tier and recommended action
+for inbound leads.  Backed by an ensemble (XGBoost + ONNX NN + sklearn
+LogisticRegression baseline) per tenant.
 
-## 1. Endpoints (7)
+## Endpoints
 
-| Method | Path | Mô tả |
-|--------|------|-------|
-| POST | `/v1/score/{lead_id}` | Score 1 lead |
-| POST | `/v1/score` | Score 1 lead (no path id) |
-| POST | `/v1/score/batch` | Batch ≤ 1000 |
-| POST | `/v1/train` | Train lại (admin) |
-| GET  | `/v1/model/info` | Metrics hiện tại |
-| POST | `/v1/explain/{lead_id}` | SHAP top factors |
-| GET  | `/v1/health` / `/v1/metrics` | Self |
+| Method | Path                       | Description |
+|--------|----------------------------|-------------|
+| POST   | `/v1/score`                | Score a single lead (no id) |
+| POST   | `/v1/score/{lead_id}`      | Score + persist lead_id |
+| POST   | `/v1/score/batch`          | Up to 1000 leads per request |
+| POST   | `/v1/train`                | (admin) re-train tenant model |
+| GET    | `/v1/model/info`           | Current model metadata |
+| POST   | `/v1/explain/{lead_id}`    | SHAP feature contributions |
+| GET    | `/v1/health`               | Service health |
+| GET    | `/v1/metrics`              | Prometheus exposition |
 
-## 2. Architecture
+## Pipeline
 
 ```
-                 ┌────────────────────────────────────────────────────────┐
-                 │                  NATS JetStream                         │
-                 │   subscribe "lead.created"  → publish "lead.scored"     │
-                 └─────────────────────┬──────────────────────────────────┘
-                                       ▼
-   ┌──────────────────────────────────────────────────────────────────┐
-   │                    Lead Scoring Python                            │
-   │   ┌─────────────┐  ┌──────────────┐  ┌──────────────────────┐      │
-   │   │  Feature    │  │  Ensemble    │  │  Post-processing     │      │
-   │   │  Engineer   │─▶│  XGB + NN +  │─▶│  tier / action / SHAP │     │
-   │   │  (~40 cols) │  │  Fallback    │  │  writeback PG         │     │
-   │   └─────────────┘  └──────────────┘  └──────────────────────┘      │
-   └──────────────────────────────────────────────────────────────────┘
+NATS lead.created → feature store (PG/CH/Mongo) → engineer ~40 features
+   → ensemble (XGBoost + NN ONNX + LogReg baseline)
+   → score + tier + recommended_action + confidence
+   → publish lead.scored → writeback PG
 ```
 
-## 3. Features (40+)
+## Configuration
 
-| Group         | Names |
-|---------------|-------|
-| Demographic   | `has_phone`, `has_email`, `country_vn/us`, `company_length` |
-| Behavioral    | `page_views`, `time_on_site_log`, `repeat_visits`, `fbclid_present` |
-| Engagement    | `email_opens`, `email_clicks`, `form_fills`, `open_rate`, `ctr` |
-| Firmographic  | `is_b2b`, `company_size_sm/md/lg`, `company_revenue_log` |
-| Source        | `source_paid/organic/direct/referral`, `source_quality`, `channel_conv_rate` |
-| Device        | `is_mobile/tablet/desktop` |
+| Env var                  | Default            |
+|--------------------------|--------------------|
+| `LEAD_SCORING_ENV`       | `development`      |
+| `LEAD_SCORING_HTTP_ADDR` | `:8092`            |
+| `LEAD_SCORING_MODEL_DIR` | `/models`          |
+| `LEAD_SCORING_NATS_URL`  | `nats://nats:4222` |
+| `LEAD_SCORING_NATS_SUBJECT` | `lead.created`  |
+| `LEAD_SCORING_POSTGRES_URL` | —                |
+| `LEAD_SCORING_CLICKHOUSE_URL` | —             |
+| `LEAD_SCORING_MONGO_URL` | —                  |
+| `LEAD_SCORING_MAX_BATCH_SIZE` | `1000`        |
+| `MLFLOW_TRACKING_URI`    | —                  |
+| `MLFLOW_EXPERIMENT`      | `lead-scoring`     |
 
-## 4. Models
-
-1. **XGBoost** (primary) — `n_estimators=80, max_depth=4, lr=0.08`
-2. **Neural Net ONNX** — loaded via `onnxruntime` if available (share=0.3)
-3. **LogisticRegression fallback** — always trained (share=1 - sum(weights))
-4. Ensemble: weighted average of available model probabilities.
-
-## 5. Tier + Action matrix
-
-| Score 0-100  | Tier      | recommended_action |
-|--------------|-----------|--------------------|
-| ≥ 85         | very-hot  | call-now           |
-| ≥ 60         | hot       | call-soon          |
-| ≥ 30         | warm      | email              |
-| < 30         | cold      | nurture            |
-
-## 6. ENV
-
-| Var | Default | Purpose |
-|-----|---------|---------|
-| `PORT` | `8092` | HTTP port |
-| `MODEL_DIR` | `/models` | dir chứa `<tenant>/model.pkl` |
-| `NATS_URL` | `nats://nats:4222` | NATS server |
-| `NATS_SUBJECT` | `lead.created` | listen subject |
-| `LOG_LEVEL` | `INFO` | - |
-| `ALLOW_PUBLIC_TRAIN` | `0` | set `1` để public train |
-
-## 7. Run
+## Build
 
 ```bash
-pip install -r services/lead-scoring/requirements.txt
-cd services/lead-scoring
-uvicorn main:app --host 0.0.0.0 --port 8092 --workers 2
+docker build -f services/lead-scoring/Dockerfile -t rinco/lead-scoring .
 ```
 
-Hoặc Docker:
-```bash
-docker build -t rinco/lead-scoring -f Dockerfile .
-```
-
-## 8. Examples
-
-```bash
-curl -X POST http://localhost:8092/v1/score/L-001 \
-  -H 'Content-Type: application/json' \
-  -H 'X-Tenant-ID: apex' \
-  -d '{
-    "email": "alice@example.com",
-    "phone": "0981234567",
-    "source": "facebook_ads",
-    "page_views": 5,
-    "time_on_site_seconds": 240,
-    "has_phone": true,
-    "fbclid": "abc",
-    "country": "VN",
-    "device_type": "mobile",
-    "email_opens": 3,
-    "email_clicks": 1,
-    "form_fills": 1
-  }'
-```
-
-```bash
-# Train lại (super-admin only)
-curl -X POST http://localhost:8092/v1/train \
-  -H 'X-Is-Super-Admin: true' \
-  -H 'Content-Type: application/json' \
-  -d '{"tenant_id": "apex", "notes": "Q3 retrain"}'
-```
-
-## 9. Tests
+## Test
 
 ```bash
 cd services/lead-scoring
-pytest -q
+pytest -q tests/
 ```

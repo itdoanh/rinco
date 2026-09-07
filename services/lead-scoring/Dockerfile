@@ -1,20 +1,31 @@
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /build
+COPY services/lead-scoring/requirements.txt .
+RUN pip install --prefix=/install --no-cache-dir -r requirements.txt
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
 
 WORKDIR /app
 
-# System deps for audio / ffmpeg (kept here even though STT is separate —
-# lead-scoring may ingest audio-derived features in future).
+# System deps for runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY services/lead-scoring/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy installed dependencies from the build image.
+COPY --from=builder /install /usr/local
 
+# Copy service code.
 COPY services/lead-scoring/ .
 
 # Non-root user.
