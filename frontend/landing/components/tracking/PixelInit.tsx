@@ -1,38 +1,56 @@
-'use client';
+"use client";
 
-import { useEffect } from 'react';
-import { initPixel } from '@/lib/pixel';
-import { getCookie } from '@/lib/utils';
+import { useEffect, useState } from "react";
+import { trackClick } from "@/lib/pixel";
 
 interface PixelInitProps {
   pixelId?: string;
-  tenantId?: string;
 }
 
-export function PixelInit({ pixelId, tenantId = '' }: PixelInitProps) {
+declare global {
+  interface Window {
+    fbq: (...args: unknown[]) => void;
+  }
+}
+
+export function PixelInit({ pixelId }: PixelInitProps) {
+  const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
-    if (!pixelId) return;
+    if (loaded) return;
 
-    // Initialize Meta Pixel
-    initPixel(pixelId);
+    const id = pixelId || process.env.NEXT_PUBLIC_FB_PIXEL_ID;
+    if (!id) return;
 
-    // Track PageView
-    if (typeof window !== 'undefined' && (window as Window & { fbq?: Function }).fbq) {
-      (window as Window & { fbq: Function }).fbq('track', 'PageView', {
-        tenant_id: tenantId,
-      });
+    // Check if already loaded
+    if (typeof window !== "undefined" && window.fbq) {
+      setLoaded(true);
+      return;
     }
-  }, [pixelId, tenantId]);
+
+    // Create script
+    const script = document.createElement("script");
+    script.async = true;
+    script.src = "https://connect.facebook.net/en_US/fbevents.js";
+    script.onload = () => setLoaded(true);
+    document.head.appendChild(script);
+
+    // Initialize pixel
+    window.fbq = function () {
+      window.fbq.push(arguments);
+    };
+    window.fbq.push = window.fbq;
+    window.fbq.loaded = true;
+    window.fbq.version = "2.0";
+    window.fbq.queue = [];
+
+    window.fbq("init", id);
+    window.fbq("track", "PageView");
+
+    setLoaded(true);
+  }, [pixelId, loaded]);
 
   return null;
 }
 
-// Type declarations for Meta Pixel
-declare global {
-  interface Window {
-    fbq: ((action: string, event: string, data?: Record<string, unknown>) => void) & {
-      queue: Array<[string, string, Record<string, unknown>?]>;
-    };
-    _fbq: typeof fbq;
-  }
-}
+export default PixelInit;

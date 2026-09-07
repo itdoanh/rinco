@@ -1,24 +1,23 @@
 # Tenant Site
 
-Dynamic landing page renderer for RINCO multi-tenant platform.
+Dynamic tenant site renderer for RINCO multi-tenant platform.
 
 ## Features
 
-- Dynamic routing for `/[tenant]/[page]`
-- Branding customization per tenant
-- Block-based page rendering
-- Form submission with lead tracking
-- Responsive design with Tailwind CSS
+- **Dynamic Branding**: CSS variables for per-tenant theming
+- **Block Rendering**: Dynamic content blocks from API
+- **SSR with ISR**: Server-side rendering with incremental static regeneration
 
-## Setup
+## Getting Started
 
 ```bash
-npm install
-npm run dev
+bun install
+bun dev
 ```
 
-## Environment Variables
+Access at http://localhost:3002
 
-```
-NEXT_PUBLIC_API_URL=http://localhost:8080
-```
+## URL Structure
+
+- `/[tenant]` - Tenant homepage
+- `/[tenant]/[page]` - Tenant subpages

@@ -1,121 +1,100 @@
-import { useState, useCallback } from 'react';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { leadSchema, type LeadFormData } from '@/lib/schemas';
+"use client";
+
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { leadSchema, type LeadFormData } from "@/lib/schema";
+import { useState, useCallback } from "react";
+import { trackFormSubmit } from "@/lib/tracking";
+import { trackLead } from "@/lib/pixel";
 
 interface UseFormSubmitOptions {
-  tenantId: string;
-  pageId: string;
-  webhookUrl?: string;
-  onSuccess?: (data: LeadFormData) => void;
+  formName: string;
+  tenantSlug?: string;
+  pageSlug?: string;
+  onSuccess?: () => void;
   onError?: (error: Error) => void;
 }
 
-interface UseFormSubmitReturn {
-  isSubmitting: boolean;
-  isSuccess: boolean;
-  error: string | null;
-  submit: (data: Record<string, string>) => Promise<void>;
-  reset: () => void;
-}
-
 export function useFormSubmit({
-  tenantId,
-  pageId,
-  webhookUrl,
+  formName,
+  tenantSlug,
+  pageSlug,
   onSuccess,
   onError,
-}: UseFormSubmitOptions): UseFormSubmitReturn {
+}: UseFormSubmitOptions) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const form = useForm<LeadFormData>({
+    resolver: zodResolver(leadSchema),
+    mode: "onBlur",
+  });
+
   const submit = useCallback(
-    async (data: Record<string, string>) => {
+    async (data: LeadFormData) => {
       setIsSubmitting(true);
       setError(null);
 
       try {
-        // Validate with Zod
-        const validatedData = leadSchema.parse({
-          ...data,
-          tenant_id: tenantId,
-          page_id: pageId,
-        });
-
-        // Get UTM params
-        const utmParams = getUTMFromCookie();
-        const payload: LeadFormData = {
-          ...validatedData,
-          ...utmParams,
-        };
-
-        // Submit to API
-        const response = await fetch('/api/leads', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+        // Submit via API
+        const response = await fetch("/api/leads", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Tenant-Slug": tenantSlug || "",
+            "X-Page-Slug": pageSlug || "",
+            "X-Form-Name": formName,
+          },
+          body: JSON.stringify({
+            ...data,
+            form_name: formName,
+            tenant_slug: tenantSlug,
+            page_slug: pageSlug,
+          }),
         });
 
         if (!response.ok) {
-          throw new Error('Failed to submit form');
+          throw new Error("Submission failed");
         }
 
-        // Submit to webhook if provided
-        if (webhookUrl) {
-          await fetch(webhookUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-          }).catch((err) => {
-            console.warn('Webhook submission failed:', err);
-          });
-        }
+        // Track events
+        trackLead(formName, "Webinar Registration", "VND", 0);
+        await trackFormSubmit(
+          formName,
+          {
+            name: data.name,
+            phone: data.phone,
+            email: data.email,
+          },
+          tenantSlug,
+          pageSlug
+        );
 
         setIsSuccess(true);
-        onSuccess?.(payload);
+        form.reset();
+        onSuccess?.();
+
+        // Reset after 3s
+        setTimeout(() => setIsSuccess(false), 3000);
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Có lỗi xảy ra';
-        setError(errorMessage);
-        onError?.(new Error(errorMessage));
+        const error = err instanceof Error ? err : new Error("Unknown error");
+        setError(error.message);
+        onError?.(error);
       } finally {
         setIsSubmitting(false);
       }
     },
-    [tenantId, pageId, webhookUrl, onSuccess, onError]
+    [formName, tenantSlug, pageSlug, form, onSuccess, onError]
   );
 
-  const reset = useCallback(() => {
-    setIsSubmitting(false);
-    setIsSuccess(false);
-    setError(null);
-  }, []);
-
   return {
+    form,
+    submit,
     isSubmitting,
     isSuccess,
     error,
-    submit,
-    reset,
   };
 }
 
-function getUTMFromCookie(): Partial<LeadFormData> {
-  if (typeof document === 'undefined') return {};
-
-  const getCookie = (name: string) => {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) return parts.pop()?.split(';').shift() || '';
-    return '';
-  };
-
-  return {
-    utm_source: getCookie('_rinco_utm_source'),
-    utm_medium: getCookie('_rinco_utm_medium'),
-    utm_campaign: getCookie('_rinco_utm_campaign'),
-    utm_content: getCookie('_rinco_utm_content'),
-    utm_term: getCookie('_rinco_utm_term'),
-    referrer: document.referrer || undefined,
-  };
-}
+export default useFormSubmit;

@@ -1,93 +1,113 @@
-'use client';
+"use client";
 
-import { cn } from '@/lib/utils';
-import { TestimonialBlockData } from '@/lib/block-types';
-import { Avatar, AvatarFallback, AvatarImage } from '@repo/ui/components/ui/avatar';
-import { Star } from 'lucide-react';
+import Image from "next/image";
+import { cn } from "@/lib/utils";
 
-interface TestimonialProps {
-  data: TestimonialBlockData;
-  className?: string;
+interface Testimonial {
+  name: string;
+  role?: string;
+  avatar?: string;
+  content: string;
+  rating?: number;
 }
 
-export function Testimonial({ data, className }: TestimonialProps) {
-  const {
-    title,
-    testimonials = [],
-    theme = 'light',
-  } = data;
+interface TestimonialSectionProps {
+  data: {
+    title?: string;
+    testimonials?: Testimonial[];
+    style?: string;
+  };
+}
 
-  const isDark = theme === 'dark';
+export function TestimonialSection({ data }: TestimonialSectionProps) {
+  const defaultTestimonials: Testimonial[] = [
+    {
+      name: "Nguyễn Văn A",
+      role: "Nhà đầu tư cá nhân",
+      content:
+        "Sau khi tham gia webinar, tôi hiểu rõ hơn về cơ chế T+0 và bắt đầu giao dịch thành công. Đội ngũ APEX hỗ trợ rất nhiệt tình.",
+      rating: 5,
+    },
+    {
+      name: "Trần Thị B",
+      role: "Doanh nhân",
+      content:
+        "Được tư vấn 1:1 bởi chuyên gia, tôi đã xây dựng được chiến lược phòng ngừa rủi ro hiệu quả cho việc kinh doanh xuất nhập khẩu.",
+      rating: 5,
+    },
+    {
+      name: "Lê Hoàng C",
+      role: "Nhà đầu tư F0",
+      content:
+        "Tài liệu Ebook rất chi tiết, dễ hiểu. Tôi từ người chưa biết gì giờ đã tự tin tham gia thị trường hàng hóa.",
+      rating: 5,
+    },
+  ];
+
+  const testimonials = data.testimonials?.length
+    ? data.testimonials
+    : defaultTestimonials;
 
   return (
-    <section className={cn(
-      'py-16 lg:py-24',
-      isDark ? 'bg-navy-900 text-white' : 'bg-slate-50'
-    )}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section className="bg-white py-16 md:py-24">
+      <div className="max-w-7xl mx-auto px-4">
         {/* Header */}
-        {title && (
-          <div className="text-center mb-12">
-            <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-              {title}
-            </h2>
-          </div>
-        )}
+        <div className="text-center mb-12">
+          <span className="inline-flex items-center gap-2 bg-orange/10 border-2 border-orange text-orange px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest mb-5">
+            CẢM NHẬN KHÁCH HÀNG
+          </span>
+          <h2 className="font-heading text-3xl md:text-4xl font-black text-navy-900">
+            {data.title || "Họ Đã Thành Công Cùng APEX"}
+          </h2>
+        </div>
 
         {/* Testimonials Grid */}
-        <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3">
-          {testimonials.map((testimonial, index) => (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {testimonials.map((testimonial, idx) => (
             <div
-              key={index}
+              key={idx}
               className={cn(
-                'rounded-2xl p-6 shadow-lg',
-                isDark ? 'bg-navy-800' : 'bg-white'
+                "bg-gray-50 rounded-2xl p-6 border border-gray-100",
+                "hover:shadow-lg hover:-translate-y-1 transition-all duration-300"
               )}
             >
-              {/* Stars */}
+              {/* Rating */}
               {testimonial.rating && (
                 <div className="flex gap-1 mb-4">
-                  {Array.from({ length: 5 }).map((_, i) => (
-                    <Star
-                      key={i}
-                      className={cn(
-                        'w-4 h-4',
-                        i < (testimonial.rating || 0)
-                          ? 'fill-yellow-400 text-yellow-400'
-                          : isDark ? 'text-gray-600' : 'text-gray-300'
-                      )}
-                    />
+                  {Array.from({ length: testimonial.rating }).map((_, i) => (
+                    <span key={i} className="text-amber-400 text-lg">
+                      ★
+                    </span>
                   ))}
                 </div>
               )}
 
-              {/* Quote */}
-              <blockquote className={cn(
-                'text-base leading-relaxed mb-6',
-                isDark ? 'text-gray-300' : 'text-gray-600'
-              )}>
-                &ldquo;{testimonial.quote}&rdquo;
-              </blockquote>
+              {/* Content */}
+              <p className="text-gray-700 leading-relaxed mb-4">
+                "{testimonial.content}"
+              </p>
 
               {/* Author */}
               <div className="flex items-center gap-3">
-                <Avatar className="w-12 h-12">
-                  {testimonial.avatar && (
-                    <AvatarImage src={testimonial.avatar} alt={testimonial.name} />
-                  )}
-                  <AvatarFallback className={isDark ? 'bg-navy-700' : 'bg-gray-200'}>
-                    {testimonial.name.charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
+                {testimonial.avatar ? (
+                  <Image
+                    src={testimonial.avatar}
+                    alt={testimonial.name}
+                    width={40}
+                    height={40}
+                    className="w-10 h-10 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-orange to-amber flex items-center justify-center text-white font-bold">
+                    {testimonial.name[0]}
+                  </div>
+                )}
                 <div>
-                  <div className="font-semibold">{testimonial.name}</div>
-                  {(testimonial.role || testimonial.company) && (
-                    <div className={cn(
-                      'text-sm',
-                      isDark ? 'text-gray-400' : 'text-gray-500'
-                    )}>
-                      {[testimonial.role, testimonial.company].filter(Boolean).join(' tại ')}
-                    </div>
+                  <p className="font-bold text-navy-900 text-sm">
+                    {testimonial.name}
+                  </p>
+                  {testimonial.role && (
+                    <p className="text-gray-500 text-xs">{testimonial.role}</p>
                   )}
                 </div>
               </div>
@@ -98,3 +118,5 @@ export function Testimonial({ data, className }: TestimonialProps) {
     </section>
   );
 }
+
+export default TestimonialSection;

@@ -1,42 +1,46 @@
 # Meeting UI
 
-Video conferencing interface for RINCO Platform with WebRTC support.
+WebRTC video meeting application for RINCO platform.
 
 ## Features
 
-- WebRTC peer-to-peer video/audio
-- WebSocket signaling
-- Screen sharing
-- Real-time chat
-- Participant management
-- Responsive video grid
+- **Pre-join screen**: Device selection and preview
+- **Video grid**: Responsive grid for multiple participants
+- **Controls**: Mute, camera, screen share, recording
+- **Chat**: Real-time encrypted messaging
+- **Participant list**: View all participants
+- **Fullscreen mode**: Immersive viewing
 
 ## Tech Stack
 
-- Next.js 15
-- TypeScript
-- Tailwind CSS
-- Zustand (state management)
-- simple-peer (WebRTC abstraction)
+- **Framework**: Next.js 15
+- **Language**: TypeScript
+- **State Management**: Zustand
+- **Styling**: Tailwind CSS
 
-## Setup
+## Getting Started
 
 ```bash
-npm install
-npm run dev
+bun install
+bun dev
 ```
 
-## Environment Variables
+Access at http://localhost:3003
 
-```
-NEXT_PUBLIC_API_URL=http://localhost:8080
-NEXT_PUBLIC_SIGNALING_URL=ws://localhost:8080/ws
-```
+## URL Structure
 
-## API Endpoints
+- `/` - Home/landing page
+- `/meeting/[room_id]` - Meeting room
 
-- `GET /api/signaling` - Get signaling status
-- `POST /api/signaling` - Send signaling message
-- `GET /api/room` - Get room info
-- `POST /api/room` - Create room
-- `DELETE /api/room` - Delete room
+## WebRTC Flow
+
+1. User joins pre-join page, selects devices
+2. Get user media (camera + microphone)
+3. Connect to signaling server (WebSocket)
+4. Exchange SDP offers/answers via signaling
+5. Establish P2P connections with ICE candidates
+6. Stream media between participants
+
+## Signaling Server
+
+Requires a WebSocket signaling server at `NEXT_PUBLIC_SIGNALING_URL`.

@@ -1,85 +1,102 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { cn } from '@/lib/utils';
-import { FAQBlockData } from '@/lib/block-types';
-import { ChevronDown } from 'lucide-react';
+import { useState } from "react";
+import { cn } from "@/lib/utils";
 
-interface FAQProps {
-  data: FAQBlockData;
-  className?: string;
+interface FAQ {
+  question: string;
+  answer: string;
 }
 
-export function FAQ({ data, className }: FAQProps) {
-  const {
-    title,
-    subtitle,
-    items = [],
-    defaultOpen = 0,
-  } = data;
-
-  const [openIndex, setOpenIndex] = useState<number | null>(defaultOpen);
-
-  const toggleItem = (index: number) => {
-    setOpenIndex(openIndex === index ? null : index);
+interface FAQProps {
+  data: {
+    title?: string;
+    items?: FAQ[];
+    style?: string;
   };
+}
+
+export function FAQSection({ data }: FAQProps) {
+  const [openIndex, setOpenIndex] = useState<number | null>(0);
+
+  const defaultItems: FAQ[] = [
+    {
+      question: "Hàng hóa phái sinh là gì?",
+      answer:
+        "Hàng hóa phái sinh là các công cụ tài chính mà giá trị của chúng phụ thuộc vào giá của một tài sản cơ sở (như vàng, dầu, nông sản...). Cho phép nhà đầu tư giao dịch với đòn bẩy, thanh toán T+0 và kiếm lời từ cả 2 chiều tăng và giảm giá.",
+    },
+    {
+      question: "Thanh toán T+0 là gì?",
+      answer:
+        "T+0 là hình thức thanh toán trong cùng ngày giao dịch. Khi bạn đóng vị thế, tiền bán sẽ được cộng ngay vào tài khoản, không cần chờ như chứng khoán truyền thống (T+2).",
+    },
+    {
+      question: "Giao dịch 2 chiều là gì?",
+      answer:
+        "Giao dịch 2 chiều cho phép bạn đặt lệnh Mua (Long) khi kỳ vọng giá tăng và lệnh Bán (Short) khi kỳ vọng giá giảm. Cả 2 chiều đều có thể sinh lời.",
+    },
+    {
+      question: " Webinar có miễn phí không?",
+      answer:
+        "Hoàn toàn miễn phí! Đăng ký tham dự Webinar Zoom sẽ nhận ngay Bộ 10 Ebook Thực Chiến Đầu Tư Hàng Hóa Phái Sinh và được tư vấn 1:1 bởi chuyên gia có chứng chỉ MXV.",
+    },
+    {
+      question: "Tôi cần chuẩn bị gì để tham gia?",
+      answer:
+        "Bạn chỉ cần đăng ký, điều chỉnh thiết bị (máy tính/điện thoại có loa và micro), và tham gia đúng giờ. Không cần tài khoản giao dịch trước.",
+    },
+  ];
+
+  const items = data.items?.length ? data.items : defaultItems;
 
   return (
-    <section className={cn('py-16 lg:py-24 bg-white', className)}>
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+    <section className="bg-gray-50 py-16 md:py-24">
+      <div className="max-w-3xl mx-auto px-4">
         {/* Header */}
         <div className="text-center mb-12">
-          {title && (
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
-              {title}
-            </h2>
-          )}
-          {subtitle && (
-            <p className="text-lg text-gray-600">
-              {subtitle}
-            </p>
-          )}
+          <span className="inline-flex items-center gap-2 bg-orange/10 border-2 border-orange text-orange px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest mb-5">
+            CÂU HỎI THƯỜNG GẶP
+          </span>
+          <h2 className="font-heading text-3xl md:text-4xl font-black text-navy-900">
+            {data.title || "Giải Đáp Thắc Mắc"}
+          </h2>
         </div>
 
         {/* FAQ Items */}
         <div className="space-y-4">
-          {items.map((item, index) => (
+          {items.map((item, idx) => (
             <div
-              key={index}
-              className={cn(
-                'rounded-xl border transition-all duration-200',
-                openIndex === index
-                  ? 'border-orange-500 shadow-md'
-                  : 'border-gray-200 hover:border-gray-300'
-              )}
+              key={idx}
+              className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden"
             >
               <button
                 type="button"
-                onClick={() => toggleItem(index)}
-                className="w-full flex items-center justify-between p-5 text-left"
-                aria-expanded={openIndex === index}
+                onClick={() => setOpenIndex(openIndex === idx ? null : idx)}
+                className="w-full flex items-center justify-between p-6 text-left"
               >
-                <span className="font-semibold text-gray-900 pr-4">
-                  {item.question}
-                </span>
-                <ChevronDown
+                <span className="font-bold text-navy-900 pr-4">{item.question}</span>
+                <span
                   className={cn(
-                    'w-5 h-5 text-gray-500 flex-shrink-0 transition-transform duration-200',
-                    openIndex === index && 'rotate-180'
+                    "w-8 h-8 rounded-full bg-orange/10 text-orange flex items-center justify-center flex-shrink-0 transition-transform",
+                    openIndex === idx && "rotate-180"
                   )}
-                />
+                >
+                  <svg
+                    className="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path d="M19 9l-7 7-7-7" />
+                  </svg>
+                </span>
               </button>
-
-              <div
-                className={cn(
-                  'overflow-hidden transition-all duration-200',
-                  openIndex === index ? 'max-h-96' : 'max-h-0'
-                )}
-              >
-                <div className="p-5 pt-0 text-gray-600 leading-relaxed">
+              {openIndex === idx && (
+                <div className="px-6 pb-6 text-gray-600 leading-relaxed">
                   {item.answer}
                 </div>
-              </div>
+              )}
             </div>
           ))}
         </div>
@@ -87,3 +104,5 @@ export function FAQ({ data, className }: FAQProps) {
     </section>
   );
 }
+
+export default FAQSection;

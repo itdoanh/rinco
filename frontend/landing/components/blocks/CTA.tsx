@@ -1,91 +1,87 @@
-'use client';
+"use client";
 
-import { cn } from '@/lib/utils';
-import { CTABlockData } from '@/lib/block-types';
-import { Button } from '@repo/ui/components/ui/button';
-import { ArrowRight } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { trackClick } from "@/lib/pixel";
 
 interface CTAProps {
-  data: CTABlockData;
-  className?: string;
+  data: {
+    title?: string;
+    subtitle?: string;
+    cta_text?: string;
+    cta_label?: string;
+    benefits?: string[];
+    style?: string;
+  };
+  onCtaClick?: () => void;
 }
 
-export function CTA({ data, className }: CTAProps) {
-  const {
-    title,
-    description,
-    button_text,
-    button_link = '#',
-    secondary_button_text,
-    secondary_button_link = '#',
-    theme = 'gradient',
-  } = data;
+export function CTA({ data, onCtaClick }: CTAProps) {
+  const defaultBenefits = [
+    "Miễn phí 100% – Không phát sinh chi phí",
+    "Tặng Bộ 10 Ebook Thực Chiến Đầu Tư",
+    "Tư vấn 1:1 bởi chuyên gia có chứng chỉ MXV",
+  ];
 
-  const themeClasses = {
-    light: 'bg-white',
-    dark: 'bg-navy-900 text-white',
-    gradient: 'bg-gradient-to-r from-orange-500 to-amber-500',
-  }[theme];
-
-  const isDark = theme === 'dark';
-  const isGradient = theme === 'gradient';
+  const benefits = data.benefits?.length ? data.benefits : defaultBenefits;
 
   return (
-    <section className={cn('py-16 lg:py-24', themeClasses, className)}>
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h2 className={cn(
-          'text-3xl sm:text-4xl lg:text-5xl font-bold mb-6',
-          isGradient ? 'text-white' : isDark ? '' : 'text-gray-900'
-        )}>
-          {title}
-        </h2>
+    <section className="bg-gradient-to-br from-gray-50 via-white to-orange-50 py-16 md:py-24">
+      <div className="max-w-5xl mx-auto px-4">
+        <div className="bg-white rounded-3xl shadow-2xl overflow-hidden border border-gray-100">
+          <div className="grid grid-cols-1 lg:grid-cols-2">
+            {/* LEFT: Info */}
+            <div className="bg-gradient-to-br from-navy-900 to-navy-700 p-8 md:p-12 text-white relative overflow-hidden">
+              <div className="absolute inset-0 grid-pattern opacity-50" />
+              <div className="relative z-10">
+                <div className="webinar-tag inline-flex items-center gap-2 px-4 py-2 rounded-full text-white text-xs font-bold uppercase tracking-wide mb-6">
+                  <span className="webinar-tag-dot" />
+                  BUỔI CHIA SẺ ĐỘC QUYỀN
+                </div>
 
-        {description && (
-          <p className={cn(
-            'text-lg mb-8 max-w-2xl mx-auto',
-            isGradient ? 'text-white/90' : isDark ? 'text-gray-300' : 'text-gray-600'
-          )}>
-            {description}
-          </p>
-        )}
+                <h2 className="font-heading text-2xl md:text-3xl lg:text-4xl font-black mb-4">
+                  {data.title || "GIỮ SUẤT THAM DỰ BUỔI CHIA SẺ ZOOM"}
+                  <br />
+                  <span className="gradient-text">& NHẬN BỘ TÀI LIỆU</span>
+                </h2>
 
-        <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Button
-            size="xl"
-            variant={isGradient ? 'secondary' : 'default'}
-            asChild
-            className={cn(
-              'group',
-              isGradient && 'bg-white text-orange-600 hover:bg-gray-100'
-            )}
-          >
-            <a href={button_link}>
-              {button_text}
-              <ArrowRight className="ml-2 w-5 h-5 group-hover:translate-x-1 transition-transform" />
-            </a>
-          </Button>
+                <p className="text-red-400 font-bold text-sm md:text-base mb-8">
+                  ⚡ SỐ LƯỢNG VÉ MIỄN PHÍ <strong className="text-xl">GIỚI HẠN!</strong>
+                </p>
 
-          {secondary_button_text && (
-            <Button
-              size="xl"
-              variant={isGradient ? 'outline' : 'outline'}
-              asChild
-              className={cn(
-                'border-2',
-                isGradient
-                  ? 'border-white text-white hover:bg-white/10'
-                  : isDark
-                  ? 'border-gray-600 text-white hover:bg-gray-800'
-                  : 'border-gray-300 text-gray-900 hover:bg-gray-50'
-              )}
-            >
-              <a href={secondary_button_link}>
-                {secondary_button_text}
-              </a>
-            </Button>
-          )}
+                {/* Benefits */}
+                <ul className="space-y-3">
+                  {benefits.map((benefit, idx) => (
+                    <li
+                      key={idx}
+                      className="flex items-center gap-3 text-white/90 font-semibold text-sm"
+                    >
+                      <span className="check-icon">✓</span>
+                      {benefit}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+
+            {/* RIGHT: CTA Button */}
+            <div className="p-8 md:p-12 flex flex-col items-center justify-center">
+              <Button
+                variant="cta"
+                size="xl"
+                onClick={() => {
+                  trackClick(data.cta_label || "section-cta", "cta", "bottom");
+                  onCtaClick?.();
+                }}
+                className="w-full max-w-sm"
+              >
+                🚀 {data.cta_text || "ĐĂNG KÝ NGAY"}
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
   );
 }
+
+export default CTA;

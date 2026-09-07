@@ -1,108 +1,127 @@
-'use client';
+"use client";
 
-import { cn } from '@/lib/utils';
-import { BlockData } from '@/lib/store';
-import { Hero } from './Hero';
-import { FeatureGrid } from './FeatureGrid';
-import { Testimonial } from './Testimonial';
-import { FAQ } from './FAQ';
-import { FormBlock } from './FormBlock';
-import { CTA } from './CTA';
-import { PricingTable } from './PricingTable';
-import { Stats } from './Stats';
-import { Skeleton } from '@repo/ui/components/ui/skeleton';
+import { useState } from "react";
+import { openLeadModal } from "@/components/layout/LeadModal";
 
-interface BlockRendererProps {
-  blocks: BlockData[];
-  isLoading?: boolean;
-  className?: string;
-  tenantId?: string;
-  pageId?: string;
+// Block components
+import { Hero } from "./Hero";
+import { FeatureGrid } from "./FeatureGrid";
+import { LogoCloud } from "./LogoCloud";
+import { SpeakerSection } from "./SpeakerSection";
+import { TrustSection } from "./TrustSection";
+import { Stats } from "./Stats";
+import { FAQ } from "./FAQ";
+import { CTA } from "./CTA";
+import { TestimonialSection } from "./Testimonial";
+import { RiskWarning } from "./RiskWarning";
+import { FormBlock } from "@/components/form/FormBlock";
+
+interface BlockProps {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  tenantSlug?: string;
+  pageSlug?: string;
 }
 
-export function BlockRenderer({
-  blocks,
-  isLoading = false,
-  className,
-  tenantId = '',
-  pageId = '',
-}: BlockRendererProps) {
-  if (isLoading) {
-    return (
-      <div className={cn('space-y-4', className)}>
-        {[1, 2, 3].map((i) => (
-          <Skeleton key={i} className="h-64 w-full rounded-xl" />
-        ))}
-      </div>
-    );
-  }
+export function BlockRenderer({ blocks, tenantSlug, pageSlug }: {
+  blocks: BlockProps[];
+  tenantSlug?: string;
+  pageSlug?: string;
+}) {
+  const [showModal, setShowModal] = useState(false);
 
-  if (!blocks || blocks.length === 0) {
-    return null;
-  }
-
-  const sortedBlocks = [...blocks].sort((a, b) => a.order - b.order);
+  const handleCtaClick = () => {
+    setShowModal(true);
+    openLeadModal("button");
+  };
 
   return (
-    <div className={cn('space-y-0', className)}>
-      {sortedBlocks.map((block) => (
-        <Block key={block.id} block={block} tenantId={tenantId} pageId={pageId} />
-      ))}
-    </div>
+    <>
+      {blocks.map((block) => {
+        const { id, type, data } = block;
+        const props = { data: data as Parameters<typeof renderBlock>[1]["data"], onCtaClick: handleCtaClick };
+        const sharedProps = { tenantSlug, pageSlug };
+
+        switch (type) {
+          case "hero":
+            return <Hero key={id} {...props} {...sharedProps} />;
+          case "feature_grid":
+          case "features":
+            return <FeatureGrid key={id} {...props} />;
+          case "logo_cloud":
+          case "logos":
+            return <LogoCloud key={id} {...props} />;
+          case "speaker":
+          case "speakers":
+            return <SpeakerSection key={id} {...props} />;
+          case "trust":
+          case "trust_section":
+            return <TrustSection key={id} {...props} />;
+          case "stats":
+          case "statistics":
+            return <Stats key={id} {...props} />;
+          case "faq":
+          case "faqs":
+            return <FAQSection key={id} {...props} />;
+          case "cta":
+          case "call_to_action":
+            return <CTA key={id} {...props} />;
+          case "testimonial":
+          case "testimonials":
+            return <TestimonialSection key={id} {...props} />;
+          case "risk_warning":
+          case "risk":
+            return <RiskWarning key={id} {...props} />;
+          case "form":
+          case "registration_form":
+            return <FormBlock key={id} {...props} {...sharedProps} />;
+          default:
+            if (process.env.NODE_ENV === "development") {
+              console.warn(`Unknown block type: ${type}`);
+            }
+            return null;
+        }
+      })}
+    </>
   );
 }
 
-interface BlockProps {
-  block: BlockData;
-  tenantId?: string;
-  pageId?: string;
-}
-
-function Block({ block, tenantId, pageId }: BlockProps) {
-  const { type, data } = block;
-
+// Helper to render a single block
+function renderBlock(type: string, data: Record<string, unknown>, callbacks?: { onCtaClick?: () => void }) {
+  const props = { data, ...callbacks };
+  
   switch (type) {
-    case 'hero':
-      return <Hero data={data as Parameters<typeof Hero>[0]['data']} />;
-
-    case 'feature_grid':
-      return <FeatureGrid data={data as Parameters<typeof FeatureGrid>[0]['data']} />;
-
-    case 'testimonial':
-      return <Testimonial data={data as Parameters<typeof Testimonial>[0]['data']} />;
-
-    case 'faq':
-      return <FAQ data={data as Parameters<typeof FAQ>[0]['data']} />;
-
-    case 'form':
-      return (
-        <FormBlock
-          data={data as Parameters<typeof FormBlock>[0]['data']}
-          tenantId={tenantId}
-          pageId={pageId}
-        />
-      );
-
-    case 'cta':
-      return <CTA data={data as Parameters<typeof CTA>[0]['data']} />;
-
-    case 'pricing':
-      return <PricingTable data={data as Parameters<typeof PricingTable>[0]['data']} />;
-
-    case 'stats':
-      return <Stats data={data as Parameters<typeof Stats>[0]['data']} />;
-
+    case "hero":
+      return <Hero key={data.id as string} {...props} />;
+    case "feature_grid":
+    case "features":
+      return <FeatureGrid key={data.id as string} {...props} />;
+    case "logo_cloud":
+      return <LogoCloud key={data.id as string} {...props} />;
+    case "speaker":
+    case "speakers":
+      return <SpeakerSection key={data.id as string} {...props} />;
+    case "trust":
+    case "trust_section":
+      return <TrustSection key={data.id as string} {...props} />;
+    case "stats":
+      return <Stats key={data.id as string} {...props} />;
+    case "faq":
+      return <FAQSection key={data.id as string} {...props} />;
+    case "cta":
+      return <CTA key={data.id as string} {...props} />;
+    case "testimonial":
+    case "testimonials":
+      return <TestimonialSection key={data.id as string} {...props} />;
+    case "risk_warning":
+      return <RiskWarning key={data.id as string} {...props} />;
+    case "form":
+      return <FormBlock key={data.id as string} {...props} />;
     default:
-      console.warn(`Unknown block type: ${type}`);
       return null;
   }
 }
 
-export { Hero } from './Hero';
-export { FeatureGrid } from './FeatureGrid';
-export { Testimonial } from './Testimonial';
-export { FAQ } from './FAQ';
-export { FormBlock } from './FormBlock';
-export { CTA } from './CTA';
-export { PricingTable } from './PricingTable';
-export { Stats } from './Stats';
+export { renderBlock };
+export default BlockRenderer;

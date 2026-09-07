@@ -1,65 +1,39 @@
-'use client';
-
-import { cn } from '@/lib/utils';
-import { StatsBlockData } from '@/lib/block-types';
+"use client";
 
 interface StatsProps {
-  data: StatsBlockData;
-  className?: string;
+  data: {
+    stats?: Array<{
+      value: string;
+      label: string;
+      prefix?: string;
+      suffix?: string;
+    }>;
+    style?: string;
+  };
 }
 
-export function Stats({ data, className }: StatsProps) {
-  const {
-    title,
-    stats = [],
-    theme = 'light',
-  } = data;
+export function Stats({ data }: StatsProps) {
+  const defaultStats = [
+    { value: "7.500", label: "tỷ - 17.000 tỷ đồng/ngày", prefix: "", suffix: "" },
+    { value: "TOP", label: "Thị phần MXV Q2/2026", prefix: "", suffix: "1" },
+    { value: "080", label: "Thành viên kinh doanh MXV", prefix: "", suffix: "" },
+    { value: "50", label: "Ebook miễn phí", prefix: "+", suffix: "" },
+  ];
 
-  const isDark = theme === 'dark';
+  const stats = data.stats?.length ? data.stats : defaultStats;
 
   return (
-    <section className={cn(
-      'py-16 lg:py-20',
-      isDark ? 'bg-navy-900' : 'bg-white'
-    )}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Header */}
-        {title && (
-          <div className="text-center mb-12">
-            <h2 className={cn(
-              'text-3xl sm:text-4xl font-bold',
-              isDark ? 'text-white' : 'text-gray-900'
-            )}>
-              {title}
-            </h2>
-          </div>
-        )}
-
-        {/* Stats Grid */}
-        <div className={cn(
-          'grid gap-8',
-          stats.length === 1
-            ? 'max-w-sm mx-auto'
-            : stats.length === 2
-            ? 'grid-cols-1 sm:grid-cols-2 max-w-2xl mx-auto'
-            : 'grid-cols-2 lg:grid-cols-4'
-        )}>
-          {stats.map((stat, index) => (
-            <div key={index} className="text-center">
-              <div className={cn(
-                'text-4xl sm:text-5xl lg:text-6xl font-bold mb-2',
-                isDark ? 'text-gold' : 'text-orange-500'
-              )}>
-                {stat.prefix}
+    <section className="bg-gradient-to-r from-navy-900 to-navy-700 py-12">
+      <div className="max-w-7xl mx-auto px-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+          {stats.map((stat, idx) => (
+            <div key={idx} className="text-center">
+              <div className="text-3xl md:text-4xl lg:text-5xl font-black text-white mb-2">
+                <span className="text-gold">{stat.prefix}</span>
                 {stat.value}
-                {stat.suffix}
+                <span className="text-gold">{stat.suffix}</span>
               </div>
-              <div className={cn(
-                'text-sm sm:text-base font-medium',
-                isDark ? 'text-gray-400' : 'text-gray-600'
-              )}>
-                {stat.label}
-              </div>
+              <p className="text-white/70 text-sm md:text-base">{stat.label}</p>
             </div>
           ))}
         </div>
@@ -67,3 +41,5 @@ export function Stats({ data, className }: StatsProps) {
     </section>
   );
 }
+
+export default Stats;

@@ -1,70 +1,53 @@
-'use client';
+"use client";
 
-import { useEffect, useRef, useCallback } from 'react';
-import { trackEvent } from '@/lib/tracking';
+import { useEffect, useRef } from "react";
+import { trackClick } from "@/lib/pixel";
+import { trackClick as trackClickEvent } from "@/lib/tracking";
 
-interface ClickTrackerOptions {
-  tenantId?: string;
-  pageId?: string;
+interface ClickTrackerProps {
   selector?: string;
-  debounceMs?: number;
-}
-
-interface TrackedElement {
-  element: HTMLElement;
-  text: string;
-  href?: string;
-  tracked: boolean;
+  dataAttr?: string;
+  tenantSlug?: string;
 }
 
 export function ClickTracker({
-  tenantId = '',
-  pageId = '',
-  selector = '[data-track-click], a, button',
-  debounceMs = 500,
-}: ClickTrackerOptions) {
-  const clickedElements = useRef<Set<HTMLElement>>(new Set());
-  const lastClickTime = useRef<number>(0);
-
-  const handleClick = useCallback(
-    (event: MouseEvent) => {
-      const now = Date.now();
-      if (now - lastClickTime.current < debounceMs) return;
-
-      const target = event.target as HTMLElement;
-      const element = target.closest(selector) as HTMLElement | null;
-
-      if (!element) return;
-      if (clickedElements.current.has(element)) return;
-
-      lastClickTime.current = now;
-      clickedElements.current.add(element);
-
-      const text = element.textContent?.trim().slice(0, 100) || '';
-      const href = (element as HTMLAnchorElement).href || undefined;
-      const dataTrack = element.getAttribute('data-track-click') || undefined;
-      const dataCategory = element.getAttribute('data-track-category') || 'click';
-      const dataLabel = element.getAttribute('data-track-label') || text;
-
-      trackEvent('click', {
-        element_type: element.tagName.toLowerCase(),
-        text: dataTrack || text,
-        href,
-        category: dataCategory,
-        label: dataLabel,
-        tenant_id: tenantId,
-        page_id: pageId,
-        x: event.clientX,
-        y: event.clientY,
-      });
-    },
-    [tenantId, pageId, selector, debounceMs]
-  );
+  selector = "[data-track]",
+  dataAttr = "data-track",
+  tenantSlug,
+}: ClickTrackerProps) {
+  const tracked = useRef<Set<Element>>(new Set());
 
   useEffect(() => {
-    document.addEventListener('click', handleClick, true);
-    return () => document.removeEventListener('click', handleClick, true);
-  }, [handleClick]);
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      
+      // Find closest element with tracking attribute
+      const trackedElement = target.closest(`[${dataAttr}]`) as HTMLElement | null;
+      
+      if (trackedElement && !tracked.current.has(trackedElement)) {
+        tracked.current.add(trackedElement);
+        
+        const label = trackedElement.getAttribute(dataAttr);
+        const ctaLabel = trackedElement.dataset.ctaLabel;
+        const location = trackedElement.dataset.location;
+        
+        // Track with pixel
+        if (label) {
+          trackClick(label, ctaLabel || undefined, location || undefined);
+        }
+        
+        // Track with our API
+        if (label) {
+          trackClickEvent(label, location || undefined, tenantSlug);
+        }
+      }
+    };
+
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [dataAttr, tenantSlug]);
 
   return null;
 }
+
+export default ClickTracker;
