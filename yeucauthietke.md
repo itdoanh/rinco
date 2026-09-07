@@ -615,3 +615,7 @@ Sự phát triển của RIN CO không chỉ nằm ở quy mô hạ tầng mà c
 
 Hệ thống:
 Hiện tại thiết kế hệ thống này trên local với docker! để sau này up lên sever riêng
+
+Messenger mã hóa đầu cuối. 
+Toàn bộ dự án các phần lưu trữ ở s3 cũng chia ra làm 2 đó là các file mới, trong thời gian nhất định được lưu ở s3 tốc độ cao, còn các file lâu, k dùng, cũ thì lưu ở s3 hdd
+
