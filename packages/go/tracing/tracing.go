@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"

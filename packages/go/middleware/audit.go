@@ -8,11 +8,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -238,7 +235,7 @@ func Audit(cfg AuditConfig) echo.MiddlewareFunc {
 
 			// Redact sensitive fields
 			if len(cfg.SensitiveFields) > 0 && requestBody != "" {
-				entry.RequestBody = redactSensitiveFields(requestBody, cfg.SensitiveFields)
+				entry.RequestBody = redactSensitiveData(requestBody, cfg.SensitiveFields)
 			}
 
 			// Log to structured logger
@@ -320,8 +317,8 @@ func isNumericID(s string) bool {
 	return len(s) > 0
 }
 
-// redactSensitiveFields replaces sensitive field values with [REDACTED].
-func redactSensitiveFields(body, fields []string) string {
+// redactSensitiveData replaces sensitive field values with [REDACTED].
+func redactSensitiveData(body string, fields []string) string {
 	var result map[string]any
 	if err := json.Unmarshal([]byte(body), &result); err != nil {
 		return body

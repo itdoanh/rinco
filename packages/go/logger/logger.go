@@ -50,7 +50,7 @@ type Config struct {
 	OTLP        *OTLPConfig
 	Sampling    *SamplingConfig
 	Redactor    *Redactor
-	StaticAttrs []slog.Attr
+	StaticAttrs []any
 }
 
 // OTLPConfig cấu hình OTLP export.

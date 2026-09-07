@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -299,105 +298,6 @@ func OptionalAuth(keyRing interface{ Decrypt(token string) (*Claims, error) }) e
 	return Auth(keyRing, AuthConfig{
 		AllowAnonymous: true,
 	})
-}
-
-// TenantMiddleware extracts tenant information from various sources.
-func TenantMiddleware(cfg TenantConfig) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			// Try to get tenant from various sources (in order of priority)
-			tenantID := resolveTenant(c, cfg)
-
-			if tenantID == "" {
-				if cfg.Required {
-					return jsonError(c, http.StatusBadRequest, "TENANT_REQUIRED", "tenant not found in request")
-				}
-				return next(c)
-			}
-
-			// Set tenant in context
-			ctx := context.WithValue(c.Request().Context(), TenantIDKey, tenantID)
-			c.SetRequest(c.Request().WithContext(ctx))
-
-			// Set response header
-			c.Response().Header().Set("X-Tenant-ID", tenantID)
-
-			return next(c)
-		}
-	}
-}
-
-// TenantConfig holds tenant resolution configuration.
-type TenantConfig struct {
-	// Try headers in order
-	HeaderNames []string
-
-	// Try path patterns (e.g., "/:tenant_slug/")
-	PathPatterns []string
-
-	// Try query parameters
-	QueryParams []string
-
-	// Default tenant from token
-	DefaultFromToken bool
-
-	// Whether tenant is required
-	Required bool
-}
-
-// DefaultTenantConfig returns a sensible default configuration.
-func DefaultTenantConfig() TenantConfig {
-	return TenantConfig{
-		HeaderNames: []string{
-			"X-Tenant-ID",
-			"X-TenantID",
-			"X-Tenant",
-		},
-		PathPatterns: []string{
-			":tenant_slug",
-			"tenant",
-		},
-		QueryParams: []string{
-			"tenant",
-			"tenant_id",
-			"tenantSlug",
-		},
-		DefaultFromToken: true,
-		Required:         true,
-	}
-}
-
-// resolveTenant tries to resolve tenant from various sources.
-func resolveTenant(c echo.Context, cfg TenantConfig) string {
-	// 1. Try headers
-	for _, header := range cfg.HeaderNames {
-		if tenant := c.Request().Header.Get(header); tenant != "" {
-			return tenant
-		}
-	}
-
-	// 2. Try path parameters
-	for _, pattern := range cfg.PathPatterns {
-		if tenant := c.Param(pattern); tenant != "" {
-			return tenant
-		}
-	}
-
-	// 3. Try query parameters
-	for _, param := range cfg.QueryParams {
-		if tenant := c.QueryParam(param); tenant != "" {
-			return tenant
-		}
-	}
-
-	// 4. Try to extract from token
-	if cfg.DefaultFromToken {
-		if claims := GetClaims(c.Request().Context()); claims != nil && claims.TenantID != "" {
-			return claims.TenantID
-		}
-	}
-
-	return ""
 }
 
 // jsonError returns a JSON error response.

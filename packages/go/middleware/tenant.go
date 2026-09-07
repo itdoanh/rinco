@@ -75,7 +75,7 @@ func TenantHost(mapping map[string]string) TenantSource {
 
 type hostSource struct{ mapping map[string]string }
 
-func (s *hostSource) Resolve(c echo.Context) string {
+func (s *hostSource) Resolve(c echo.Context) (string, bool) {
 	host := c.Request().Host
 	// Remove port if present
 	if idx := strings.Index(host, ":"); idx != -1 {
@@ -83,7 +83,7 @@ func (s *hostSource) Resolve(c echo.Context) string {
 	}
 	// Direct match
 	if tenant, ok := s.mapping[host]; ok {
-		return tenant
+		return tenant, true
 	}
 	// Subdomain match
 	parts := strings.Split(host, ".")
@@ -91,10 +91,10 @@ func (s *hostSource) Resolve(c echo.Context) string {
 		// Check if first part is a known subdomain
 		subdomain := parts[0]
 		if subdomain != "www" && subdomain != "api" {
-			return subdomain
+			return subdomain, true
 		}
 	}
-	return ""
+	return "", false
 }
 
 // TenantToken resolves tenant from JWT/PASETO token claims.

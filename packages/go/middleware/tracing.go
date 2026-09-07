@@ -6,7 +6,7 @@ package middleware
 
 import (
 	"context"
-	"strconv"
+	"net/http"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // TracingConfig holds tracing middleware configuration.
@@ -36,7 +37,7 @@ type TracingConfig struct {
 	AddResponseHeaders []string
 
 	// Sampler overrides the global sampler
-	Sampler trace.Sampler
+	Sampler sdktrace.Sampler
 
 	// Propagation propagates trace context
 	Propagation bool
@@ -46,7 +47,7 @@ type TracingConfig struct {
 func TracingDefaultConfig(serviceName string) TracingConfig {
 	return TracingConfig{
 		ServiceName:  serviceName,
-		SpanNameFunc: func(c echo.Context) string { return c.Method() + " " + c.Path() },
+		SpanNameFunc: func(c echo.Context) string { return c.Request().Method + " " + c.Path() },
 		SkipPaths:    []string{"/healthz", "/readyz", "/metrics"},
 		Propagation:  true,
 	}
@@ -83,9 +84,9 @@ func Tracing(cfg TracingConfig) echo.MiddlewareFunc {
 				trace.WithAttributes(
 					semconv.HTTPMethod(c.Request().Method),
 					semconv.HTTPURL(c.Request().URL.String()),
-					semconv.HTTPHost(c.Request().Host),
+					attribute.String("http.host", c.Request().Host),
 					semconv.HTTPRoute(path),
-					semconv.HTTPClientIP(c.RealIP()),
+					attribute.String("http.client_ip", c.RealIP()),
 					semconv.UserAgentOriginal(c.Request().UserAgent()),
 				),
 			)
@@ -237,7 +238,7 @@ func spanAttributes(c echo.Context) []attribute.KeyValue {
 		semconv.HTTPMethod(c.Request().Method),
 		semconv.HTTPURL(c.Request().URL.String()),
 		semconv.HTTPRoute(c.Path()),
-		semconv.HTTPClientIP(c.RealIP()),
+		attribute.String("http.client_ip", c.RealIP()),
 	}
 }
 

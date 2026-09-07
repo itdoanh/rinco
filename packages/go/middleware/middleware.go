@@ -2,15 +2,18 @@
 package middleware
 
 import (
+	"context"
+	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"go.uber.org/zap"
 
 	"github.com/itdoanh/rinco/packages/go/logger"
+	"log/slog"
 )
 
 var (
@@ -52,12 +55,18 @@ func Trace() echo.MiddlewareFunc {
 			// 1. Lấy trace_id từ header hoặc sinh mới
 			traceID := c.Request().Header.Get("X-Trace-ID")
 			if traceID == "" {
-				traceID = uuid.NewV7().String()
+				id, err := uuid.NewV7()
+				if err == nil {
+					traceID = id.String()
+				}
 			}
 
 			// 2. Gắn vào context
 			ctx = logger.WithTraceID(ctx, traceID)
-			ctx = logger.WithRequestID(ctx, uuid.NewV7().String())
+			reqID, err := uuid.NewV7()
+			if err == nil {
+				ctx = logger.WithRequestID(ctx, reqID.String())
+			}
 
 			// 3. Lưu trace vào response header
 			c.Response().Header().Set("X-Trace-ID", traceID)
@@ -84,25 +93,37 @@ func Logger() echo.MiddlewareFunc {
 			duration := time.Since(start)
 			status := res.Status
 
-			fields := []zap.Field{
-				zap.String("method", req.Method),
-				zap.String("path", req.URL.Path),
-				zap.String("route", c.Path()),
-				zap.Int("status", status),
-				zap.Duration("duration", duration),
-				zap.String("ip", c.RealIP()),
-				zap.String("user_agent", req.UserAgent()),
-			}
-
+			log := slog.Default()
 			if err != nil {
-				fields = append(fields, zap.Error(err))
-				logger.Error(ctx, "request failed", err, fields...)
+				log.ErrorContext(ctx, "request failed",
+					slog.String("method", req.Method),
+					slog.String("path", req.URL.Path),
+					slog.String("route", c.Path()),
+					slog.Int("status", status),
+					slog.Duration("duration", duration),
+					slog.String("ip", c.RealIP()),
+					slog.String("user_agent", req.UserAgent()),
+					slog.String("error", err.Error()),
+				)
 			} else if status >= 500 {
-				logger.Error(ctx, "server error", nil, fields...)
+				log.ErrorContext(ctx, "server error",
+					slog.String("method", req.Method),
+					slog.String("path", req.URL.Path),
+					slog.Int("status", status),
+				)
 			} else if status >= 400 {
-				logger.Warn(ctx, "client error", fields...)
+				log.WarnContext(ctx, "client error",
+					slog.String("method", req.Method),
+					slog.String("path", req.URL.Path),
+					slog.Int("status", status),
+				)
 			} else {
-				logger.Info(ctx, "request", fields...)
+				log.InfoContext(ctx, "request",
+					slog.String("method", req.Method),
+					slog.String("path", req.URL.Path),
+					slog.Int("status", status),
+					slog.Duration("duration", duration),
+				)
 			}
 
 			return err
@@ -110,43 +131,42 @@ func Logger() echo.MiddlewareFunc {
 	}
 }
 
-// Metrics middleware: đo Prometheus metrics.
-func Metrics(serviceName string) echo.MiddlewareFunc {
+// RequestID middleware: gắn request_id vào context.
+func RequestID() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			start := time.Now()
-			inflight := httpInflight.WithLabelValues(serviceName)
-			inflight.Inc()
-			defer inflight.Dec()
-
-			err := next(c)
-
-			route := c.Path()
-			status := ""
-			if c.Response() != nil {
-				status = c.Response().StatusString()
+			reqID := c.Request().Header.Get("X-Request-ID")
+			if reqID == "" {
+				id, err := uuid.NewV7()
+				if err == nil {
+					reqID = id.String()
+				}
 			}
-
-			httpRequestsTotal.WithLabelValues(serviceName, c.Request().Method, route, status).Inc()
-			httpRequestDuration.WithLabelValues(serviceName, c.Request().Method, route).Observe(time.Since(start).Seconds())
-
-			return err
+			c.Response().Header().Set("X-Request-ID", reqID)
+			return next(c)
 		}
 	}
 }
 
-// Recovery middleware: handle panic gracefully.
-func Recovery() echo.MiddlewareFunc {
+// Recover middleware: panic recovery.
+func Recover() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) (err error) {
+		return func(c echo.Context) error {
 			defer func() {
 				if r := recover(); r != nil {
-					ctx := c.Request().Context()
-					logger.Error(ctx, "panic recovered", nil,
-						zap.Any("panic", r),
-						zap.String("path", c.Request().URL.Path),
+					var err error
+					if e, ok := r.(error); ok {
+						err = e
+					} else {
+						err = fmt.Errorf("%v", r)
+					}
+					log := slog.Default()
+					log.ErrorContext(c.Request().Context(), "panic recovered",
+						slog.String("panic", fmt.Sprintf("%v", r)),
+						slog.String("path", c.Path()),
 					)
-					err = echo.NewHTTPError(500, "Internal Server Error")
+					_ = c.String(http.StatusInternalServerError, "Internal Server Error")
+					_ = err // suppress unused variable
 				}
 			}()
 			return next(c)
@@ -197,4 +217,14 @@ func SecurityHeaders() echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+// RequestIDFromContext extracts request ID from context.
+func RequestIDFromContext(ctx context.Context) string {
+	return logger.RequestIDFromContext(ctx)
+}
+
+// TraceIDFromContext extracts trace ID from context.
+func TraceIDFromContext(ctx context.Context) string {
+	return logger.TraceIDFromContext(ctx)
 }
