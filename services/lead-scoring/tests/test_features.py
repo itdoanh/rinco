@@ -1,104 +1,210 @@
-"""Tests for the feature engineering module."""
-from __future__ import annotations
-
-import math
-import os
+import pytest
 import sys
+import os
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-if ROOT not in sys.path:
-    sys.path.insert(0, os.path.dirname(ROOT))
+# Add the parent directory to the path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.schemas.lead import LeadFeatures
-from app.services.features import DEFAULT_FEATURES, featurize, feature_names
-
-
-def test_default_feature_names_is_a_list():
-    names = feature_names()
-    assert isinstance(names, list)
-    assert len(names) > 10
-    assert all(isinstance(n, str) for n in names)
+from features import compute_features, FeatureEngineering
 
 
-def test_featurize_fills_unknown_features_with_zero():
-    feats = LeadFeatures()
-    df = featurize(feats, DEFAULT_FEATURES)
-    # Every requested feature should be present.
-    for col in DEFAULT_FEATURES:
-        assert col in df.columns
+class TestFeatureEngineering:
+    """Test feature engineering for lead scoring"""
+
+    def test_compute_features_basic(self):
+        """Test basic feature computation"""
+        lead_data = {
+            'name': 'Nguyen Van A',
+            'email': 'nguyenvana@example.com',
+            'phone': '0909123456',
+            'company': 'Example Corp',
+            'utm_source': 'google',
+            'utm_campaign': 'spring_sale',
+            'page_views': 5,
+            'time_on_site': 300,
+            'form_submissions': 1,
+        }
+
+        features = compute_features(lead_data)
+
+        assert 'has_email' in features
+        assert features['has_email'] == 1
+        assert 'has_phone' in features
+        assert features['has_phone'] == 1
+        assert 'email_domain_score' in features
+        assert 'phone_valid' in features
+
+    def test_email_validation(self):
+        """Test email validation features"""
+        test_cases = [
+            ('test@gmail.com', True),
+            ('test@yahoo.com', True),
+            ('test@company.com', True),
+            ('test@unknown.xyz', False),
+            ('invalid', False),
+            ('', False),
+        ]
+
+        fe = FeatureEngineering()
+
+        for email, expected_good in test_cases:
+            score = fe._score_email_domain(email)
+            if expected_good:
+                assert score >= 0.5, f"Expected good domain score for {email}"
+            else:
+                assert score < 0.5, f"Expected low domain score for {email}"
+
+    def test_phone_validation(self):
+        """Test phone validation features"""
+        test_cases = [
+            ('0909123456', True),  # Vietnamese mobile
+            ('0912345678', True),
+            ('84909123456', True),  # With country code
+            ('1234567890', False),  # Too short
+            ('abcdefghij', False),  # Not digits
+            ('', False),
+        ]
+
+        fe = FeatureEngineering()
+
+        for phone, expected_valid in test_cases:
+            is_valid = fe._validate_phone(phone)
+            assert is_valid == expected_valid, f"Phone {phone}: expected {expected_valid}, got {is_valid}"
+
+    def test_utm_scoring(self):
+        """Test UTM parameter scoring"""
+        fe = FeatureEngineering()
+
+        # Known good UTM sources
+        google_score = fe._score_utm_source('google')
+        facebook_score = fe._score_utm_source('facebook')
+        linkedin_score = fe._score_utm_source('linkedin')
+
+        assert google_score > 0.5
+        assert facebook_score > 0.5
+        assert linkedin_score > 0.5
+
+        # Unknown source should have lower score
+        unknown_score = fe._score_utm_source('random_source')
+        assert unknown_score < google_score
+
+    def test_engagement_features(self):
+        """Test engagement-based features"""
+        fe = FeatureEngineering()
+
+        # High engagement
+        high_engagement = {
+            'page_views': 20,
+            'time_on_site': 600,
+            'form_submissions': 3,
+        }
+        features = fe.compute_engagement_features(high_engagement)
+        assert features['engagement_score'] >= 0.7
+
+        # Low engagement
+        low_engagement = {
+            'page_views': 1,
+            'time_on_site': 10,
+            'form_submissions': 0,
+        }
+        features = fe.compute_engagement_features(low_engagement)
+        assert features['engagement_score'] < 0.3
+
+    def test_company_features(self):
+        """Test company-based features"""
+        fe = FeatureEngineering()
+
+        # Known company
+        known_company = fe._score_company('vietnam technology solution')
+        assert known_company > 0.5
+
+        # Unknown company
+        unknown_company = fe._score_company('xyz abc def')
+        assert unknown_company < 0.5
+
+    def test_missing_fields(self):
+        """Test handling of missing fields"""
+        lead_data = {}
+
+        fe = FeatureEngineering()
+        features = fe.compute_all_features(lead_data)
+
+        # Should have default values for missing fields
+        assert features['has_email'] == 0
+        assert features['has_phone'] == 0
+        assert features['has_company'] == 0
+
+    def test_feature_vector_shape(self):
+        """Test that feature vector has correct shape"""
+        lead_data = {
+            'name': 'Test User',
+            'email': 'test@example.com',
+            'phone': '0909123456',
+            'company': 'Test Corp',
+            'utm_source': 'google',
+            'page_views': 10,
+            'time_on_site': 300,
+            'form_submissions': 2,
+        }
+
+        fe = FeatureEngineering()
+        features = fe.compute_all_features(lead_data)
+
+        # Feature vector should be a list of floats
+        assert isinstance(features, (list, tuple))
+        for f in features:
+            assert isinstance(f, (int, float))
 
 
-def test_featurize_log_transform_for_time():
-    feats = LeadFeatures(time_on_site_seconds=0)
-    df = featurize(feats, DEFAULT_FEATURES)
-    assert df.iloc[0]["time_on_site_log"] == 0.0
+class TestFeatureEdgeCases:
+    """Test edge cases in feature engineering"""
 
-    feats = LeadFeatures(time_on_site_seconds=7200)
-    df = featurize(feats, DEFAULT_FEATURES)
-    # log1p(7200) ≈ 8.88
-    assert abs(df.iloc[0]["time_on_site_log"] - math.log1p(7200)) < 1e-6
+    def test_unicode_handling(self):
+        """Test handling of unicode characters"""
+        lead_data = {
+            'name': 'Nguyễn Văn A',
+            'email': 'test@example.com',
+            'phone': '0909123456',
+        }
 
+        fe = FeatureEngineering()
+        # Should not raise
+        features = fe.compute_all_features(lead_data)
+        assert features is not None
 
-def test_featurize_country_one_hot():
-    feats_vn = LeadFeatures(country="VN")
-    feats_us = LeadFeatures(country="US")
-    feats_unknown = LeadFeatures(country="JP")
-    df_vn = featurize(feats_vn, DEFAULT_FEATURES)
-    df_us = featurize(feats_us, DEFAULT_FEATURES)
-    df_other = featurize(feats_unknown, DEFAULT_FEATURES)
-    assert df_vn.iloc[0]["country_vn"] == 1
-    assert df_vn.iloc[0]["country_us"] == 0
-    assert df_us.iloc[0]["country_us"] == 1
-    assert df_us.iloc[0]["country_vn"] == 0
-    assert df_other.iloc[0]["country_other"] == 1
+    def test_very_long_values(self):
+        """Test handling of very long input values"""
+        lead_data = {
+            'name': 'A' * 1000,
+            'email': 'test@example.com',
+            'phone': '0909123456',
+        }
 
+        fe = FeatureEngineering()
+        features = fe.compute_all_features(lead_data)
+        assert features is not None
 
-def test_featurize_device_detection():
-    feats = LeadFeatures(device_type="mobile")
-    df = featurize(feats, DEFAULT_FEATURES)
-    assert df.iloc[0]["is_mobile"] == 1
-    assert df.iloc[0]["is_tablet"] == 0
-    assert df.iloc[0]["is_desktop"] == 0
+    def test_special_characters(self):
+        """Test handling of special characters"""
+        lead_data = {
+            'name': 'John <script>alert(1)</script> Doe',
+            'email': 'test@example.com',
+            'phone': '0909123456',
+        }
 
+        fe = FeatureEngineering()
+        features = fe.compute_all_features(lead_data)
+        assert features is not None
 
-def test_featurize_source_classification():
-    feats = LeadFeatures(source="facebook_ads")
-    df = featurize(feats, DEFAULT_FEATURES)
-    assert df.iloc[0]["source_paid"] == 1
-    assert df.iloc[0]["source_organic"] == 0
+    def test_numeric_phone(self):
+        """Test handling of numeric strings"""
+        # Some systems might send phone as number
+        phone = 909123456
 
-
-def test_featurize_open_rate_denominator_safe():
-    feats = LeadFeatures(email_opens=0, email_clicks=0)
-    df = featurize(feats, DEFAULT_FEATURES)
-    # open_rate is `opens / max(1, opens + clicks + 5)`
-    assert 0.0 <= df.iloc[0]["open_rate"] <= 1.0
-
-
-def test_featurize_company_size_buckets():
-    small = LeadFeatures(company_size="1-10")
-    medium = LeadFeatures(company_size="51-200")
-    large = LeadFeatures(company_size="1000+")
-    df_small = featurize(small, DEFAULT_FEATURES)
-    df_medium = featurize(medium, DEFAULT_FEATURES)
-    df_large = featurize(large, DEFAULT_FEATURES)
-    assert df_small.iloc[0]["company_size_sm"] == 1
-    assert df_medium.iloc[0]["company_size_md"] == 1
-    assert df_large.iloc[0]["company_size_lg"] == 1
+        fe = FeatureEngineering()
+        is_valid = fe._validate_phone(str(phone))
+        assert is_valid == True
 
 
-def test_featurize_b2b_detection():
-    feats = LeadFeatures(job_title="VP of Engineering")
-    df = featurize(feats, DEFAULT_FEATURES)
-    assert df.iloc[0]["is_b2b"] == 1
-
-    feats = LeadFeatures(job_title="student")
-    df = featurize(feats, DEFAULT_FEATURES)
-    assert df.iloc[0]["is_b2b"] == 0
-
-
-def test_featurize_aligns_to_feature_names():
-    feats = LeadFeatures()
-    # Use a subset to confirm alignment.
-    df = featurize(feats, ["page_views", "country_vn"])
-    assert list(df.columns) == ["page_views", "country_vn"]
+if __name__ == '__main__':
+    pytest.main([__file__, '-v'])
