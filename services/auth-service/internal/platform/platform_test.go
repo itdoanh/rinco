@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -276,7 +277,7 @@ func TestDBConfigFromEnv(t *testing.T) {
 
 func TestContextHelpers(t *testing.T) {
 	// Test WithTenant and TenantFromContext
-	ctx := WithTenant(nil, "tenant-123", "user-456", true)
+	ctx := WithTenant(context.Background(), "tenant-123", "user-456", true)
 
 	got := TenantFromContext(ctx)
 	if got != "tenant-123" {
@@ -294,7 +295,7 @@ func TestContextHelpers(t *testing.T) {
 	}
 
 	// Test with non-admin context
-	ctx = WithTenant(nil, "tenant-789", "user-000", false)
+	ctx = WithTenant(context.Background(), "tenant-789", "user-000", false)
 	isAdmin = IsAdminFromContext(ctx)
 	if isAdmin {
 		t.Error("IsAdminFromContext() = true, want false")
@@ -302,7 +303,7 @@ func TestContextHelpers(t *testing.T) {
 }
 
 func TestTraceHelpers(t *testing.T) {
-	ctx := WithTraceID(nil, "trace-abc-123")
+	ctx := WithTraceID(context.Background(), "trace-abc-123")
 
 	got := TraceFromContext(ctx)
 	if got != "trace-abc-123" {
