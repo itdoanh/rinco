@@ -3,6 +3,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,12 +16,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
+
+	"github.com/itdoanh/rinco/packages/go/capifeedback"
 )
 
 // Server holds dependencies for handlers.
 type Server struct {
-	pool *pgxpool.Pool
-	rdb  *RedisClient
+	pool           *pgxpool.Pool
+	rdb            *RedisClient
+	capiPublisher  *capifeedback.Publisher
 }
 
 // RedisClient wraps go-redis client.
@@ -31,7 +35,12 @@ type RedisClient struct {
 }
 
 func NewServer(pool *pgxpool.Pool, rdb *RedisClient) *Server {
-	return &Server{pool: pool, rdb: rdb}
+	return &Server{pool: pool, rdb: rdb, capiPublisher: capifeedback.NewFromEnv()}
+}
+
+// SetCAPIPublisher overrides the default CAPI feedback publisher (used in tests).
+func (s *Server) SetCAPIPublisher(p *capifeedback.Publisher) {
+	s.capiPublisher = p
 }
 
 // Helper to get tenant context.
@@ -899,6 +908,35 @@ func (s *Server) MoveDealStage(c echo.Context) error {
 
 	if cf != nil {
 		json.Unmarshal(cf, &resp.CustomFields)
+	}
+
+	// Feedback loop: when a deal moves to "won", publish a Purchase
+	// event back to Facebook CAPI so Meta's ad optimizer can re-train
+	// on real conversions (master doc section "Feedback Loop").
+	// Failures here are non-fatal — we never block the CRM write.
+	if req.Stage == "won" && s.capiPublisher != nil && s.capiPublisher.Enabled() {
+		var email, phone, fbclid, fbp sql.NullString
+		_ = s.pool.QueryRow(ctx, `
+			SELECT c.email, c.phone, l.fbclid, l.fbp
+			FROM deals d
+			LEFT JOIN contacts c ON c.id = d.contact_id
+			LEFT JOIN leads l ON l.contact_id = c.id
+			WHERE d.id = $1
+		`, id).Scan(&email, &phone, &fbclid, &fbp)
+		s.capiPublisher.PublishAsync(capifeedback.Event{
+			TenantID:    tenantID,
+			ContactID:   resp.ContactID.String(),
+			DealID:      id,
+			EventName:   "Purchase",
+			Email:       email.String,
+			Phone:       phone.String,
+			FBClickID:   fbclid.String,
+			FBPCookie:   fbp.String,
+			Value:       resp.Value,
+			Currency:    resp.Currency,
+			ContentName: resp.Name,
+			EventTime:   time.Now().Unix(),
+		})
 	}
 
 	return s.json(c, http.StatusOK, resp)

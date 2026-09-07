@@ -141,5 +141,8 @@ func newEcho(cfg config, srv *handler.Server, pool *pgxpool.Pool, valkey *redis.
 	rpc.POST("/TrackEvent", srv.TrackEvent)
 	rpc.POST("/SendCAPIEvent", srv.CAPISend)
 	rpc.POST("/GetFBPixelConfig", srv.CAPIStatus)
+	// CRM feedback loop: when deal moves to "won", CRM calls this to
+	// publish a Purchase event to Meta CAPI with original event_id dedup
+	rpc.POST("/Conversion", srv.CAPIConversion)
 	return e
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -256,4 +257,97 @@ func (s *Server) MongoInit(ctx context.Context) error {
 	if s.mongo == nil { return nil }
 	_, err := s.mongo.Database(s.mongoDB).Collection("dynamic_pages").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "tenant_slug", Value: 1}, {Key: "page_slug", Value: 1}}, Options: options.Index().SetUnique(true)})
 	return err
+}
+
+// CAPIConversion receives conversion events from CRM (deal.won) and forwards
+// them to Meta Conversions API with the original landing-page event_id for
+// deduplication. This closes the feedback loop: FB CAPI tracks landing-page
+// leads, and CRM informs Meta when real revenue is generated.
+type conversionReq struct {
+	EventID    string  `json:"event_id"`
+	EventName  string  `json:"event_name"`
+	EventTime  int64   `json:"event_time"`
+	Email      string  `json:"email"`
+	Phone      string  `json:"phone"`
+	FBClickID  string  `json:"fbclid"`
+	FBPCookie  string  `json:"fbp"`
+	Value      float64 `json:"value"`
+	Currency   string  `json:"currency"`
+	ContentIDs  []string `json:"content_ids"`
+	ContentName string  `json:"content_name"`
+	ContactID  string  `json:"contact_id"`
+	DealID     string  `json:"deal_id"`
+}
+
+func (s *Server) CAPIConversion(c echo.Context) error {
+	var req conversionReq
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if req.EventName == "" {
+		req.EventName = "Purchase"
+	}
+	if req.EventTime == 0 {
+		req.EventTime = time.Now().Unix()
+	}
+
+	// Build UserData for Meta (email + phone hashed by the capi package)
+	ud := map[string]string{}
+	if req.Email != "" {
+		ud["em"] = req.Email // capi package will hash before sending
+	}
+	if req.Phone != "" {
+		ud["ph"] = req.Phone
+	}
+	if req.FBClickID != "" {
+		ud["fbc"] = req.FBClickID
+	}
+	if req.FBPCookie != "" {
+		ud["fbp"] = req.FBPCookie
+	}
+
+	// Build CustomData
+	cd := map[string]interface{}{}
+	if req.Value > 0 {
+		cd["value"] = req.Value
+		cd["currency"] = req.Currency
+	}
+	if len(req.ContentIDs) > 0 {
+		cd["content_ids"] = req.ContentIDs
+		cd["num_items"] = len(req.ContentIDs)
+	}
+	if req.ContentName != "" {
+		cd["content_name"] = req.ContentName
+	}
+
+	eventID := req.EventID
+	if eventID == "" {
+		eventID = uuid.NewString()
+	}
+
+	slog.Info("capi_conversion_from_crm",
+		"event_name", req.EventName,
+		"event_id", eventID,
+		"value", req.Value,
+		"currency", req.Currency,
+		"contact_id", req.ContactID,
+		"deal_id", req.DealID,
+	)
+
+	s.queue <- capiEvent{
+		EventID:   eventID,
+		EventName: req.EventName,
+		EventTime: time.Unix(req.EventTime, 0),
+		UserData:  ud,
+		CustomData: cd,
+		EventSourceURL: "",
+		ActionSource: "website",
+		TenantID: c.Request().Header.Get("X-Tenant-ID"),
+	}
+
+	return c.JSON(http.StatusAccepted, map[string]interface{}{
+		"status":    "queued",
+		"event_id":  eventID,
+		"source":    "crm",
+	})
 }
