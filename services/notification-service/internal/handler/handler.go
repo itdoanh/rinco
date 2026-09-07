@@ -77,6 +77,48 @@ func (s *Server) tenantFromCtx(c echo.Context) (string, string, bool) {
 	return t, u, a
 }
 
+// resolveSubtreeUsers resolves a list of user_ids that are descendants of
+// the given root in the crm users_tree (LTREE). Requires crm-service schema
+// to be reachable via DATABASE_URL or a CRM_TREE_DSN env override.
+//
+// Falls back to empty slice if users_tree is not available — callers should
+// surface a 422 if zero recipients resolved.
+func (s *Server) resolveSubtreeUsers(ctx context.Context, tenantID, rootUserID string, maxDepth int) []string {
+	var out []string
+	// Look up root path first
+	var rootPath string
+	err := s.pool.QueryRow(ctx, `SELECT path::text FROM users_tree WHERE user_id = $1 AND tenant_id = $2`, rootUserID, tenantID).Scan(&rootPath)
+	if err != nil {
+		return out
+	}
+	return s.resolveSubtreeByPath(ctx, tenantID, rootPath, maxDepth)
+}
+
+// resolveSubtreeByPath returns user_ids whose LTREE path is a descendant of
+// the given rootPath. If maxDepth > 0, depth is bounded to rootPath.NUM + maxDepth.
+func (s *Server) resolveSubtreeByPath(ctx context.Context, tenantID, rootPath string, maxDepth int) []string {
+	var out []string
+	q := `SELECT user_id::text FROM users_tree WHERE tenant_id = $1 AND path <@ $2::ltree`
+	args := []any{tenantID, rootPath}
+	if maxDepth > 0 {
+		// nlevel(path) <= nlevel(rootPath) + maxDepth
+		q += ` AND nlevel(path) <= nlevel($2::ltree) + $3`
+		args = append(args, maxDepth)
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err == nil {
+			out = append(out, uid)
+		}
+	}
+	return out
+}
+
 func (s *Server) setRLS(ctx context.Context, tenantID, userID string, isAdmin bool) error {
 	if tenantID == "" {
 		return fmt.Errorf("tenant_id missing")
@@ -292,6 +334,16 @@ type broadcastAudience struct {
 	UserIDs   []string              `json:"user_ids,omitempty"`
 	Role      string                `json:"role,omitempty"`
 	Department string               `json:"department,omitempty"`
+	// SubtreeRootID broadcasts to all descendants of this user in the org tree
+	// (giám đốc → quản lý → trưởng nhóm → nhân viên). Only users whose
+	// crm users_tree.path is descendant of SubtreeRootID will receive.
+	// Requires crm-schema `users_tree` table to exist (LTREE).
+	SubtreeRootID string            `json:"subtree_root_id,omitempty"`
+	// SubtreeRootPath bypasses the user_id lookup; must be a valid LTREE path
+	// (e.g. "root.uuid"). Useful for cross-service direct broadcast.
+	SubtreeRootPath string          `json:"subtree_root_path,omitempty"`
+	// MaxDepth limits how many levels down the tree to send (0 = unlimited).
+	MaxDepth int                   `json:"max_depth,omitempty"`
 }
 
 func (s *Server) Broadcast(c echo.Context) error {
@@ -332,6 +384,12 @@ func (s *Server) Broadcast(c echo.Context) error {
 				userIDs = append(userIDs, uid)
 			}
 		}
+	}
+	if len(userIDs) == 0 && req.Audience.SubtreeRootID != "" {
+		userIDs = s.resolveSubtreeUsers(ctx, tenantID, req.Audience.SubtreeRootID, req.Audience.MaxDepth)
+	}
+	if len(userIDs) == 0 && req.Audience.SubtreeRootPath != "" {
+		userIDs = s.resolveSubtreeByPath(ctx, tenantID, req.Audience.SubtreeRootPath, req.Audience.MaxDepth)
 	}
 
 	priority := req.Priority
