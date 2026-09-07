@@ -1,6 +1,6 @@
 # RINCO Build Status Report
 
-Generated: Monday, Sep 7, 2026
+Generated: Tuesday, Sep 8, 2026
 
 ## Tooling
 - go: go1.26.3 windows/amd64
@@ -45,5 +45,28 @@ Verified: brace balance OK in every .rs file, `mod` declarations match on-disk m
 All have `dev`, `build`, `start`, `lint` scripts; required deps (`next ^15.1.0`, `react ^19.0.0`, `typescript ^5.6.3`) are present; `tsconfig.json` is valid Next.js 15 config with `@rinco/ui` path alias.
 
 ## Shared Packages
-- packages/go: ✅ (35 .go files / 7,223 LOC, `go build` + `go vet` PASS)
+- packages/go: ✅ (35 .go files / 7,223 LOC, `go build` + `go vet` PASS; 12 packages, all tests PASS)
 - packages/frontend/ui: ✅ (48 .ts/.tsx files / 3,868 LOC; valid tsconfig.json; package.json exposes `@rinco/ui` with proper exports map)
+
+## Test Coverage (this session)
+- packages/go/apperrs ✅
+- packages/go/auth ✅ (TestRBACAddCustomRole, TestGenerateAndParseAPIKey, TestAPIKeyHash, TestAPIKeyScopes, TestNewAPIKeyRecord, TestPASETORoundTrip, TestFIDO2Challenge, TestSessionStore)
+- packages/go/capi ✅ (HashEmail/HashPhone deterministic + normalized; GenerateEventID; NewLeadEvent/PurchaseEvent builders; HMAC signature)
+- packages/go/db ✅ (TestRepository, TestMigrate, TestTx)
+- packages/go/id ✅ (UUIDv7 + Snowflake ID generation)
+- packages/go/logger ✅ (Redactor, Sampling handler)
+- packages/go/middleware ✅ (Tenant header/path/query/host resolution, default fallback, context round-trip)
+- packages/go/pagination ✅ (EncodeCursor + crc32 tampering detection)
+- packages/go/ratelimit ✅ (TokenBucket: allow/deny/refill/GC; FixedWindow + SlidingWindow Redis-backed)
+- packages/go/tenant ✅ (Validate, With/From context, Inherit, Ensure, Scope)
+- packages/go/timex ✅ (NowUTC, StartOfDay, ISOWeek, HumanizeDuration 7d→1w, 45d→1mo15d)
+- packages/go/tracing ✅ (Init no-op for dev, idempotent shutdown)
+- services/auth-service ✅ (TestEnv, TestGetenv, TestContextHelpers, TestTraceHelpers, TestIsNotFound, TestInitLogger)
+- services/crm-service ✅
+- services/lead-service ✅
+- services/landing-service ✅
+- services/email-service ✅
+- services/notification-service ✅ (TestBroadcastAudienceParsing + ByPath + Defaults)
+- services/tenant-service ✅
+- services/dynamic-model-service ✅
+- services/observability-service ✅
