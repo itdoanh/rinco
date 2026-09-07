@@ -1,14 +1,12 @@
 // Package main — RINCO Lead Service entrypoint.
 //
-// Lead management service for RINCO - handles lead capture, scoring,
-// assignment, and conversion. Built on Echo + pgx/v5 + go-redis + NATS.
-// Integrates with landing-service for form submissions and lead-scoring
-// for AI-powered lead qualification.
+// Lead Service handles lead capture, scoring, assignment, conversion.
+// Built on Echo + pgx/v5 + go-redis + NATS, runs embedded SQL migrations
+// on startup, and participates in RINCO multi-tenant pool via RLS GUCs.
 package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,7 +18,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
-	"github.com/nats-io/nats.go"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -33,8 +30,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 
-	leadhandler "github.com/itdoanh/rinco/services/lead-service/internal/handler"
-	"github.com/itdoanh/rinco/services/lead-service/internal/middleware"
+	leadhdl "github.com/itdoanh/rinco/services/lead-service/internal/handler"
+	leadnats "github.com/itdoanh/rinco/services/lead-service/internal/nats"
 	"github.com/itdoanh/rinco/services/lead-service/internal/platform"
 )
 
@@ -50,18 +47,8 @@ const (
 type server struct {
 	pool *pgxpool.Pool
 	rdb  *redis.Client
-	nc   *nats.Conn
-}
-
-type config struct {
-	Env            string
-	HTTPAddr       string
-	DatabaseURL    string
-	ValkeyAddr     string
-	ValkeyPassword string
-	ValkeyDB       int
-	NATSURL        string
-	OTLP          string
+	nats *leadnats.Client
+	h    *leadhdl.Server
 }
 
 // =============================================================================
@@ -77,9 +64,9 @@ var (
 		Help:    "HTTP request latency",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"method", "route"})
-	leadEvents = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "lead_service_events_total", Help: "NATS events",
-	}, []string{"subject", "type"})
+	leadsCreated = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "lead_service_leads_created_total", Help: "Leads created",
+	}, []string{"source"})
 )
 
 // =============================================================================
@@ -114,7 +101,7 @@ func main() {
 	var rdb *redis.Client
 	rdbOpts := &redis.Options{
 		Addr:     cfg.ValkeyAddr,
-		Password: cfg.ValkeyPassword,
+		Password: cfg.ValkeyPwd,
 		DB:       cfg.ValkeyDB,
 		PoolSize: 20,
 	}
@@ -125,36 +112,29 @@ func main() {
 		defer func() { _ = rdb.Close() }()
 	}
 
-	// Connect to NATS
-	var nc *nats.Conn
-	if cfg.NATSURL != "" {
-		nc, err = nats.Connect(cfg.NATSURL,
-			nats.Name(serviceName),
-			nats.MaxReconnects(5),
-			nats.ReconnectWait(2*time.Second),
-		)
-		if err != nil {
-			logger.Warn("nats connect failed; events disabled", slog.String("error", err.Error()))
-		} else {
-			defer nc.Close()
-			logger.Info("nats connected", slog.String("url", cfg.NATSURL))
-		}
+	// NATS
+	natsClient, err := leadnats.NewClient(cfg.NATSURL)
+	if err != nil {
+		logger.Warn("nats connect failed; events disabled", slog.String("error", err.Error()))
 	}
+	if natsClient != nil {
+		defer natsClient.Close()
+	}
+
+	h := leadhdl.NewServer(pool, &leadhdl.RedisClient{
+		Addr:     cfg.ValkeyAddr,
+		Password: cfg.ValkeyPwd,
+		DB:       cfg.ValkeyDB,
+	}, natsClient, cfg.ScoringURL)
 
 	srv := &server{
 		pool: pool,
 		rdb:  rdb,
-		nc:   nc,
+		nats: natsClient,
+		h:    h,
 	}
 
-	h := leadhandler.NewServer(pool)
-
-	// Start NATS subscribers
-	if nc != nil {
-		startNATSSubscribers(rootCtx, srv, h, nc)
-	}
-
-	e := newEcho(srv, h)
+	e := newEcho(srv)
 	go func() {
 		if err := e.Start(cfg.HTTPAddr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("http server error", slog.String("error", err.Error()))
@@ -174,16 +154,31 @@ func main() {
 // Config
 // =============================================================================
 
+type config struct {
+	Env         string
+	HTTPAddr    string
+	DatabaseURL string
+	ValkeyAddr  string
+	ValkeyPwd   string
+	ValkeyDB    int
+	NATSURL     string
+	OTLP        string
+	ScoringURL  string
+	CAPIURL     string
+}
+
 func loadConfig() *config {
 	return &config{
-		Env:            platform.Getenv("ENV", "development"),
-		HTTPAddr:       platform.Getenv("LEAD_HTTP_ADDR", ":8083"),
-		DatabaseURL:    os.Getenv("LEAD_DATABASE_URL"),
-		ValkeyAddr:     platform.Getenv("LEAD_VALKEY_URL", "localhost:6379"),
-		ValkeyPassword: platform.Getenv("LEAD_VALKEY_PASSWORD", "rinco_dev_password"),
-		ValkeyDB:       platform.GetenvInt("LEAD_VALKEY_DB", 0),
-		NATSURL:        platform.Getenv("LEAD_NATS_URL", "nats://localhost:4222"),
-		OTLP:          os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		Env:         platform.Getenv("ENV", "development"),
+		HTTPAddr:    platform.Getenv("LEAD_HTTP_ADDR", ":8083"),
+		DatabaseURL: os.Getenv("LEAD_DATABASE_URL"),
+		ValkeyAddr:  platform.Getenv("LEAD_VALKEY_URL", "localhost:6379"),
+		ValkeyPwd:   platform.Getenv("LEAD_VALKEY_PASSWORD", "rinco_dev_password"),
+		ValkeyDB:    platform.GetenvInt("LEAD_VALKEY_DB", 0),
+		NATSURL:     os.Getenv("LEAD_NATS_URL"),
+		OTLP:        os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		ScoringURL:  os.Getenv("LEAD_SCORING_URL"),
+		CAPIURL:     os.Getenv("LEAD_CAPI_WORKER_URL"),
 	}
 }
 
@@ -257,120 +252,67 @@ type migrationFile struct {
 
 func migrationsList() []migrationFile {
 	return []migrationFile{
-		{"0001_leads", migration0001},
-		{"0002_lead_notes", migration0002},
-		{"0003_sources_pipelines", migration0003},
-		{"0004_rls", migration0004},
+		{"0001_lead_sources", migration0001},
+		{"0002_pipelines", migration0002},
+		{"0003_leads", migration0003},
+		{"0004_lead_notes_activities", migration0004},
 	}
-}
-
-// =============================================================================
-// NATS Event Handlers
-// =============================================================================
-
-type NATSEvent struct {
-	Type      string          `json:"type"`
-	LeadID    string          `json:"lead_id"`
-	TenantID  string          `json:"tenant_id"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	Timestamp time.Time       `json:"timestamp"`
-}
-
-func startNATSSubscribers(ctx context.Context, srv *server, h *leadhandler.Server, nc *nats.Conn) {
-	// Subscribe to lead.created from landing-service
-	if _, err := nc.Subscribe("lead.created", func(msg *nats.Msg) {
-		leadEvents.WithLabelValues("lead.created", "received").Inc()
-		slog.Info("received lead.created event", slog.String("data", string(msg.Data)))
-
-		var event NATSEvent
-		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			slog.Error("parse lead.created failed", slog.String("error", err.Error()))
-			return
-		}
-
-		// Process the lead (already created by landing-service, just update stats)
-		leadEvents.WithLabelValues("lead.created", "processed").Inc()
-	}); err != nil {
-		slog.Error("subscribe lead.created failed", slog.String("error", err.Error()))
-	}
-
-	// Subscribe to lead.scored from lead-scoring service
-	if _, err := nc.Subscribe("lead.scored", func(msg *nats.Msg) {
-		leadEvents.WithLabelValues("lead.scored", "received").Inc()
-		slog.Info("received lead.scored event", slog.String("data", string(msg.Data)))
-
-		var event struct {
-			LeadID string  `json:"lead_id"`
-			Score  float64 `json:"score"`
-			Tier   string  `json:"tier"`
-		}
-		if err := json.Unmarshal(msg.Data, &event); err != nil {
-			slog.Error("parse lead.scored failed", slog.String("error", err.Error()))
-			return
-		}
-
-		// Update lead score in database
-		if srv.pool != nil {
-			_, err := srv.pool.Exec(ctx, `
-				UPDATE leads SET score = $1, score_tier = $2, updated_at = NOW() 
-				WHERE id = $3
-			`, event.Score, event.Tier, event.LeadID)
-			if err != nil {
-				slog.Error("update lead score failed", slog.String("error", err.Error()))
-			}
-		}
-
-		// Record activity
-		if srv.pool != nil {
-			_, _ = srv.pool.Exec(ctx, `
-				INSERT INTO lead_activities (lead_id, type, payload)
-				VALUES ($1, 'score_update', $2)
-			`, event.LeadID, fmt.Sprintf(`{"score": %f, "tier": "%s", "source": "ai"}`, event.Score, event.Tier))
-		}
-
-		leadEvents.WithLabelValues("lead.scored", "processed").Inc()
-	}); err != nil {
-		slog.Error("subscribe lead.scored failed", slog.String("error", err.Error()))
-	}
-
-	// Subscribe to user.created for auto-assign logic
-	if _, err := nc.Subscribe("user.created", func(msg *nats.Msg) {
-		leadEvents.WithLabelValues("user.created", "received").Inc()
-		slog.Info("received user.created event", slog.String("data", string(msg.Data)))
-		// Auto-assign unassigned leads to new user if configured
-		leadEvents.WithLabelValues("user.created", "processed").Inc()
-	}); err != nil {
-		slog.Error("subscribe user.created failed", slog.String("error", err.Error()))
-	}
-}
-
-// PublishLeadEvent publishes a lead event to NATS
-func (s *server) publishLeadEvent(subject string, event NATSEvent) error {
-	if s.nc == nil {
-		return nil
-	}
-	event.Timestamp = time.Now()
-	data, err := json.Marshal(event)
-	if err != nil {
-		return err
-	}
-	return s.nc.Publish(subject, data)
 }
 
 // =============================================================================
 // Echo setup
 // =============================================================================
 
-func newEcho(srv *server, h *leadhandler.Server) *echo.Echo {
+func newEcho(srv *server) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
-	e.Use(middleware.RecoveryMW())
-	e.Use(middleware.TraceMW())
-	e.Use(middleware.LoggingMW())
-	e.Use(middleware.MetricsMW())
-	e.Use(middleware.CORSMW())
-	e.Use(middleware.SecurityHeadersMW())
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("panic recovered", slog.Any("panic", r))
+					_ = c.JSON(http.StatusInternalServerError, map[string]string{"error": "internal error"})
+				}
+			}()
+			return next(c)
+		}
+	})
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			latency := time.Since(start).Seconds()
+			route := c.Path()
+			if route == "" {
+				route = c.Request().URL.Path
+			}
+			httpReqs.WithLabelValues(c.Request().Method, route, "200").Inc()
+			httpDur.WithLabelValues(c.Request().Method, route).Observe(latency)
+			slog.Info("request",
+				slog.String("method", c.Request().Method),
+				slog.String("path", c.Request().URL.Path),
+				slog.Int("status", c.Response().Status),
+				slog.Float64("latency_s", latency),
+			)
+			return err
+		}
+	})
+
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			c.Response().Header().Set("Access-Control-Allow-Origin", "*")
+			c.Response().Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Response().Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tenant-ID, X-User-ID, X-Admin")
+			if c.Request().Method == http.MethodOptions {
+				return c.NoContent(http.StatusNoContent)
+			}
+			return next(c)
+		}
+	})
+
 	e.Use(otelecho.Middleware(serviceName))
 
 	e.GET("/healthz", func(c echo.Context) error {
@@ -382,49 +324,60 @@ func newEcho(srv *server, h *leadhandler.Server) *echo.Echo {
 		return c.JSON(http.StatusOK, map[string]string{"service": serviceName, "version": version})
 	})
 
-	// Leads
 	v1 := e.Group("/v1")
-	v1.Use(middleware.TenantMW())
+	v1.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			tenantID := c.Request().Header.Get("X-Tenant-ID")
+			if tenantID == "" {
+				return c.JSON(http.StatusBadRequest, map[string]string{"error": "X-Tenant-ID header required"})
+			}
+			c.Set("tenant_id", tenantID)
+			c.Set("user_id", c.Request().Header.Get("X-User-ID"))
+			c.Set("is_admin", c.Request().Header.Get("X-Admin") == "true")
+			return next(c)
+		}
+	})
 
-	v1.GET("/leads", h.ListLeads)
-	v1.POST("/leads", h.CreateLead)
-	v1.GET("/leads/:id", h.GetLead)
-	v1.PUT("/leads/:id", h.UpdateLead)
-	v1.DELETE("/leads/:id", h.DeleteLead)
-	v1.POST("/leads/:id/assign", h.AssignLead)
-	v1.POST("/leads/:id/status", h.UpdateLeadStatus)
-	v1.POST("/leads/:id/score", h.ScoreLead)
-	v1.POST("/leads/:id/convert", h.ConvertLead)
-	v1.GET("/leads/:id/notes", h.ListLeadNotes)
-	v1.POST("/leads/:id/notes", h.CreateLeadNote)
-	v1.GET("/leads/:id/timeline", h.GetLeadTimeline)
-	v1.GET("/leads/by-source/:source", h.GetLeadsBySource)
-	v1.GET("/leads/stats", h.GetLeadStats)
-	v1.POST("/leads/import", h.ImportLeads)
-	v1.GET("/leads/export", h.ExportLeads)
+	// Leads
+	v1.GET("/leads", srv.h.ListLeads)
+	v1.POST("/leads", srv.h.CreateLead)
+	v1.GET("/leads/:id", srv.h.GetLead)
+	v1.PUT("/leads/:id", srv.h.UpdateLead)
+	v1.DELETE("/leads/:id", srv.h.DeleteLead)
+	v1.POST("/leads/import", srv.h.ImportLeads)
+	v1.GET("/leads/export", srv.h.ExportLeads)
+	v1.POST("/leads/:id/assign", srv.h.AssignLead)
+	v1.POST("/leads/:id/status", srv.h.UpdateLeadStatus)
+	v1.POST("/leads/:id/score", srv.h.LeadScore)
+	v1.POST("/leads/:id/convert", srv.h.ConvertLead)
+	v1.GET("/leads/:id/notes", srv.h.ListLeadNotes)
+	v1.POST("/leads/:id/notes", srv.h.CreateLeadNote)
+	v1.GET("/leads/:id/timeline", srv.h.GetLeadTimeline)
+	v1.GET("/leads/by-source/:source", srv.h.GetLeadsBySource)
+	v1.GET("/leads/stream", srv.h.StreamLeads)
+	v1.GET("/leads/stats", srv.h.GetLeadStats)
 
 	// Lead Sources
-	v1.GET("/lead-sources", h.ListLeadSources)
-	v1.POST("/lead-sources", h.CreateLeadSource)
+	v1.GET("/lead-sources", srv.h.ListLeadSources)
+	v1.POST("/lead-sources", srv.h.CreateLeadSource)
 
 	// Pipelines
-	v1.GET("/pipelines", h.ListPipelines)
-	v1.POST("/pipelines", h.CreatePipeline)
+	v1.GET("/pipelines", srv.h.ListPipelines)
+	v1.POST("/pipelines", srv.h.CreatePipeline)
 
-	// Pipeline Stages
-	v1.GET("/stages", h.ListStages)
-	v1.POST("/stages", h.CreateStage)
+	// Stages
+	v1.GET("/stages", srv.h.ListStages)
+	v1.POST("/stages", srv.h.CreateStage)
 
 	// Connect-RPC endpoints
 	rpc := e.Group("/internal/lead.v1.LeadService")
-	rpc.POST("/CreateLead", h.CreateLead)
-	rpc.POST("/AssignLead", h.AssignLead)
-	rpc.POST("/UpdateLeadStatus", h.UpdateLeadStatus)
-	rpc.POST("/GetLead", h.GetLead)
-	rpc.POST("/ListLeads", h.ListLeads)
-	rpc.POST("/StreamLeads", h.ListLeads)
-	rpc.POST("/ConvertLead", h.ConvertLead)
-	rpc.POST("/ComputeScore", h.ScoreLead)
+	rpc.POST("/CreateLead", srv.h.CreateLead)
+	rpc.POST("/AssignLead", srv.h.AssignLead)
+	rpc.POST("/UpdateLeadStatus", srv.h.UpdateLeadStatus)
+	rpc.POST("/GetLead", srv.h.GetLead)
+	rpc.POST("/StreamLeads", srv.h.StreamLeads)
+	rpc.POST("/ConvertLead", srv.h.ConvertLead)
+	rpc.POST("/ComputeScore", srv.h.LeadScore)
 
 	return e
 }
@@ -450,32 +403,95 @@ func readyz(srv *server) echo.HandlerFunc {
 // =============================================================================
 
 const migration0001 = `
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
-CREATE TABLE IF NOT EXISTS leads (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+CREATE TABLE IF NOT EXISTS lead_sources (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL,
-    source_id UUID,
+    name TEXT NOT NULL,
+    utm_source TEXT,
+    utm_medium TEXT,
+    utm_campaign TEXT,
+    utm_term TEXT,
+    utm_content TEXT,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(tenant_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_lead_sources_tenant ON lead_sources(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_lead_sources_active ON lead_sources(tenant_id, is_active) WHERE is_active = true;
+`
+
+const migration0002 = `
+CREATE TABLE IF NOT EXISTS pipelines (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_default BOOLEAN DEFAULT false,
+    color TEXT DEFAULT '#6366f1',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE(tenant_id, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipelines_tenant ON pipelines(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_pipelines_default ON pipelines(tenant_id, is_default) WHERE is_default = true;
+
+CREATE TABLE IF NOT EXISTS pipeline_stages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pipeline_id UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    display_order INT NOT NULL DEFAULT 0,
+    probability INT DEFAULT 50 CHECK (probability >= 0 AND probability <= 100),
+    color TEXT DEFAULT '#6366f1',
+    is_won BOOLEAN DEFAULT false,
+    is_lost BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_pipeline ON pipeline_stages(pipeline_id, display_order);
+`
+
+const migration0003 = `
+CREATE TABLE IF NOT EXISTS leads (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
+    source_id UUID REFERENCES lead_sources(id) ON DELETE SET NULL,
     contact_id UUID,
     owner_user_id UUID,
+    pipeline_id UUID REFERENCES pipelines(id) ON DELETE SET NULL,
+    stage_id UUID REFERENCES pipeline_stages(id) ON DELETE SET NULL,
     full_name TEXT NOT NULL,
     email TEXT,
     phone TEXT,
     company_name TEXT,
+    job_title TEXT,
     status TEXT NOT NULL DEFAULT 'new' CHECK (status IN (
         'new', 'contacted', 'qualified', 'proposal', 'won', 'lost', 'archived'
     )),
     score DECIMAL(5, 2) DEFAULT 0,
     score_tier TEXT CHECK (score_tier IN ('cold', 'warm', 'hot')),
-    utm JSONB DEFAULT '{}',
+    estimated_value DECIMAL(15, 2) DEFAULT 0,
     custom_fields JSONB DEFAULT '{}',
-    ip_address INET,
+    utm JSONB DEFAULT '{}',
+    ip INET,
     user_agent TEXT,
     referrer TEXT,
     fbclid TEXT,
+    fbp TEXT,
+    fbc TEXT,
     gclid TEXT,
-    last_contacted_at TIMESTAMPTZ,
+    ttclid TEXT,
+    landing_page TEXT,
+    campaign_id TEXT,
+    tags TEXT[] DEFAULT '{}',
     next_followup_at TIMESTAMPTZ,
+    last_contacted_at TIMESTAMPTZ,
     converted_at TIMESTAMPTZ,
     lost_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -484,152 +500,89 @@ CREATE TABLE IF NOT EXISTS leads (
 );
 
 CREATE INDEX IF NOT EXISTS idx_leads_tenant ON leads(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_leads_tenant_owner ON leads(tenant_id, owner_user_id);
-CREATE INDEX IF NOT EXISTS idx_leads_tenant_status ON leads(tenant_id, status);
-CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(tenant_id, email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_owner ON leads(tenant_id, owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_leads_source ON leads(tenant_id, source_id);
+CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_leads_pipeline ON leads(tenant_id, pipeline_id);
+CREATE INDEX IF NOT EXISTS idx_leads_stage ON leads(tenant_id, stage_id);
 CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(tenant_id, score DESC) WHERE score IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_leads_fbclid ON leads(fbclid) WHERE fbclid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(tenant_id, email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(tenant_id, phone) WHERE phone IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_tags ON leads USING GIN (tags);
+CREATE INDEX IF NOT EXISTS idx_leads_utm ON leads USING GIN (utm);
+CREATE INDEX IF NOT EXISTS idx_leads_custom_fields ON leads USING GIN (custom_fields);
+CREATE INDEX IF NOT EXISTS idx_leads_followup ON leads(tenant_id, next_followup_at) WHERE next_followup_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_created ON leads(tenant_id, created_at DESC);
+
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY leads_tenant_isolation ON leads
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            (current_setting('app.is_admin', true) = 'true')
+            OR
+            (owner_user_id = current_setting('app.current_user_id', true)::UUID)
+        )
+    );
 `
 
-const migration0002 = `
+const migration0004 = `
 CREATE TABLE IF NOT EXISTS lead_notes (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
     lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
     author_id UUID,
     body TEXT NOT NULL,
+    is_pinned BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ
 );
 
+CREATE INDEX IF NOT EXISTS idx_lead_notes_tenant ON lead_notes(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_lead_notes_lead ON lead_notes(lead_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_notes_body ON lead_notes USING gin(to_tsvector('simple', body));
 
 CREATE TABLE IF NOT EXISTS lead_activities (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
     lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
-    type TEXT NOT NULL CHECK (type IN ('call', 'email', 'meeting', 'sms', 'note', 'status_change', 'assignment', 'score_update', 'conversion')),
+    type TEXT NOT NULL CHECK (type IN ('CALL', 'EMAIL', 'MEETING', 'NOTE', 'STATUS_CHANGE', 'ASSIGN', 'TASK', 'SCORE_UPDATE')),
     payload JSONB DEFAULT '{}',
+    actor_id UUID,
+    description TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_lead_activities_tenant ON lead_activities(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_lead_activities_lead ON lead_activities(lead_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_lead_activities_type ON lead_activities(tenant_id, type);
 
 CREATE TABLE IF NOT EXISTS lead_assignments (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
     lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
     from_user_id UUID,
-    to_user_id UUID NOT NULL,
+    to_user_id UUID,
     reason TEXT,
+    assigned_by UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE INDEX IF NOT EXISTS idx_lead_assignments_tenant ON lead_assignments(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_lead_assignments_lead ON lead_assignments(lead_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS lead_stage_history (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id UUID NOT NULL,
     lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
     from_stage TEXT,
     to_stage TEXT NOT NULL,
     changed_by UUID,
+    notes TEXT,
     changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_lead_stage_history_lead ON lead_stage_history(lead_id, changed_at DESC);
-`
-
-const migration0003 = `
-CREATE TABLE IF NOT EXISTS lead_sources (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID NOT NULL,
-    name TEXT NOT NULL,
-    utm_source TEXT,
-    utm_medium TEXT,
-    utm_campaign TEXT,
-    description TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(tenant_id, name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_lead_sources_tenant ON lead_sources(tenant_id);
-
-CREATE TABLE IF NOT EXISTS pipelines (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tenant_id UUID NOT NULL,
-    name TEXT NOT NULL,
-    is_default BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(tenant_id, name)
-);
-
-CREATE INDEX IF NOT EXISTS idx_pipelines_tenant ON pipelines(tenant_id);
-
-CREATE TABLE IF NOT EXISTS pipeline_stages (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    pipeline_id UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    display_order INT NOT NULL DEFAULT 0,
-    probability INT CHECK (probability >= 0 AND probability <= 100),
-    color TEXT DEFAULT '#6366f1',
-    is_default BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS idx_pipeline_stages_pipeline ON pipeline_stages(pipeline_id, display_order);
-`
-
-const migration0004 = `
--- RLS Policies
-ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_notes ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_activities ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_assignments ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_stage_history ENABLE ROW LEVEL SECURITY;
-ALTER TABLE lead_sources ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pipelines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE pipeline_stages ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY leads_tenant_isolation ON leads
-    FOR ALL
-    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
-
-CREATE POLICY lead_notes_tenant_isolation ON lead_notes
-    FOR ALL
-    USING (
-        lead_id IN (SELECT id FROM leads WHERE tenant_id = current_setting('app.current_tenant_id', true)::UUID)
-    );
-
-CREATE POLICY lead_activities_tenant_isolation ON lead_activities
-    FOR ALL
-    USING (
-        lead_id IN (SELECT id FROM leads WHERE tenant_id = current_setting('app.current_tenant_id', true)::UUID)
-    );
-
-CREATE POLICY lead_assignments_tenant_isolation ON lead_assignments
-    FOR ALL
-    USING (
-        lead_id IN (SELECT id FROM leads WHERE tenant_id = current_setting('app.current_tenant_id', true)::UUID)
-    );
-
-CREATE POLICY lead_stage_history_tenant_isolation ON lead_stage_history
-    FOR ALL
-    USING (
-        lead_id IN (SELECT id FROM leads WHERE tenant_id = current_setting('app.current_tenant_id', true)::UUID)
-    );
-
-CREATE POLICY lead_sources_tenant_isolation ON lead_sources
-    FOR ALL
-    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
-
-CREATE POLICY pipelines_tenant_isolation ON pipelines
-    FOR ALL
-    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
-
-CREATE POLICY pipeline_stages_tenant_isolation ON pipeline_stages
-    FOR ALL
-    USING (
-        pipeline_id IN (SELECT id FROM pipelines WHERE tenant_id = current_setting('app.current_tenant_id', true)::UUID)
-    );
 `

@@ -1,8 +1,7 @@
-// Package middleware provides HTTP middleware for Lead service.
+// Package middleware provides HTTP middleware for lead service.
 package middleware
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -121,8 +120,7 @@ func TraceMW() echo.MiddlewareFunc {
 			if traceID == "" {
 				traceID = c.Response().Header().Get("X-Trace-ID")
 			}
-			ctx := context.WithValue(c.Request().Context(), "trace_id", traceID)
-			c.SetRequest(c.Request().WithContext(ctx))
+			c.Set("trace_id", traceID)
 			return next(c)
 		}
 	}

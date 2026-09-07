@@ -1,4 +1,4 @@
-// Package platform wraps shared infrastructure concerns for Lead service.
+// Package platform wraps shared infrastructure concerns for lead service.
 package platform
 
 import (
@@ -44,7 +44,7 @@ func Getenv(key, def string) string {
 	return def
 }
 
-// GetenvInt reads int env, falling back to def.
+// GetenvInt reads int env.
 func GetenvInt(key string, def int) int {
 	v := os.Getenv(key)
 	if v == "" {
@@ -52,6 +52,22 @@ func GetenvInt(key string, def int) int {
 	}
 	if n, err := strconv.Atoi(v); err == nil {
 		return n
+	}
+	return def
+}
+
+// GetenvBool reads bool env.
+func GetenvBool(key string, def bool) bool {
+	v := strings.ToLower(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	return v == "true" || v == "1" || v == "yes"
+}
+
+func getenv(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
 	}
 	return def
 }
@@ -118,13 +134,6 @@ func OpenPool(ctx context.Context, cfg DBConfig, applicationName string) (*pgxpo
 	return pool, nil
 }
 
-func getenv(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
 // === Context helpers ===
 
 type ctxKey string
@@ -159,6 +168,17 @@ func UserFromContext(ctx context.Context) string {
 // IsAdminFromContext returns whether current context is super-admin.
 func IsAdminFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(isAdminKey).(bool)
+	return v
+}
+
+// WithTraceID attaches trace id to context.
+func WithTraceID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, traceIDKey, id)
+}
+
+// TraceFromContext returns current trace id.
+func TraceFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(traceIDKey).(string)
 	return v
 }
 

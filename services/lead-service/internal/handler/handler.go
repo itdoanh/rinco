@@ -1,4 +1,4 @@
-// Package handler provides HTTP handlers for Lead service.
+// Package handler provides HTTP handlers for lead service.
 package handler
 
 import (
@@ -11,22 +11,34 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
+
+	leadnats "github.com/itdoanh/rinco/services/lead-service/internal/nats"
 )
 
 // Server holds dependencies for handlers.
 type Server struct {
-	pool *pgxpool.Pool
+	pool       *pgxpool.Pool
+	rdb        *RedisClient
+	nats       *leadnats.Client
+	scoringURL string
 }
 
-// NewServer creates a new server.
-func NewServer(pool *pgxpool.Pool) *Server {
-	return &Server{pool: pool}
+// RedisClient wraps Redis configuration.
+type RedisClient struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+func NewServer(pool *pgxpool.Pool, rdb *RedisClient, natsClient *leadnats.Client, scoringURL string) *Server {
+	return &Server{pool: pool, rdb: rdb, nats: natsClient, scoringURL: scoringURL}
 }
 
 // Helper to get tenant context.
@@ -85,6 +97,11 @@ type listResp struct {
 	TotalPages int   `json:"total_pages"`
 }
 
+type errResp struct {
+	Error   string `json:"error"`
+	Details any    `json:"details,omitempty"`
+}
+
 func (s *Server) json(c echo.Context, status int, data any) error {
 	return c.JSON(status, data)
 }
@@ -94,46 +111,67 @@ func (s *Server) errorResp(c echo.Context, status int, msg string, err error) er
 	if err != nil {
 		details = err.Error()
 	}
-	return c.JSON(status, map[string]any{"error": msg, "details": details})
+	return c.JSON(status, errResp{Error: msg, Details: details})
 }
 
 // =============================================================================
-// Leads Handlers
+// Lead Handlers
 // =============================================================================
 
 type leadReq struct {
-	SourceID    *uuid.UUID          `json:"source_id,omitempty"`
-	OwnerUserID *uuid.UUID         `json:"owner_user_id,omitempty"`
-	FullName    *string            `json:"full_name,omitempty"`
-	Email       *string            `json:"email,omitempty"`
-	Phone       *string            `json:"phone,omitempty"`
-	CompanyName *string            `json:"company_name,omitempty"`
-	Status      *string            `json:"status,omitempty"`
-	UTM         *map[string]string `json:"utm,omitempty"`
-	CustomFields *map[string]any   `json:"custom_fields,omitempty"`
+	SourceID        *uuid.UUID      `json:"source_id,omitempty"`
+	ContactID       *uuid.UUID      `json:"contact_id,omitempty"`
+	OwnerUserID     *uuid.UUID      `json:"owner_user_id,omitempty"`
+	PipelineID      *uuid.UUID      `json:"pipeline_id,omitempty"`
+	StageID         *uuid.UUID      `json:"stage_id,omitempty"`
+	FullName        *string         `json:"full_name,omitempty"`
+	Email           *string         `json:"email,omitempty"`
+	Phone           *string         `json:"phone,omitempty"`
+	CompanyName     *string         `json:"company_name,omitempty"`
+	JobTitle        *string         `json:"job_title,omitempty"`
+	Status          *string         `json:"status,omitempty"`
+	Score           *float64        `json:"score,omitempty"`
+	ScoreTier       *string         `json:"score_tier,omitempty"`
+	EstimatedValue  *float64        `json:"estimated_value,omitempty"`
+	CustomFields    *map[string]any `json:"custom_fields,omitempty"`
+	UTM             *map[string]any `json:"utm,omitempty"`
+	IP              *string         `json:"ip,omitempty"`
+	UserAgent       *string         `json:"user_agent,omitempty"`
+	Referrer        *string         `json:"referrer,omitempty"`
+	FBCLID          *string         `json:"fbclid,omitempty"`
+	FBP             *string         `json:"fbp,omitempty"`
+	GCLID           *string         `json:"gclid,omitempty"`
+	Tags            []string        `json:"tags,omitempty"`
+	NextFollowupAt  *time.Time      `json:"next_followup_at,omitempty"`
+	LostReason      *string         `json:"lost_reason,omitempty"`
 }
 
 type leadResp struct {
-	ID              uuid.UUID         `json:"id"`
-	TenantID        uuid.UUID        `json:"tenant_id"`
-	SourceID        *uuid.UUID       `json:"source_id,omitempty"`
-	ContactID       *uuid.UUID       `json:"contact_id,omitempty"`
-	OwnerUserID     *uuid.UUID       `json:"owner_user_id,omitempty"`
-	FullName        string           `json:"full_name"`
-	Email           string           `json:"email,omitempty"`
-	Phone           string           `json:"phone,omitempty"`
-	CompanyName     string           `json:"company_name,omitempty"`
-	Status          string           `json:"status"`
-	Score           float64          `json:"score"`
-	ScoreTier       string           `json:"score_tier,omitempty"`
-	UTM             map[string]string `json:"utm,omitempty"`
-	CustomFields    map[string]any   `json:"custom_fields,omitempty"`
-	LastContactedAt *time.Time       `json:"last_contacted_at,omitempty"`
-	NextFollowupAt  *time.Time       `json:"next_followup_at,omitempty"`
-	ConvertedAt     *time.Time       `json:"converted_at,omitempty"`
-	LostReason      string           `json:"lost_reason,omitempty"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
+	ID              uuid.UUID      `json:"id"`
+	TenantID        uuid.UUID      `json:"tenant_id"`
+	SourceID        *uuid.UUID     `json:"source_id,omitempty"`
+	ContactID       *uuid.UUID     `json:"contact_id,omitempty"`
+	OwnerUserID     *uuid.UUID     `json:"owner_user_id,omitempty"`
+	PipelineID      *uuid.UUID     `json:"pipeline_id,omitempty"`
+	StageID         *uuid.UUID     `json:"stage_id,omitempty"`
+	FullName        string         `json:"full_name"`
+	Email           string         `json:"email,omitempty"`
+	Phone           string         `json:"phone,omitempty"`
+	CompanyName     string         `json:"company_name,omitempty"`
+	JobTitle        string         `json:"job_title,omitempty"`
+	Status          string         `json:"status"`
+	Score           float64        `json:"score"`
+	ScoreTier       string         `json:"score_tier,omitempty"`
+	EstimatedValue  float64        `json:"estimated_value"`
+	CustomFields    map[string]any `json:"custom_fields,omitempty"`
+	UTM             map[string]any `json:"utm,omitempty"`
+	Tags            []string       `json:"tags"`
+	NextFollowupAt  *time.Time     `json:"next_followup_at,omitempty"`
+	LastContactedAt *time.Time     `json:"last_contacted_at,omitempty"`
+	ConvertedAt     *time.Time     `json:"converted_at,omitempty"`
+	LostReason      string         `json:"lost_reason,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 func (s *Server) ListLeads(c echo.Context) error {
@@ -153,7 +191,7 @@ func (s *Server) ListLeads(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "count failed", err)
 	}
 
-	query := `SELECT id, tenant_id, source_id, contact_id, owner_user_id, full_name, email, phone, company_name, status, score, score_tier, utm, custom_fields, last_contacted_at, next_followup_at, converted_at, lost_reason, created_at, updated_at
+	query := `SELECT id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
 		FROM leads WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2`
 
 	rows, err := s.pool.Query(ctx, query, p.PerPage, p.Offset)
@@ -165,15 +203,15 @@ func (s *Server) ListLeads(c echo.Context) error {
 	var leads []leadResp
 	for rows.Next() {
 		var l leadResp
-		var utmBytes, cfBytes []byte
-		if err := rows.Scan(&l.ID, &l.TenantID, &l.SourceID, &l.ContactID, &l.OwnerUserID, &l.FullName, &l.Email, &l.Phone, &l.CompanyName, &l.Status, &l.Score, &l.ScoreTier, &utmBytes, &cfBytes, &l.LastContactedAt, &l.NextFollowupAt, &l.ConvertedAt, &l.LostReason, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		var cf, utm []byte
+		if err := rows.Scan(&l.ID, &l.TenantID, &l.SourceID, &l.ContactID, &l.OwnerUserID, &l.PipelineID, &l.StageID, &l.FullName, &l.Email, &l.Phone, &l.CompanyName, &l.JobTitle, &l.Status, &l.Score, &l.ScoreTier, &l.EstimatedValue, &cf, &utm, &l.Tags, &l.NextFollowupAt, &l.LastContactedAt, &l.ConvertedAt, &l.LostReason, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			continue
 		}
-		if utmBytes != nil {
-			json.Unmarshal(utmBytes, &l.UTM)
+		if cf != nil {
+			json.Unmarshal(cf, &l.CustomFields)
 		}
-		if cfBytes != nil {
-			json.Unmarshal(cfBytes, &l.CustomFields)
+		if utm != nil {
+			json.Unmarshal(utm, &l.UTM)
 		}
 		leads = append(leads, l)
 	}
@@ -204,42 +242,58 @@ func (s *Server) CreateLead(c echo.Context) error {
 		return s.errorResp(c, http.StatusBadRequest, "full_name is required", nil)
 	}
 
-	var utmBytes, cfBytes []byte
-	if req.UTM != nil {
-		utmBytes, _ = json.Marshal(req.UTM)
-	}
+	var cfBytes, utmBytes []byte
 	if req.CustomFields != nil {
 		cfBytes, _ = json.Marshal(req.CustomFields)
+	}
+	if req.UTM != nil {
+		utmBytes, _ = json.Marshal(req.UTM)
 	}
 
 	status := "new"
 	if req.Status != nil {
 		status = *req.Status
 	}
-
-	// Get client info
-	ip := c.RealIP()
-	userAgent := c.Request().UserAgent()
+	score := 0.0
+	if req.Score != nil {
+		score = *req.Score
+	}
+	estValue := 0.0
+	if req.EstimatedValue != nil {
+		estValue = *req.EstimatedValue
+	}
 
 	var resp leadResp
-	var utmB, cfB []byte
+	var cf, utm []byte
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO leads (tenant_id, source_id, owner_user_id, full_name, email, phone, company_name, status, utm, custom_fields, ip_address, user_agent)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, tenant_id, source_id, contact_id, owner_user_id, full_name, email, phone, company_name, status, score, score_tier, utm, custom_fields, last_contacted_at, next_followup_at, converted_at, lost_reason, created_at, updated_at
-	`, tenantID, req.SourceID, req.OwnerUserID, *req.FullName, req.Email, req.Phone, req.CompanyName, status, utmBytes, cfBytes, ip, userAgent).
-		Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.Status, &resp.Score, &resp.ScoreTier, &utmB, &cfB, &resp.LastContactedAt, &resp.NextFollowupAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
+		INSERT INTO leads (tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, ip, user_agent, referrer, fbclid, fbp, gclid, tags, next_followup_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+		RETURNING id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
+	`, tenantID, req.SourceID, req.ContactID, req.OwnerUserID, req.PipelineID, req.StageID, *req.FullName, req.Email, req.Phone, req.CompanyName, req.JobTitle, status, score, req.ScoreTier, estValue, cfBytes, utmBytes, req.IP, req.UserAgent, req.Referrer, req.FBCLID, req.FBP, req.GCLID, req.Tags, req.NextFollowupAt).
+		Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.PipelineID, &resp.StageID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.JobTitle, &resp.Status, &resp.Score, &resp.ScoreTier, &resp.EstimatedValue, &cf, &utm, &resp.Tags, &resp.NextFollowupAt, &resp.LastContactedAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
 
 	if err != nil {
 		slog.Error("create lead failed", slog.String("error", err.Error()))
 		return s.errorResp(c, http.StatusInternalServerError, "create failed", err)
 	}
-	if utmB != nil {
-		json.Unmarshal(utmB, &resp.UTM)
+	if cf != nil {
+		json.Unmarshal(cf, &resp.CustomFields)
 	}
-	if cfB != nil {
-		json.Unmarshal(cfB, &resp.CustomFields)
+	if utm != nil {
+		json.Unmarshal(utm, &resp.UTM)
 	}
+
+	// Publish to NATS
+	if s.nats != nil {
+		go s.nats.Publish(ctx, leadnats.SubjectLeadCreated, resp)
+	}
+
+	// Log activity
+	actorID, _ := uuid.Parse(userID)
+	_, _ = s.pool.Exec(ctx, `
+		INSERT INTO lead_activities (tenant_id, lead_id, type, actor_id, description, payload)
+		VALUES ($1, $2, 'NOTE', $3, $4, $5)
+	`, tenantID, resp.ID, actorID, "Lead created", "{}")
 
 	return s.json(c, http.StatusCreated, resp)
 }
@@ -260,11 +314,11 @@ func (s *Server) GetLead(c echo.Context) error {
 	}
 
 	var resp leadResp
-	var utmBytes, cfBytes []byte
+	var cf, utm []byte
 	err = s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, source_id, contact_id, owner_user_id, full_name, email, phone, company_name, status, score, score_tier, utm, custom_fields, last_contacted_at, next_followup_at, converted_at, lost_reason, created_at, updated_at
+		SELECT id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
 		FROM leads WHERE id = $1 AND deleted_at IS NULL
-	`, id).Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.Status, &resp.Score, &resp.ScoreTier, &utmBytes, &cfBytes, &resp.LastContactedAt, &resp.NextFollowupAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
+	`, id).Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.PipelineID, &resp.StageID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.JobTitle, &resp.Status, &resp.Score, &resp.ScoreTier, &resp.EstimatedValue, &cf, &utm, &resp.Tags, &resp.NextFollowupAt, &resp.LastContactedAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s.errorResp(c, http.StatusNotFound, "lead not found", nil)
@@ -272,11 +326,11 @@ func (s *Server) GetLead(c echo.Context) error {
 	if err != nil {
 		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
 	}
-	if utmBytes != nil {
-		json.Unmarshal(utmBytes, &resp.UTM)
+	if cf != nil {
+		json.Unmarshal(cf, &resp.CustomFields)
 	}
-	if cfBytes != nil {
-		json.Unmarshal(cfBytes, &resp.CustomFields)
+	if utm != nil {
+		json.Unmarshal(utm, &resp.UTM)
 	}
 
 	return s.json(c, http.StatusOK, resp)
@@ -303,23 +357,33 @@ func (s *Server) UpdateLead(c echo.Context) error {
 	}
 
 	var resp leadResp
-	var utmBytes, cfBytes []byte
+	var cf, utm []byte
 	err = s.pool.QueryRow(ctx, `
 		UPDATE leads SET 
 			source_id = COALESCE($2, source_id),
-			owner_user_id = COALESCE($3, owner_user_id),
-			full_name = COALESCE($4, full_name),
-			email = COALESCE($5, email),
-			phone = COALESCE($6, phone),
-			company_name = COALESCE($7, company_name),
-			status = COALESCE($8, status),
-			utm = COALESCE($9, utm),
-			custom_fields = COALESCE($10, custom_fields),
+			contact_id = COALESCE($3, contact_id),
+			owner_user_id = COALESCE($4, owner_user_id),
+			pipeline_id = COALESCE($5, pipeline_id),
+			stage_id = COALESCE($6, stage_id),
+			full_name = COALESCE($7, full_name),
+			email = COALESCE($8, email),
+			phone = COALESCE($9, phone),
+			company_name = COALESCE($10, company_name),
+			job_title = COALESCE($11, job_title),
+			status = COALESCE($12, status),
+			score = COALESCE($13, score),
+			score_tier = COALESCE($14, score_tier),
+			estimated_value = COALESCE($15, estimated_value),
+			custom_fields = COALESCE($16, custom_fields),
+			utm = COALESCE($17, utm),
+			tags = COALESCE($18, tags),
+			next_followup_at = COALESCE($19, next_followup_at),
+			lost_reason = COALESCE($20, lost_reason),
 			updated_at = NOW()
 		WHERE id = $1 AND deleted_at IS NULL
-		RETURNING id, tenant_id, source_id, contact_id, owner_user_id, full_name, email, phone, company_name, status, score, score_tier, utm, custom_fields, last_contacted_at, next_followup_at, converted_at, lost_reason, created_at, updated_at
-	`, id, req.SourceID, req.OwnerUserID, req.FullName, req.Email, req.Phone, req.CompanyName, req.Status, req.UTM, req.CustomFields).
-		Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.Status, &resp.Score, &resp.ScoreTier, &utmBytes, &cfBytes, &resp.LastContactedAt, &resp.NextFollowupAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
+		RETURNING id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
+	`, id, req.SourceID, req.ContactID, req.OwnerUserID, req.PipelineID, req.StageID, req.FullName, req.Email, req.Phone, req.CompanyName, req.JobTitle, req.Status, req.Score, req.ScoreTier, req.EstimatedValue, req.CustomFields, req.UTM, req.Tags, req.NextFollowupAt, req.LostReason).
+		Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.PipelineID, &resp.StageID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.JobTitle, &resp.Status, &resp.Score, &resp.ScoreTier, &resp.EstimatedValue, &cf, &utm, &resp.Tags, &resp.NextFollowupAt, &resp.LastContactedAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
 
 	if errors.Is(err, pgx.ErrNoRows) {
 		return s.errorResp(c, http.StatusNotFound, "lead not found", nil)
@@ -327,11 +391,16 @@ func (s *Server) UpdateLead(c echo.Context) error {
 	if err != nil {
 		return s.errorResp(c, http.StatusInternalServerError, "update failed", err)
 	}
-	if utmBytes != nil {
-		json.Unmarshal(utmBytes, &resp.UTM)
+	if cf != nil {
+		json.Unmarshal(cf, &resp.CustomFields)
 	}
-	if cfBytes != nil {
-		json.Unmarshal(cfBytes, &resp.CustomFields)
+	if utm != nil {
+		json.Unmarshal(utm, &resp.UTM)
+	}
+
+	// Publish update event
+	if s.nats != nil {
+		go s.nats.Publish(ctx, leadnats.SubjectLeadUpdated, resp)
 	}
 
 	return s.json(c, http.StatusOK, resp)
@@ -364,12 +433,13 @@ func (s *Server) DeleteLead(c echo.Context) error {
 }
 
 // =============================================================================
-// Lead Assignment
+// Lead Operations
 // =============================================================================
 
 type assignLeadReq struct {
-	ToUserID *uuid.UUID `json:"to_user_id"`
-	Reason   string    `json:"reason,omitempty"`
+	OwnerUserID *uuid.UUID `json:"owner_user_id,omitempty"`
+	Subtree     *bool      `json:"subtree,omitempty"`
+	Reason      string     `json:"reason,omitempty"`
 }
 
 func (s *Server) AssignLead(c echo.Context) error {
@@ -392,47 +462,57 @@ func (s *Server) AssignLead(c echo.Context) error {
 		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
 	}
 
-	if req.ToUserID == nil {
-		return s.errorResp(c, http.StatusBadRequest, "to_user_id is required", nil)
+	if req.OwnerUserID == nil {
+		return s.errorResp(c, http.StatusBadRequest, "owner_user_id is required", nil)
 	}
 
-	// Get current owner
-	var currentOwner *uuid.UUID
-	s.pool.QueryRow(ctx, `SELECT owner_user_id FROM leads WHERE id = $1`, id).Scan(&currentOwner)
+	var resp leadResp
+	var cf, utm []byte
+	err = s.pool.QueryRow(ctx, `
+		UPDATE leads SET owner_user_id = $2, updated_at = NOW()
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
+	`, id, *req.OwnerUserID).
+		Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.PipelineID, &resp.StageID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.JobTitle, &resp.Status, &resp.Score, &resp.ScoreTier, &resp.EstimatedValue, &cf, &utm, &resp.Tags, &resp.NextFollowupAt, &resp.LastContactedAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
 
-	// Update lead owner
-	_, err = s.pool.Exec(ctx, `
-		UPDATE leads SET owner_user_id = $1, updated_at = NOW() WHERE id = $2
-	`, req.ToUserID, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.errorResp(c, http.StatusNotFound, "lead not found", nil)
+	}
 	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "assign failed", err)
+		return s.errorResp(c, http.StatusInternalServerError, "update failed", err)
 	}
 
 	// Record assignment
-	fromStr := ""
-	if currentOwner != nil {
-		fromStr = currentOwner.String()
-	}
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO lead_assignments (lead_id, from_user_id, to_user_id, reason)
-		VALUES ($1, $2, $3, $4)
-	`, id, fromStr, req.ToUserID.String(), req.Reason)
-	if err != nil {
-		slog.Warn("record assignment failed", slog.String("error", err.Error()))
-	}
-
-	// Record activity
+	oldOwner, _ := uuid.Parse(userID)
 	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO lead_activities (lead_id, type, payload)
-		VALUES ($1, 'assignment', $2)
-	`, id, fmt.Sprintf(`{"from": "%s", "to": "%s"}`, fromStr, req.ToUserID.String()))
+		INSERT INTO lead_assignments (tenant_id, lead_id, from_user_id, to_user_id, reason, assigned_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, tenantID, id, oldOwner, *req.OwnerUserID, req.Reason, oldOwner)
 
-	return s.json(c, http.StatusOK, map[string]string{"status": "assigned"})
+	// Log activity
+	_, _ = s.pool.Exec(ctx, `
+		INSERT INTO lead_activities (tenant_id, lead_id, type, actor_id, description, payload)
+		VALUES ($1, $2, 'ASSIGN', $3, $4, $5)
+	`, tenantID, id, oldOwner, fmt.Sprintf("Lead assigned to %s", req.OwnerUserID.String()), "{}")
+
+	// Publish event
+	if s.nats != nil {
+		go s.nats.Publish(ctx, leadnats.SubjectLeadAssigned, map[string]any{
+			"lead_id":      id,
+			"to_user_id":   req.OwnerUserID,
+			"from_user_id": oldOwner,
+			"reason":       req.Reason,
+		})
+	}
+
+	if cf != nil {
+		json.Unmarshal(cf, &resp.CustomFields)
+	}
+	if utm != nil {
+		json.Unmarshal(utm, &resp.UTM)
+	}
+	return s.json(c, http.StatusOK, resp)
 }
-
-// =============================================================================
-// Lead Status
-// =============================================================================
 
 type updateStatusReq struct {
 	Status     string `json:"status"`
@@ -464,429 +544,54 @@ func (s *Server) UpdateLeadStatus(c echo.Context) error {
 		return s.errorResp(c, http.StatusBadRequest, "invalid status", nil)
 	}
 
-	// Get old status
+	// Get old status for history
 	var oldStatus string
 	s.pool.QueryRow(ctx, `SELECT status FROM leads WHERE id = $1`, id).Scan(&oldStatus)
 
-	// Update status
-	_, err = s.pool.Exec(ctx, `
+	var resp leadResp
+	var cf, utm []byte
+	err = s.pool.QueryRow(ctx, `
 		UPDATE leads SET 
-			status = $1,
-			lost_reason = $2,
-			last_contacted_at = CASE WHEN $1 != old_status THEN NOW() ELSE last_contacted_at END,
+			status = $2, 
+			lost_reason = CASE WHEN $2 = 'lost' THEN $3 ELSE NULL END,
+			converted_at = CASE WHEN $2 = 'won' THEN NOW() ELSE converted_at END,
 			updated_at = NOW()
-		WHERE id = $3
-	`, req.Status, req.LostReason, id)
+		WHERE id = $1 AND deleted_at IS NULL
+		RETURNING id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
+	`, id, req.Status, req.LostReason).
+		Scan(&resp.ID, &resp.TenantID, &resp.SourceID, &resp.ContactID, &resp.OwnerUserID, &resp.PipelineID, &resp.StageID, &resp.FullName, &resp.Email, &resp.Phone, &resp.CompanyName, &resp.JobTitle, &resp.Status, &resp.Score, &resp.ScoreTier, &resp.EstimatedValue, &cf, &utm, &resp.Tags, &resp.NextFollowupAt, &resp.LastContactedAt, &resp.ConvertedAt, &resp.LostReason, &resp.CreatedAt, &resp.UpdatedAt)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return s.errorResp(c, http.StatusNotFound, "lead not found", nil)
+	}
 	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "update status failed", err)
+		return s.errorResp(c, http.StatusInternalServerError, "update failed", err)
 	}
 
-	// Record stage history
+	// Record history
+	actorID, _ := uuid.Parse(userID)
 	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO lead_stage_history (lead_id, from_stage, to_stage, changed_by)
-		VALUES ($1, $2, $3, $4)
-	`, id, oldStatus, req.Status, userID)
+		INSERT INTO lead_stage_history (tenant_id, lead_id, from_stage, to_stage, changed_by)
+		VALUES ($1, $2, $3, $4, $5)
+	`, tenantID, id, oldStatus, req.Status, actorID)
 
-	// Record activity
 	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO lead_activities (lead_id, type, payload)
-		VALUES ($1, 'status_change', $2)
-	`, id, fmt.Sprintf(`{"from": "%s", "to": "%s"}`, oldStatus, req.Status))
+		INSERT INTO lead_activities (tenant_id, lead_id, type, actor_id, description, payload)
+		VALUES ($1, $2, 'STATUS_CHANGE', $3, $4, $5)
+	`, tenantID, id, actorID, fmt.Sprintf("Status changed from %s to %s", oldStatus, req.Status), "{}")
 
-	return s.json(c, http.StatusOK, map[string]string{"status": req.Status})
+	if cf != nil {
+		json.Unmarshal(cf, &resp.CustomFields)
+	}
+	if utm != nil {
+		json.Unmarshal(utm, &resp.UTM)
+	}
+	return s.json(c, http.StatusOK, resp)
 }
 
 // =============================================================================
-// Lead Scoring
+// Lead Bulk Operations
 // =============================================================================
-
-type scoreLeadReq struct {
-	Score     *float64 `json:"score,omitempty"`
-	ScoreTier *string  `json:"score_tier,omitempty"`
-}
-
-func (s *Server) ScoreLead(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	id := c.Param("id")
-	parsedID, err := uuid.Parse(id)
-	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid id", err)
-	}
-
-	var req scoreLeadReq
-	if err := c.Bind(&req); err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
-	}
-
-	// If no score provided, calculate based on engagement
-	score := float64(50)
-	if req.Score != nil {
-		score = *req.Score
-	}
-	if score < 0 {
-		score = 0
-	}
-	if score > 100 {
-		score = 100
-	}
-
-	scoreTier := "warm"
-	if score < 30 {
-		scoreTier = "cold"
-	} else if score > 70 {
-		scoreTier = "hot"
-	}
-	if req.ScoreTier != nil {
-		scoreTier = *req.ScoreTier
-	}
-
-	// Update score
-	_, err = s.pool.Exec(ctx, `
-		UPDATE leads SET score = $1, score_tier = $2, updated_at = NOW() WHERE id = $3
-	`, score, scoreTier, parsedID)
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "score update failed", err)
-	}
-
-	// Record activity
-	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO lead_activities (lead_id, type, payload)
-		VALUES ($1, 'score_update', $2)
-	`, id, fmt.Sprintf(`{"score": %f, "tier": "%s"}`, score, scoreTier))
-
-	return s.json(c, http.StatusOK, map[string]any{"score": score, "score_tier": scoreTier})
-}
-
-// =============================================================================
-// Lead Notes
-// =============================================================================
-
-type noteReq struct {
-	Body string `json:"body"`
-}
-
-type noteResp struct {
-	ID        uuid.UUID `json:"id"`
-	LeadID    uuid.UUID `json:"lead_id"`
-	AuthorID  *string   `json:"author_id,omitempty"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-func (s *Server) ListLeadNotes(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	leadID := c.Param("id")
-	_, err := uuid.Parse(leadID)
-	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid lead id", err)
-	}
-
-	query := `SELECT id, lead_id, author_id, body, created_at, updated_at 
-		FROM lead_notes WHERE lead_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC`
-
-	rows, err := s.pool.Query(ctx, query, leadID)
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
-	}
-	defer rows.Close()
-
-	var notes []noteResp
-	for rows.Next() {
-		var n noteResp
-		if err := rows.Scan(&n.ID, &n.LeadID, &n.AuthorID, &n.Body, &n.CreatedAt, &n.UpdatedAt); err != nil {
-			continue
-		}
-		notes = append(notes, n)
-	}
-
-	return s.json(c, http.StatusOK, map[string]any{"notes": notes})
-}
-
-func (s *Server) CreateLeadNote(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	leadID := c.Param("id")
-	_, err := uuid.Parse(leadID)
-	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid lead id", err)
-	}
-
-	var req noteReq
-	if err := c.Bind(&req); err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
-	}
-
-	if req.Body == "" {
-		return s.errorResp(c, http.StatusBadRequest, "body is required", nil)
-	}
-
-	var resp noteResp
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO lead_notes (lead_id, author_id, body)
-		VALUES ($1, $2, $3)
-		RETURNING id, lead_id, author_id, body, created_at, updated_at
-	`, leadID, userID, req.Body).
-		Scan(&resp.ID, &resp.LeadID, &resp.AuthorID, &resp.Body, &resp.CreatedAt, &resp.UpdatedAt)
-
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "create note failed", err)
-	}
-
-	// Record activity
-	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO lead_activities (lead_id, type, payload)
-		VALUES ($1, 'note', $2)
-	`, leadID, fmt.Sprintf(`{"note_id": "%s"}`, resp.ID.String()))
-
-	return s.json(c, http.StatusCreated, resp)
-}
-
-// =============================================================================
-// Lead Timeline
-// =============================================================================
-
-func (s *Server) GetLeadTimeline(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	leadID := c.Param("id")
-	_, err := uuid.Parse(leadID)
-	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid lead id", err)
-	}
-
-	query := `SELECT id, lead_id, type, payload, created_at 
-		FROM lead_activities WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 100`
-
-	rows, err := s.pool.Query(ctx, query, leadID)
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
-	}
-	defer rows.Close()
-
-	var activities []map[string]any
-	for rows.Next() {
-		var id, lID uuid.UUID
-		var actType string
-		var payload []byte
-		var createdAt time.Time
-		if err := rows.Scan(&id, &lID, &actType, &payload, &createdAt); err != nil {
-			continue
-		}
-		var payloadMap map[string]any
-		if payload != nil {
-			json.Unmarshal(payload, &payloadMap)
-		}
-		activities = append(activities, map[string]any{
-			"id":         id,
-			"lead_id":    lID,
-			"type":       actType,
-			"payload":    payloadMap,
-			"created_at": createdAt,
-		})
-	}
-
-	return s.json(c, http.StatusOK, map[string]any{"activities": activities})
-}
-
-// =============================================================================
-// Lead Conversion
-// =============================================================================
-
-type convertLeadReq struct {
-	ContactID   *uuid.UUID `json:"contact_id,omitempty"`
-	DealName    *string    `json:"deal_name,omitempty"`
-	DealValue   *float64   `json:"deal_value,omitempty"`
-}
-
-func (s *Server) ConvertLead(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 15*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	id := c.Param("id")
-	parsedID, err := uuid.Parse(id)
-	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid id", err)
-	}
-
-	var req convertLeadReq
-	if err := c.Bind(&req); err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
-	}
-
-	// Get lead info
-	var lead leadResp
-	var utmBytes, cfBytes []byte
-	err = s.pool.QueryRow(ctx, `
-		SELECT id, tenant_id, full_name, email, phone, company_name, owner_user_id FROM leads WHERE id = $1
-	`, parsedID).Scan(&lead.ID, &lead.TenantID, &lead.FullName, &lead.Email, &lead.Phone, &lead.CompanyName, &lead.OwnerUserID)
-	if err != nil {
-		return s.errorResp(c, http.StatusNotFound, "lead not found", err)
-	}
-
-	// Update lead status to won
-	_, err = s.pool.Exec(ctx, `
-		UPDATE leads SET status = 'won', converted_at = NOW(), updated_at = NOW() WHERE id = $1
-	`, parsedID)
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "conversion failed", err)
-	}
-
-	// Record activity
-	_, _ = s.pool.Exec(ctx, `
-		INSERT INTO lead_activities (lead_id, type, payload)
-		VALUES ($1, 'conversion', $2)
-	`, id, fmt.Sprintf(`{"converted_at": "%s"}`, time.Now().Format(time.RFC3339)))
-
-	return s.json(c, http.StatusOK, map[string]any{
-		"status":       "converted",
-		"lead_id":      id,
-		"full_name":    lead.FullName,
-		"email":        lead.Email,
-		"company_name": lead.CompanyName,
-	})
-}
-
-// =============================================================================
-// Lead by Source
-// =============================================================================
-
-func (s *Server) GetLeadsBySource(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	source := c.QueryParam("source")
-	if source == "" {
-		return s.errorResp(c, http.StatusBadRequest, "source query param required", nil)
-	}
-
-	query := `SELECT id, tenant_id, source_id, contact_id, owner_user_id, full_name, email, phone, company_name, status, score, score_tier, utm, custom_fields, last_contacted_at, next_followup_at, converted_at, lost_reason, created_at, updated_at
-		FROM leads WHERE deleted_at IS NULL AND (utm->>'source' = $1 OR source_id IN (SELECT id FROM lead_sources WHERE utm_source = $1))
-		ORDER BY created_at DESC LIMIT 100`
-
-	rows, err := s.pool.Query(ctx, query, source)
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
-	}
-	defer rows.Close()
-
-	var leads []leadResp
-	for rows.Next() {
-		var l leadResp
-		var utmBytes, cfBytes []byte
-		if err := rows.Scan(&l.ID, &l.TenantID, &l.SourceID, &l.ContactID, &l.OwnerUserID, &l.FullName, &l.Email, &l.Phone, &l.CompanyName, &l.Status, &l.Score, &l.ScoreTier, &utmBytes, &cfBytes, &l.LastContactedAt, &l.NextFollowupAt, &l.ConvertedAt, &l.LostReason, &l.CreatedAt, &l.UpdatedAt); err != nil {
-			continue
-		}
-		if utmBytes != nil {
-			json.Unmarshal(utmBytes, &l.UTM)
-		}
-		if cfBytes != nil {
-			json.Unmarshal(cfBytes, &l.CustomFields)
-		}
-		leads = append(leads, l)
-	}
-
-	return s.json(c, http.StatusOK, map[string]any{"leads": leads, "source": source})
-}
-
-// =============================================================================
-// Lead Stats
-// =============================================================================
-
-func (s *Server) GetLeadStats(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	// Status counts
-	statusQuery := `SELECT status, COUNT(*) FROM leads WHERE deleted_at IS NULL GROUP BY status`
-	statusRows, err := s.pool.Query(ctx, statusQuery)
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
-	}
-	defer statusRows.Close()
-
-	statusCounts := map[string]int{}
-	for statusRows.Next() {
-		var status string
-		var count int
-		if err := statusRows.Scan(&status, &count); err == nil {
-			statusCounts[status] = count
-		}
-	}
-
-	// Total
-	var total int64
-	s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL`).Scan(&total)
-
-	// Score distribution
-	var coldCount, warmCount, hotCount int64
-	s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM leads WHERE score_tier = 'cold' AND deleted_at IS NULL`).Scan(&coldCount)
-	s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM leads WHERE score_tier = 'warm' AND deleted_at IS NULL`).Scan(&warmCount)
-	s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM leads WHERE score_tier = 'hot' AND deleted_at IS NULL`).Scan(&hotCount)
-
-	return s.json(c, http.StatusOK, map[string]any{
-		"total":       total,
-		"by_status":   statusCounts,
-		"by_score_tier": map[string]int64{
-			"cold": coldCount,
-			"warm": warmCount,
-			"hot":  hotCount,
-		},
-	})
-}
-
-// =============================================================================
-// Lead Import/Export
-// =============================================================================
-
-type importLeadRow struct {
-	FullName    string
-	Email       string
-	Phone       string
-	CompanyName string
-	Status      string
-}
 
 func (s *Server) ImportLeads(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 60*time.Second)
@@ -897,72 +602,73 @@ func (s *Server) ImportLeads(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
 	}
 
-	file, _, err := c.Request().FormFile("file")
+	// Read CSV
+	file, err := c.FormFile("file")
 	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "file required", err)
+		return s.errorResp(c, http.StatusBadRequest, "file is required", err)
 	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	headers, err := reader.Read()
+	src, err := file.Open()
 	if err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid CSV", err)
+		return s.errorResp(c, http.StatusInternalServerError, "open file failed", err)
+	}
+	defer src.Close()
+
+	reader := csv.NewReader(src)
+	reader.FieldsPerRecord = -1 // Allow variable fields
+
+	header, err := reader.Read()
+	if err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "csv read failed", err)
 	}
 
-	// Map headers to indices
-	colMap := map[string]int{}
-	for i, h := range headers {
-		colMap[strings.ToLower(strings.TrimSpace(h))] = i
-	}
+	actorID, _ := uuid.Parse(userID)
+	var imported int
+	var errors []string
 
-	var imported, failed int
 	for {
 		row, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			failed++
+			errors = append(errors, err.Error())
 			continue
 		}
 
-		fullName := getCol(row, colMap, "full_name", "name")
+		// Map CSV row to lead
+		lead := map[string]string{}
+		for i, h := range header {
+			if i < len(row) {
+				lead[strings.ToLower(strings.TrimSpace(h))] = row[i]
+			}
+		}
+
+		fullName := lead["full_name"]
 		if fullName == "" {
-			failed++
-			continue
+			fullName = lead["name"]
 		}
-
-		email := getCol(row, colMap, "email")
-		phone := getCol(row, colMap, "phone", "mobile")
-		companyName := getCol(row, colMap, "company", "company_name", "organization")
-		status := getCol(row, colMap, "status")
-		if status == "" {
-			status = "new"
+		if fullName == "" {
+			errors = append(errors, "missing full_name")
+			continue
 		}
 
 		_, err = s.pool.Exec(ctx, `
-			INSERT INTO leads (tenant_id, full_name, email, phone, company_name, status)
-			VALUES ($1, $2, $3, $4, $5, $6)
-		`, tenantID, fullName, email, phone, companyName, status)
+			INSERT INTO leads (tenant_id, full_name, email, phone, company_name, status, source_id)
+			VALUES ($1, $2, $3, $4, $5, 'new', NULL)
+		`, tenantID, fullName, lead["email"], lead["phone"], lead["company_name"])
 
 		if err != nil {
-			failed++
-			slog.Warn("import row failed", slog.String("error", err.Error()))
-		} else {
-			imported++
+			errors = append(errors, fmt.Sprintf("row '%s': %s", fullName, err.Error()))
+			continue
 		}
+		imported++
 	}
 
-	return s.json(c, http.StatusOK, map[string]int{"imported": imported, "failed": failed})
-}
-
-func getCol(row []string, colMap map[string]int, keys ...string) string {
-	for _, key := range keys {
-		if idx, ok := colMap[key]; ok && idx < len(row) {
-			return strings.TrimSpace(row[idx])
-		}
-	}
-	return ""
+	_, _ = actorID, tenantID
+	return s.json(c, http.StatusOK, map[string]any{
+		"imported": imported,
+		"errors":   errors,
+	})
 }
 
 func (s *Server) ExportLeads(c echo.Context) error {
@@ -974,68 +680,41 @@ func (s *Server) ExportLeads(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
 	}
 
-	query := `SELECT full_name, email, phone, company_name, status, score, score_tier, created_at 
-		FROM leads WHERE deleted_at IS NULL ORDER BY created_at DESC`
+	c.Response().Header().Set("Content-Type", "text/csv")
+	c.Response().Header().Set("Content-Disposition", `attachment; filename="leads.csv"`)
 
-	rows, err := s.pool.Query(ctx, query)
+	writer := csv.NewWriter(c.Response())
+	defer writer.Flush()
+
+	headers := []string{"id", "full_name", "email", "phone", "company_name", "status", "score", "score_tier", "created_at"}
+	if err := writer.Write(headers); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "write headers failed", err)
+	}
+
+	rows, err := s.pool.Query(ctx, `SELECT id, full_name, email, phone, company_name, status, score, score_tier, created_at FROM leads WHERE deleted_at IS NULL ORDER BY created_at DESC`)
 	if err != nil {
 		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
 	}
 	defer rows.Close()
 
-	c.Response().Header().Set("Content-Type", "text/csv")
-	c.Response().Header().Set("Content-Disposition", "attachment; filename=leads.csv")
-	c.Response().Write([]byte("full_name,email,phone,company_name,status,score,score_tier,created_at\n"))
-
 	for rows.Next() {
+		var id uuid.UUID
 		var fullName, email, phone, companyName, status, scoreTier string
 		var score float64
 		var createdAt time.Time
-		if err := rows.Scan(&fullName, &email, &phone, &companyName, &status, &score, &scoreTier, &createdAt); err != nil {
+		if err := rows.Scan(&id, &fullName, &email, &phone, &companyName, &status, &score, &scoreTier, &createdAt); err != nil {
 			continue
 		}
-		line := fmt.Sprintf("%s,%s,%s,%s,%s,%.2f,%s,%s\n",
-			escapeCSV(fullName), escapeCSV(email), escapeCSV(phone), escapeCSV(companyName),
-			status, score, scoreTier, createdAt.Format("2006-01-02 15:04:05"))
-		c.Response().Write([]byte(line))
+		writer.Write([]string{
+			id.String(), fullName, email, phone, companyName, status,
+			strconv.FormatFloat(score, 'f', 2, 64), scoreTier, createdAt.Format(time.RFC3339),
+		})
 	}
 
 	return nil
 }
 
-func escapeCSV(s string) string {
-	s = strings.ReplaceAll(s, "\"", "\"\"")
-	if strings.ContainsAny(s, ",\"\n") {
-		return "\"" + s + "\""
-	}
-	return s
-}
-
-// =============================================================================
-// Lead Sources
-// =============================================================================
-
-type sourceReq struct {
-	Name        *string `json:"name,omitempty"`
-	UTMSource   *string `json:"utm_source,omitempty"`
-	UTMMedium   *string `json:"utm_medium,omitempty"`
-	UTMCampaign *string `json:"utm_campaign,omitempty"`
-	Description *string `json:"description,omitempty"`
-}
-
-type sourceResp struct {
-	ID          uuid.UUID `json:"id"`
-	TenantID    uuid.UUID `json:"tenant_id"`
-	Name        string    `json:"name"`
-	UTMSource   string    `json:"utm_source,omitempty"`
-	UTMMedium   string    `json:"utm_medium,omitempty"`
-	UTMCampaign string    `json:"utm_campaign,omitempty"`
-	Description string    `json:"description,omitempty"`
-	IsActive    bool      `json:"is_active"`
-	CreatedAt   time.Time `json:"created_at"`
-}
-
-func (s *Server) ListLeadSources(c echo.Context) error {
+func (s *Server) GetLeadsBySource(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
 
@@ -1044,28 +723,74 @@ func (s *Server) ListLeadSources(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
 	}
 
-	query := `SELECT id, tenant_id, name, utm_source, utm_medium, utm_campaign, description, is_active, created_at
-		FROM lead_sources WHERE is_active = true ORDER BY name`
+	source := c.Param("source")
 
-	rows, err := s.pool.Query(ctx, query)
+	p := getPagination(c)
+	query := `SELECT id, tenant_id, source_id, contact_id, owner_user_id, pipeline_id, stage_id, full_name, email, phone, company_name, job_title, status, score, score_tier, estimated_value, custom_fields, utm, tags, next_followup_at, last_contacted_at, converted_at, lost_reason, created_at, updated_at
+		FROM leads WHERE deleted_at IS NULL AND utm->>'source' = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+
+	rows, err := s.pool.Query(ctx, query, source, p.PerPage, p.Offset)
 	if err != nil {
 		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
 	}
 	defer rows.Close()
 
-	var sources []sourceResp
+	var leads []leadResp
 	for rows.Next() {
-		var src sourceResp
-		if err := rows.Scan(&src.ID, &src.TenantID, &src.Name, &src.UTMSource, &src.UTMMedium, &src.UTMCampaign, &src.Description, &src.IsActive, &src.CreatedAt); err != nil {
+		var l leadResp
+		var cf, utm []byte
+		if err := rows.Scan(&l.ID, &l.TenantID, &l.SourceID, &l.ContactID, &l.OwnerUserID, &l.PipelineID, &l.StageID, &l.FullName, &l.Email, &l.Phone, &l.CompanyName, &l.JobTitle, &l.Status, &l.Score, &l.ScoreTier, &l.EstimatedValue, &cf, &utm, &l.Tags, &l.NextFollowupAt, &l.LastContactedAt, &l.ConvertedAt, &l.LostReason, &l.CreatedAt, &l.UpdatedAt); err != nil {
 			continue
 		}
-		sources = append(sources, src)
+		if cf != nil {
+			json.Unmarshal(cf, &l.CustomFields)
+		}
+		if utm != nil {
+			json.Unmarshal(utm, &l.UTM)
+		}
+		leads = append(leads, l)
 	}
 
-	return s.json(c, http.StatusOK, map[string]any{"sources": sources})
+	return s.json(c, http.StatusOK, map[string]any{"leads": leads})
 }
 
-func (s *Server) CreateLeadSource(c echo.Context) error {
+func (s *Server) StreamLeads(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := c.Response().Writer.(http.Flusher)
+	if !ok {
+		return s.errorResp(c, http.StatusInternalServerError, "streaming unsupported", nil)
+	}
+
+	ctx := c.Request().Context()
+
+	// Send initial event
+	fmt.Fprintf(c.Response(), "event: connected\ndata: {}\n\n")
+	flusher.Flush()
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			tenantID, _, _ := s.tenantFromCtx(c)
+			if tenantID != "" {
+				var count int
+				s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM leads WHERE tenant_id = $1 AND deleted_at IS NULL AND created_at > NOW() - INTERVAL '10 seconds'`, tenantID).Scan(&count)
+				fmt.Fprintf(c.Response(), "event: tick\ndata: {\"new_leads\": %d}\n\n", count)
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+func (s *Server) GetLeadStats(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
 
@@ -1074,137 +799,54 @@ func (s *Server) CreateLeadSource(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
 	}
 
-	var req sourceReq
-	if err := c.Bind(&req); err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
-	}
-
-	if req.Name == nil || *req.Name == "" {
-		return s.errorResp(c, http.StatusBadRequest, "name is required", nil)
-	}
-
-	var resp sourceResp
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO lead_sources (tenant_id, name, utm_source, utm_medium, utm_campaign, description)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, tenant_id, name, utm_source, utm_medium, utm_campaign, description, is_active, created_at
-	`, tenantID, *req.Name, req.UTMSource, req.UTMMedium, req.UTMCampaign, req.Description).
-		Scan(&resp.ID, &resp.TenantID, &resp.Name, &resp.UTMSource, &resp.UTMMedium, &resp.UTMCampaign, &resp.Description, &resp.IsActive, &resp.CreatedAt)
-
-	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "create failed", err)
-	}
-
-	return s.json(c, http.StatusCreated, resp)
-}
-
-// =============================================================================
-// Pipelines
-// =============================================================================
-
-type pipelineReq struct {
-	Name      *string `json:"name,omitempty"`
-	IsDefault *bool   `json:"is_default,omitempty"`
-}
-
-type pipelineResp struct {
-	ID        uuid.UUID              `json:"id"`
-	TenantID  uuid.UUID             `json:"tenant_id"`
-	Name      string                `json:"name"`
-	IsDefault bool                  `json:"is_default"`
-	Stages    []pipelineStageResp   `json:"stages,omitempty"`
-	CreatedAt time.Time            `json:"created_at"`
-}
-
-type pipelineStageResp struct {
-	ID           uuid.UUID `json:"id"`
-	PipelineID   uuid.UUID `json:"pipeline_id"`
-	Name         string    `json:"name"`
-	DisplayOrder int       `json:"display_order"`
-	Probability  int       `json:"probability"`
-	Color       string    `json:"color"`
-	IsDefault   bool      `json:"is_default"`
-}
-
-func (s *Server) ListPipelines(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	query := `SELECT id, tenant_id, name, is_default, created_at FROM pipelines ORDER BY is_default DESC, name`
-
-	rows, err := s.pool.Query(ctx, query)
+	// By stage
+	stageQuery := `SELECT status, COUNT(*) FROM leads WHERE deleted_at IS NULL GROUP BY status`
+	rows, err := s.pool.Query(ctx, stageQuery)
 	if err != nil {
 		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
 	}
 	defer rows.Close()
 
-	var pipelines []pipelineResp
+	byStage := map[string]int{}
 	for rows.Next() {
-		var p pipelineResp
-		if err := rows.Scan(&p.ID, &p.TenantID, &p.Name, &p.IsDefault, &p.CreatedAt); err != nil {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
 			continue
 		}
-		pipelines = append(pipelines, p)
+		byStage[status] = count
 	}
 
-	return s.json(c, http.StatusOK, map[string]any{"pipelines": pipelines})
-}
-
-func (s *Server) CreatePipeline(c echo.Context) error {
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
-	defer cancel()
-
-	tenantID, userID, isAdmin := s.tenantFromCtx(c)
-	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
-	}
-
-	var req pipelineReq
-	if err := c.Bind(&req); err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
-	}
-
-	if req.Name == nil || *req.Name == "" {
-		return s.errorResp(c, http.StatusBadRequest, "name is required", nil)
-	}
-
-	isDefault := false
-	if req.IsDefault != nil {
-		isDefault = *req.IsDefault
-	}
-
-	var resp pipelineResp
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO pipelines (tenant_id, name, is_default)
-		VALUES ($1, $2, $3)
-		RETURNING id, tenant_id, name, is_default, created_at
-	`, tenantID, *req.Name, isDefault).
-		Scan(&resp.ID, &resp.TenantID, &resp.Name, &resp.IsDefault, &resp.CreatedAt)
-
+	// By source
+	sourceQuery := `SELECT COALESCE(utm->>'source', 'unknown') as src, COUNT(*) FROM leads WHERE deleted_at IS NULL GROUP BY src`
+	rows2, err := s.pool.Query(ctx, sourceQuery)
 	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "create failed", err)
+		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
+	}
+	defer rows2.Close()
+
+	bySource := map[string]int{}
+	for rows2.Next() {
+		var src string
+		var count int
+		if err := rows2.Scan(&src, &count); err != nil {
+			continue
+		}
+		bySource[src] = count
 	}
 
-	return s.json(c, http.StatusCreated, resp)
+	// Total count
+	var total int
+	s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM leads WHERE deleted_at IS NULL`).Scan(&total)
+
+	return s.json(c, http.StatusOK, map[string]any{
+		"total":     total,
+		"by_stage":  byStage,
+		"by_source": bySource,
+	})
 }
 
-// =============================================================================
-// Pipeline Stages
-// =============================================================================
-
-type stageReq struct {
-	Name         *string `json:"name,omitempty"`
-	DisplayOrder *int    `json:"display_order,omitempty"`
-	Probability  *int    `json:"probability,omitempty"`
-	Color        *string `json:"color,omitempty"`
-}
-
-func (s *Server) ListStages(c echo.Context) error {
+func (s *Server) GetLeadTimeline(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
 
@@ -1213,38 +855,48 @@ func (s *Server) ListStages(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
 	}
 
-	pipelineID := c.QueryParam("pipeline_id")
-	var query string
-	var args []any
-
-	if pipelineID != "" {
-		query = `SELECT id, pipeline_id, name, display_order, probability, color, is_default FROM pipeline_stages WHERE pipeline_id = $1 ORDER BY display_order`
-		args = []any{pipelineID}
-	} else {
-		query = `SELECT ps.id, ps.pipeline_id, ps.name, ps.display_order, ps.probability, ps.color, ps.is_default 
-			FROM pipeline_stages ps JOIN pipelines p ON ps.pipeline_id = p.id 
-			WHERE p.is_default = true ORDER BY ps.display_order`
+	id := c.Param("id")
+	_, err := uuid.Parse(id)
+	if err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "invalid id", err)
 	}
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	query := `SELECT id, tenant_id, lead_id, type, payload, actor_id, description, created_at FROM lead_activities WHERE lead_id = $1 ORDER BY created_at DESC LIMIT 100`
+
+	rows, err := s.pool.Query(ctx, query, id)
 	if err != nil {
 		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
 	}
 	defer rows.Close()
 
-	var stages []pipelineStageResp
+	var activities []map[string]any
 	for rows.Next() {
-		var st pipelineStageResp
-		if err := rows.Scan(&st.ID, &st.PipelineID, &st.Name, &st.DisplayOrder, &st.Probability, &st.Color, &st.IsDefault); err != nil {
+		var activityID, tenantIDAct, leadID uuid.UUID
+		var activityType, description string
+		var payload []byte
+		var actorID *uuid.UUID
+		var createdAt time.Time
+		if err := rows.Scan(&activityID, &tenantIDAct, &leadID, &activityType, &payload, &actorID, &description, &createdAt); err != nil {
 			continue
 		}
-		stages = append(stages, st)
+		var payloadMap map[string]any
+		if payload != nil {
+			json.Unmarshal(payload, &payloadMap)
+		}
+		activities = append(activities, map[string]any{
+			"id":          activityID,
+			"type":        activityType,
+			"actor_id":    actorID,
+			"description": description,
+			"payload":     payloadMap,
+			"created_at":  createdAt,
+		})
 	}
 
-	return s.json(c, http.StatusOK, map[string]any{"stages": stages})
+	return s.json(c, http.StatusOK, map[string]any{"activities": activities})
 }
 
-func (s *Server) CreateStage(c echo.Context) error {
+func (s *Server) LeadScore(c echo.Context) error {
 	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
 	defer cancel()
 
@@ -1253,45 +905,74 @@ func (s *Server) CreateStage(c echo.Context) error {
 		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
 	}
 
-	var req struct {
-		PipelineID  *uuid.UUID `json:"pipeline_id"`
-		Name        *string   `json:"name"`
-		DisplayOrder *int      `json:"display_order"`
-		Probability  *int       `json:"probability"`
-		Color       *string   `json:"color"`
-	}
-	if err := c.Bind(&req); err != nil {
-		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
-	}
-
-	if req.PipelineID == nil || req.Name == nil {
-		return s.errorResp(c, http.StatusBadRequest, "pipeline_id and name are required", nil)
-	}
-
-	prob := 0
-	if req.Probability != nil {
-		prob = *req.Probability
-	}
-	color := "#6366f1"
-	if req.Color != nil {
-		color = *req.Color
-	}
-	order := 0
-	if req.DisplayOrder != nil {
-		order = *req.DisplayOrder
-	}
-
-	var resp pipelineStageResp
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO pipeline_stages (pipeline_id, name, display_order, probability, color)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, pipeline_id, name, display_order, probability, color, is_default
-	`, req.PipelineID, *req.Name, order, prob, color).
-		Scan(&resp.ID, &resp.PipelineID, &resp.Name, &resp.DisplayOrder, &resp.Probability, &resp.Color, &resp.IsDefault)
-
+	id := c.Param("id")
+	_, err := uuid.Parse(id)
 	if err != nil {
-		return s.errorResp(c, http.StatusInternalServerError, "create failed", err)
+		return s.errorResp(c, http.StatusBadRequest, "invalid id", err)
 	}
 
-	return s.json(c, http.StatusCreated, resp)
+	// Trigger async scoring via NATS
+	if s.nats != nil {
+		go s.nats.Publish(ctx, "lead.score.requested", map[string]any{
+			"lead_id":   id,
+			"tenant_id": tenantID,
+		})
+	}
+
+	// For sync, compute basic score locally as fallback
+	var email, phone string
+	var utmBytes []byte
+	var estimatedValue float64
+	err = s.pool.QueryRow(ctx, `SELECT email, phone, utm, estimated_value FROM leads WHERE id = $1 AND deleted_at IS NULL`, id).
+		Scan(&email, &phone, &utmBytes, &estimatedValue)
+	if err != nil {
+		return s.errorResp(c, http.StatusNotFound, "lead not found", err)
+	}
+
+	var utm map[string]any
+	if utmBytes != nil {
+		json.Unmarshal(utmBytes, &utm)
+	}
+
+	score := 50.0
+	if email != "" {
+		score += 10
+	}
+	if phone != "" {
+		score += 10
+	}
+	if estimatedValue > 0 {
+		score += 15
+	}
+	if utm != nil && utm["source"] != nil {
+		score += 5
+	}
+	if score > 100 {
+		score = 100
+	}
+	scoreTier := "cold"
+	if score >= 70 {
+		scoreTier = "hot"
+	} else if score >= 40 {
+		scoreTier = "warm"
+	}
+
+	_, err = s.pool.Exec(ctx, `
+		UPDATE leads SET score = $2, score_tier = $3, updated_at = NOW() WHERE id = $1
+	`, id, score, scoreTier)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "update failed", err)
+	}
+
+	actorID, _ := uuid.Parse(userID)
+	_, _ = s.pool.Exec(ctx, `
+		INSERT INTO lead_activities (tenant_id, lead_id, type, actor_id, description, payload)
+		VALUES ($1, $2, 'SCORE_UPDATE', $3, 'Score updated', $4)
+	`, tenantID, id, actorID, fmt.Sprintf(`{"score":%f,"tier":"%s"}`, score, scoreTier))
+
+	return s.json(c, http.StatusOK, map[string]any{
+		"lead_id":    id,
+		"score":      score,
+		"score_tier": scoreTier,
+	})
 }
