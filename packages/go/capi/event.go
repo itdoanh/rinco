@@ -3,6 +3,7 @@ package capi
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -247,6 +248,6 @@ func NewContentViewEvent(contentName, contentType string, contentIDs []string, i
 // GenerateEventID creates a unique event ID for deduplication.
 // Format: tenantID + formSlug + identifier + timestamp
 func GenerateEventID(tenantID, formSlug, identifier string, timestamp int64) string {
-	data := tenantID + "|" + formSlug + "|" + identifier + "|" + string(rune(timestamp))
+	data := tenantID + "|" + formSlug + "|" + identifier + "|" + strconv.FormatInt(timestamp, 10)
 	return HashString(data)
 }
