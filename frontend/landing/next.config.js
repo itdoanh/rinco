@@ -1,18 +1,23 @@
 /** @type {import('next').NextConfig} */
+const createNextIntlPlugin = require('next-intl/plugin');
+
+const withNextIntl = createNextIntlPlugin();
+
 const nextConfig = {
   reactStrictMode: true,
   images: {
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: '**',
+        hostname: 'hanghoaphaisinh.net',
+      },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
       },
     ],
   },
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8085',
-    NEXT_PUBLIC_LANDING_SERVICE_URL: process.env.NEXT_PUBLIC_LANDING_SERVICE_URL || 'http://localhost:8085',
-  },
+  transpilePackages: ['@rinco/ui'],
 };
 
-module.exports = nextConfig;
+module.exports = withNextIntl(nextConfig);

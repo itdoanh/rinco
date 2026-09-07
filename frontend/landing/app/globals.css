@@ -1,0 +1,306 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 24.6 95% 53.1%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 24.6 95% 53.1%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Custom RINCO styles */
+@layer components {
+  .gradient-text {
+    @apply bg-gradient-to-r from-orange-500 to-amber-500 bg-clip-text text-transparent;
+  }
+  
+  .btn-cta {
+    @apply bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold px-6 py-3 rounded-full text-sm uppercase tracking-wide transition-all duration-200 hover:from-orange-600 hover:to-amber-600 hover:shadow-lg hover:-translate-y-0.5;
+  }
+  
+  .btn-topbar-cta {
+    @apply bg-gradient-to-r from-orange to-gold text-white font-bold px-3 py-1.5 rounded-full text-xs uppercase tracking-wide transition-all duration-200 hover:from-orange/90 hover:to-gold/90;
+  }
+  
+  .form-input {
+    @apply w-full px-4 py-3.5 rounded-xl text-sm border-2 border-gray-200 focus:border-orange focus:outline-none transition-all duration-200;
+  }
+  
+  .form-card {
+    @apply bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden;
+  }
+  
+  .form-card-header {
+    @apply bg-gradient-to-r from-navy-900 to-navy-700;
+  }
+  
+  .feature-card {
+    @apply bg-white rounded-2xl p-6 border border-gray-100 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300;
+  }
+  
+  .feature-card__num {
+    @apply text-5xl font-black text-orange/10 mb-2;
+  }
+  
+  .feature-card__icon {
+    @apply text-4xl mb-3;
+  }
+  
+  .feature-card__title {
+    @apply font-heading font-bold text-navy-900 text-lg mb-2;
+  }
+  
+  .feature-card__sub {
+    @apply text-gray-600 text-sm mb-3 leading-relaxed;
+  }
+  
+  .feature-card__divider {
+    @apply w-12 h-0.5 bg-gradient-to-r from-orange to-amber mb-3;
+  }
+  
+  .feature-card__value {
+    @apply text-gray-600 text-sm leading-relaxed;
+  }
+  
+  .speaker-card {
+    @apply bg-white/5 backdrop-blur-sm border border-white/10;
+  }
+  
+  .speaker-badge {
+    @apply bg-gradient-to-r from-orange to-amber;
+  }
+  
+  .trust-badge {
+    @apply transition-all duration-300 hover:border-orange hover:shadow-lg;
+  }
+  
+  .trust-icon {
+    @apply bg-orange/10;
+  }
+  
+  .check-icon {
+    @apply w-5 h-5 rounded-full bg-emerald-500 text-white flex items-center justify-center text-xs font-bold flex-shrink-0;
+  }
+  
+  .webinar-tag {
+    @apply bg-gradient-to-r from-orange/20 to-amber/20 border border-orange/30;
+  }
+  
+  .webinar-tag-dot {
+    @apply w-2 h-2 rounded-full bg-orange animate-pulse;
+  }
+  
+  .float-shape {
+    @apply absolute rounded-full opacity-20 blur-3xl;
+  }
+  
+  .float-shape-1 {
+    @apply w-96 h-96 bg-orange -top-48 -right-48 animate-float;
+  }
+  
+  .float-shape-2 {
+    @apply w-72 h-72 bg-amber -bottom-36 -left-36 animate-float;
+  }
+  
+  .float-shape-3 {
+    @apply w-48 h-48 bg-gold top-1/2 right-1/4 animate-float;
+  }
+  
+  .grid-pattern {
+    background-image: 
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 50px 50px;
+  }
+  
+  .logo-marquee {
+    @apply overflow-hidden;
+  }
+  
+  .logo-marquee-track {
+    @apply flex gap-8 animate-marquee;
+  }
+  
+  .logo-chip {
+    @apply flex items-center justify-center px-6 py-3 bg-gray-50 rounded-xl border border-gray-200;
+  }
+  
+  .logo-text {
+    @apply font-bold text-gray-500 text-sm tracking-wider;
+  }
+  
+  .modal-overlay {
+    @apply fixed inset-0 z-50 flex items-center justify-center p-4;
+  }
+  
+  .modal-backdrop {
+    @apply absolute inset-0 bg-black/50 backdrop-blur-sm;
+  }
+  
+  .modal-dialog {
+    @apply relative z-10 w-full max-w-lg;
+  }
+  
+  .modal-glow-wrapper {
+    @apply rounded-2xl p-1 bg-gradient-to-r from-orange via-amber to-orange;
+  }
+  
+  .modal-glow-inner {
+    @apply bg-white rounded-xl;
+  }
+  
+  .modal-close {
+    @apply absolute right-4 top-4 p-2 rounded-lg hover:bg-gray-100 transition-colors;
+  }
+  
+  .modal-submit-btn {
+    @apply relative overflow-hidden rounded-xl py-4 text-white font-bold uppercase tracking-wide transition-all duration-300;
+  }
+  
+  .modal-time-chip {
+    @apply flex items-center gap-1.5 bg-orange/10 px-3 py-1.5 rounded-lg text-xs text-orange font-semibold;
+  }
+  
+  .success-icon {
+    @apply w-16 h-16 rounded-full bg-emerald-500 text-white flex items-center justify-center text-3xl font-bold mx-auto;
+  }
+  
+  .sticky-btn {
+    @apply w-full flex items-center justify-center gap-2 bg-gradient-to-r from-orange to-amber text-white font-bold py-4 rounded-full shadow-2xl transition-all duration-300 hover:shadow-xl hover:-translate-y-0.5;
+  }
+  
+  .step-indicator {
+    @apply flex items-center justify-center gap-4;
+  }
+  
+  .step-item {
+    @apply flex flex-col items-center gap-2;
+  }
+  
+  .step-circle {
+    @apply w-10 h-10 rounded-full border-2 border-gray-200 flex items-center justify-center font-bold text-gray-400;
+  }
+  
+  .step-item.is-active .step-circle {
+    @apply border-orange bg-orange text-white;
+  }
+  
+  .step-item.is-done .step-circle {
+    @apply border-emerald-500 bg-emerald-500 text-white;
+  }
+  
+  .step-label {
+    @apply text-xs font-semibold text-gray-400;
+  }
+  
+  .step-item.is-active .step-label {
+    @apply text-orange;
+  }
+  
+  .step-line {
+    @apply flex-1 h-0.5 bg-gray-200;
+  }
+  
+  .multistep-pane {
+    @apply hidden;
+  }
+  
+  .multistep-pane.is-active {
+    @apply block;
+  }
+  
+  .form-step-title {
+    @apply text-lg font-heading font-bold text-navy-900 mb-4;
+  }
+  
+  .channel-btn {
+    @apply flex flex-col items-center gap-2 p-4 rounded-xl border-2 border-gray-200 hover:border-orange hover:bg-orange/5 transition-all duration-200;
+  }
+  
+  .channel-emoji {
+    @apply text-3xl;
+  }
+  
+  .channel-name {
+    @apply font-bold text-navy-900 text-sm;
+  }
+  
+  .channel-sub {
+    @apply text-xs text-gray-500;
+  }
+  
+  .risk-box {
+    @apply bg-white/5 backdrop-blur-sm border border-orange/20 rounded-2xl;
+  }
+  
+  .company-info {
+    @apply bg-white/5 backdrop-blur-sm border border-white/10 rounded-2xl;
+  }
+  
+  .top1-banner {
+    @apply rounded-2xl overflow-hidden shadow-2xl;
+  }
+  
+  .hero-chip {
+    @apply absolute bg-white/95 backdrop-blur-sm rounded-xl px-3 py-2 shadow-lg flex items-center gap-2 text-sm;
+  }
+  
+  .hero-chip-1 {
+    @apply top-4 right-4;
+  }
+  
+  .hero-chip-2 {
+    @apply bottom-4 left-4;
+  }
+  
+  .hero-chip-3 {
+    @apply bottom-4 right-4;
+  }
+  
+  .modal-particles span {
+    @apply absolute w-2 h-2 rounded-full bg-orange/30;
+  }
+}
+
+@layer utilities {
+  .animate-marquee {
+    animation: marquee 20s linear infinite;
+  }
+  
+  @keyframes marquee {
+    0% {
+      transform: translateX(0);
+    }
+    100% {
+      transform: translateX(-50%);
+    }
+  }
+}
