@@ -3,7 +3,6 @@ WORKDIR /app
 RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum* ./
 RUN go mod download
-COPY packages/ packages/
 COPY services/notification-service/ services/notification-service/
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/notification-service ./services/notification-service/cmd
 
