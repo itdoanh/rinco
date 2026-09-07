@@ -1,0 +1,16 @@
+{
+  "name": "@rinco/frontend-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "test": "playwright test",
+    "test:landing": "playwright test landing.spec.ts",
+    "test:auth": "playwright test auth-flow.spec.ts",
+    "test:tenants": "playwright test tenant-crud.spec.ts",
+    "test:meeting": "playwright test meeting-flow.spec.ts",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  }
+}

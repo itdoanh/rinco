@@ -1,0 +1,120 @@
+{
+  "info": {
+    "_postman_id": "rinco-auth-service-001",
+    "name": "RINCO auth-service",
+    "description": "Authentication, sessions, WebAuthn, OAuth, API keys",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "http://localhost:8081"},
+    {"key": "access_token", "value": ""},
+    {"key": "refresh_token", "value": ""},
+    {"key": "tenant_slug", "value": "demo"}
+  ],
+  "item": [
+    {"name": "Health", "request": {"method": "GET", "url": "{{baseUrl}}/healthz"}},
+    {"name": "Ready", "request": {"method": "GET", "url": "{{baseUrl}}/readyz"}},
+    {"name": "Metrics", "request": {"method": "GET", "url": "{{baseUrl}}/metrics"}},
+    {
+      "name": "Register",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{baseUrl}}/v1/auth/register",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\":\"alice@example.com\",\"password\":\"correct horse battery staple\",\"full_name\":\"Alice\",\"tenant_slug\":\"{{tenant_slug}}\"}"
+        }
+      }
+    },
+    {
+      "name": "Login",
+      "event": [
+        {"listen": "test", "script": {"type": "text/javascript", "exec": [
+          "const r = pm.response.json();",
+          "pm.collectionVariables.set('access_token', r.access_token);",
+          "pm.collectionVariables.set('refresh_token', r.refresh_token);"
+        ]}}
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{baseUrl}}/v1/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\"email\":\"alice@example.com\",\"password\":\"correct horse battery staple\",\"tenant_slug\":\"{{tenant_slug}}\"}"
+        }
+      }
+    },
+    {
+      "name": "Me",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+        "url": "{{baseUrl}}/v1/auth/me"
+      }
+    },
+    {
+      "name": "Refresh",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{baseUrl}}/v1/auth/refresh",
+        "body": {"mode": "raw", "raw": "{\"refresh_token\":\"{{refresh_token}}\"}"}
+      }
+    },
+    {
+      "name": "Logout",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+        "url": "{{baseUrl}}/v1/auth/logout"
+      }
+    },
+    {
+      "name": "WebAuthn register begin",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Authorization", "value": "Bearer {{access_token}}"},
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "url": "{{baseUrl}}/v1/auth/webauthn/register/begin",
+        "body": {"mode": "raw", "raw": "{}"}
+      }
+    },
+    {
+      "name": "OAuth Google start",
+      "request": {"method": "GET", "url": "{{baseUrl}}/v1/auth/oauth/google/start"}
+    },
+    {
+      "name": "API keys list",
+      "request": {
+        "method": "GET",
+        "header": [{"key": "Authorization", "value": "Bearer {{access_token}}"}],
+        "url": "{{baseUrl}}/v1/auth/api-keys"
+      }
+    },
+    {
+      "name": "API keys create",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Authorization", "value": "Bearer {{access_token}}"},
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "url": "{{baseUrl}}/v1/auth/api-keys",
+        "body": {"mode": "raw", "raw": "{\"name\":\"ci\",\"scopes\":[\"read\"],\"ttl_seconds\":7776000}"}
+      }
+    },
+    {
+      "name": "Connect-RPC ValidateToken",
+      "request": {
+        "method": "POST",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "url": "{{baseUrl}}/internal/auth.v1.AuthService/ValidateToken",
+        "body": {"mode": "raw", "raw": "{\"access_token\":\"{{access_token}}\"}"}
+      }
+    }
+  ]
+}

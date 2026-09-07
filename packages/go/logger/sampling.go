@@ -40,6 +40,9 @@ func NewSamplingHandler(inner slog.Handler, cfg *SamplingConfig) slog.Handler {
 	if cfg.Burst == 0 {
 		bucket.burst = bucket.rate
 	}
+	// Pre-fill the bucket up to burst so the first burst of events is allowed.
+	bucket.tokens = bucket.burst
+	bucket.lastRefill = time.Now()
 	return &samplingHandler{
 		inner:            inner,
 		bucket:           bucket,
@@ -73,18 +76,24 @@ func (h *samplingHandler) Handle(ctx context.Context, r slog.Record) error {
 			return h.inner.Handle(ctx, r)
 		}
 	}
-	// AlwaysSample attrs
+
+	// Check if any attr is in alwaysSampleKeys → bypass sampling entirely.
 	if len(h.alwaysSampleKeys) > 0 {
+		hasAlways := false
 		r.Attrs(func(a slog.Attr) bool {
 			for _, k := range h.alwaysSampleKeys {
 				if a.Key == k {
-					h.bucket.refill()
+					hasAlways = true
 					return false
 				}
 			}
 			return true
 		})
+		if hasAlways {
+			return h.inner.Handle(ctx, r)
+		}
 	}
+
 	if !h.bucket.take() {
 		// Dropped - emit metric? For now, silent.
 		return nil
@@ -133,15 +142,18 @@ func (b *tokenBucket) refill() {
 func (b *tokenBucket) take() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.tokens <= 0 {
-		// Try to refill
-		now := time.Now()
-		elapsed := now.Sub(b.lastRefill).Seconds()
-		b.lastRefill = now
-		b.tokens = elapsed * b.rate
-		if b.tokens <= 0 {
-			return false
+	// Refill opportunistically - but only if we have room.
+	now := time.Now()
+	elapsed := now.Sub(b.lastRefill).Seconds()
+	if elapsed > 0 {
+		b.tokens += elapsed * b.rate
+		if b.tokens > b.burst {
+			b.tokens = b.burst
 		}
+		b.lastRefill = now
+	}
+	if b.tokens <= 0 {
+		return false
 	}
 	b.tokens--
 	return true

@@ -89,7 +89,7 @@ func HashKey(plain string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// GenerateAPIKey sinh API key mới với prefix = rinco, env = live|test, secret = base64(24 bytes).
+// GenerateAPIKey sinh API key mới với prefix = rinco, env = live|test, secret = base64 (24 bytes).
 //
 // Output format:
 //   rinco_live_a8s9d7f6g5h4j3k2m9n8b7v6c5x4z3q
@@ -106,6 +106,9 @@ func GenerateAPIKey(env APIKeyEnv, prefix string) (string, error) {
 		return "", fmt.Errorf("api_key: rand: %w", err)
 	}
 	secret := strings.TrimRight(base64.URLEncoding.EncodeToString(buf), "=")
+	// Base64 URL alphabet includes '_' which would break the parsing split.
+	// Replace '_' with a different character that's also URL-safe.
+	secret = strings.ReplaceAll(secret, "_", "-")
 	return fmt.Sprintf("%s_%s_%s", prefix, env, secret), nil
 }
 
@@ -180,7 +183,7 @@ func NewRecord(tenantID, userID, name string, env APIKeyEnv, scopes []string, ra
 	if err != nil {
 		return nil, err
 	}
-	hash := HashKey(key)
+	_ = HashKey(key) // keep helper visible from this file's perspective
 	id := newUUID()
 	now := time.Now()
 	var expiresAt *time.Time

@@ -2,6 +2,11 @@
 .env
 .env.local
 .env.production
+.env.*.local
+*.key
+*.pem
+*.crt
+*.cert
 
 # Go
 *.exe
@@ -22,8 +27,10 @@ Cargo.lock.bak
 # Node
 node_modules/
 .next/
+.nuxt/
 .turbo/
 dist/
+out/
 *.tsbuildinfo
 
 # Python
@@ -46,6 +53,7 @@ venv/
 .DS_Store
 Thumbs.db
 *.log
+logs/
 
 # Docker
 docker-compose.override.yml
@@ -76,3 +84,10 @@ out/
 
 # Cache
 .cache/
+
+# Coverage
+*.coverprofile
+coverage/
+htmlcov/
+.tox/
+.coverage

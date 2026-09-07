@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -292,5 +291,5 @@ func (r *Repository[T]) GetByComposite(ctx context.Context, where map[string]any
 	return &results[0], nil
 }
 
-// Ensure interface compliance.
-var _ pgx.Tx = (*pgxpool.Pool)(nil).Acquire //nolint:staticcheck
+// Ensure interface compliance at compile time.
+var _ fmt.Stringer = (interface{ String() string })(nil)

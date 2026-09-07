@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { DynamicForm } from "./DynamicForm";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 
 interface FormBlockProps {
   data: {

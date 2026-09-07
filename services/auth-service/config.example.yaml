@@ -1,0 +1,84 @@
+# auth-service — example runtime configuration.
+#
+# Copy to .env or pass via Helm values / k8s ConfigMap.
+
+http:
+  addr: ":8081"
+  read_timeout: "30s"
+  write_timeout: "30s"
+  shutdown_timeout: "15s"
+  cors_allowed_origins:
+    - "https://app.rinco.example"
+    - "https://admin.rinco.example"
+
+database:
+  url: "postgres://rinco:rinco_dev_password@postgres:5432/rinco?sslmode=disable"
+  max_conns: 25
+  min_conns: 2
+  max_conn_lifetime: "30m"
+  max_conn_idle_time: "5m"
+
+cache:
+  # Redis-compatible (Valkey / Redis / KeyDB).
+  url: "redis://valkey:6379/0"
+  password: ""
+  db: 0
+  pool_size: 20
+
+crypto:
+  # Hex-encoded ≥ 32-byte HMAC key for access tokens.
+  paseto_key: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  # Previous key for zero-downtime rotation (hex).
+  paseto_previous: "0000000000000000000000000000000000000000000000000000000000000000"
+  # Argon2id parameters (m=MiB, t=iter, p=parallelism).
+  argon2:
+    memory_kib: 65536
+    iterations: 3
+    parallelism: 2
+
+sessions:
+  access_ttl: "1h"
+  refresh_ttl: "168h"   # 7 days
+  reset_token_ttl: "1h"
+
+webauthn:
+  rp_id: "app.rinco.example"
+  rp_origin: "https://app.rinco.example"
+  rp_display_name: "RINCO"
+
+oauth:
+  web_base_url: "https://app.rinco.example"
+  providers:
+    google:
+      client_id: ""
+      client_secret: ""
+      discovery: "https://accounts.google.com"
+    facebook:
+      client_id: ""
+      client_secret: ""
+    microsoft:
+      client_id: ""
+      client_secret: ""
+    apple:
+      client_id: ""
+      client_secret: ""
+
+smtp:
+  host: ""
+  port: 587
+  from: "no-reply@rinco.example"
+  username: ""
+  password: ""
+
+otel:
+  endpoint: "otel-collector:4317"
+  insecure: true
+  sample_ratio: 1.0
+
+log:
+  level: "info"  # debug | info | warn | error
+  format: "json" # json | text
+
+env: "production"
+service_name: "auth-service"
+version: "1.0.0"

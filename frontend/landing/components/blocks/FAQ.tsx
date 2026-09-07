@@ -105,4 +105,5 @@ export function FAQSection({ data }: FAQProps) {
   );
 }
 
+export { FAQSection, FAQ as FAQSectionAlias }
 export default FAQSection;

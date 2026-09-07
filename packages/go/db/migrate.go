@@ -170,7 +170,8 @@ func extractVersion(name string) string {
 //	-- +goose Down
 //	DROP TABLE ...
 //
-// Trả về phần Up/Down SQL.
+// Trả về phần Up/Down SQL. Mặc định direction là Up; chỉ chuyển sang Down
+// khi gặp annotation -- +goose Down trước khi đã đi qua phần Up.
 func splitGoose(body string) (sql, direction string) {
 	direction = "Up"
 	lines := strings.Split(body, "\n")
@@ -178,14 +179,20 @@ func splitGoose(body string) (sql, direction string) {
 	inDown := false
 	inStmt := false
 	var buf strings.Builder
+	upDone := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "-- +goose Up") {
 			inUp = true
 			inDown = false
+			upDone = true
 			continue
 		}
 		if strings.HasPrefix(trimmed, "-- +goose Down") {
+			if upDone {
+				// Sau khi đã chạy phần Up, bỏ qua phần Down
+				break
+			}
 			direction = "Down"
 			inUp = false
 			inDown = true
@@ -212,7 +219,7 @@ func splitGoose(body string) (sql, direction string) {
 }
 
 // MustEmbed là helper cho go:embed.
-func MustEmbed(fsys embed.FS, pattern string) embed.FS {
+func MustEmbed(fsys embed.FS, pattern string) fs.FS {
 	sub, err := fs.Sub(fsys, strings.TrimSuffix(pattern, "/*"))
 	if err != nil {
 		panic(err)

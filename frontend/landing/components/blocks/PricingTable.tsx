@@ -2,8 +2,8 @@
 
 import { cn } from '@/lib/utils';
 import { PricingBlockData } from '@/lib/block-types';
-import { Button } from '@repo/ui/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@repo/ui/components/ui/card';
+import { Button } from '@rinco/ui';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@rinco/ui';
 import { Check } from 'lucide-react';
 
 interface PricingTableProps {

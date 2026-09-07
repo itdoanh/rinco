@@ -1,4 +1,4 @@
-// Package auth cung cấp PASETO v4 token, FIDO2, Argon2, RBAC, OAuth2,
+// Package auth cung cấp PASETO v2 token, FIDO2, Argon2, RBAC, OAuth2,
 // session management, và API key helpers.
 //
 // Mọi helper trong package này stateless và thread-safe. Key state nên được
@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/o1egl/paseto"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -21,25 +20,24 @@ import (
 // ===== Errors =====
 
 var (
-	ErrExpired      = errors.New("auth: token expired")
-	ErrInvalid      = errors.New("auth: invalid token")
-	ErrUnsupported  = errors.New("auth: unsupported token format")
-	ErrKeyMismatch  = errors.New("auth: token signed with unknown key")
+	ErrExpired     = errors.New("auth: token expired")
+	ErrInvalid     = errors.New("auth: invalid token")
+	ErrUnsupported = errors.New("auth: unsupported token format")
+	ErrKeyMismatch = errors.New("auth: token signed with unknown key")
 	ErrSessionExist = errors.New("auth: session already exists")
 )
 
-// ===== PASETO v4 (Local + Public) =====
+// ===== PASETO v2 (Local) =====
 
 // KeyPurpose phân biệt local/public key cho PASETO.
 type KeyPurpose int
 
 const (
-	LocalKey KeyPurpose = iota // symmetric (local)
-	PublicKey                  // asymmetric (public/private)
+	LocalKey  KeyPurpose = iota // symmetric (local)
+	PublicKey                   // asymmetric (public/private)
 )
 
-// Claims là JWT-style payload cho PASETO v4.
-// Mọi field dùng omitempty để tránh leak thông tin không cần thiết.
+// Claims là JWT-style payload cho PASETO v2.
 type Claims struct {
 	Issuer      string    `json:"iss,omitempty"`
 	Subject     string    `json:"sub,omitempty"`
@@ -58,7 +56,7 @@ type Claims struct {
 	SessionID   string    `json:"sid,omitempty"`
 }
 
-// Paseto wraps PASETO v4 local (symmetric) operations.
+// Paseto wraps PASETO v2 local (symmetric) operations.
 // Key phải dài đúng chacha20poly1305.KeySize (32 bytes).
 type Paseto struct {
 	key       []byte
@@ -91,7 +89,7 @@ func (p *Paseto) Kid() string { return p.kid }
 // Encrypt tạo token từ claims, tự sinh JTI + IssuedAt nếu thiếu.
 func (p *Paseto) Encrypt(claims Claims) (string, error) {
 	if claims.JTI == "" {
-		claims.JTI = uuid.NewV7().String()
+		claims.JTI = uuidGen()
 	}
 	if claims.IssuedAt.IsZero() {
 		claims.IssuedAt = time.Now()
@@ -106,13 +104,13 @@ func (p *Paseto) Encrypt(claims Claims) (string, error) {
 		claims.Kid = p.kid
 	}
 
-	pasetoObj := paseto.NewV4Local()
+	pasetoObj := paseto.NewV2()
 	return pasetoObj.Encrypt(p.key, claims, nil)
 }
 
 // Decrypt giải mã và validate token (exp + nbf trong clock-skew tolerance).
 func (p *Paseto) Decrypt(token string) (*Claims, error) {
-	pasetoObj := paseto.NewV4Local()
+	pasetoObj := paseto.NewV2()
 	var claims Claims
 	if err := pasetoObj.Decrypt(token, p.key, &claims, nil); err != nil {
 		return nil, ErrInvalid
@@ -176,7 +174,6 @@ func (k *KeyRing) Decrypt(token string) (*Claims, error) {
 func (k *KeyRing) CurrentKid() string { return k.current.Kid() }
 
 // GenerateSecureToken tạo random token hex với N bytes entropy.
-// Dùng cho refresh token, session ID, idempotency key.
 func GenerateSecureToken(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -198,17 +195,17 @@ func GeneratePASETOKey() (string, error) {
 
 // Argon2Params cho password hashing. Tuned theo OWASP 2024.
 type Argon2Params struct {
-	Memory      uint32 // KB
-	Iterations  uint32 // t
-	Parallelism uint8  // p
-	SaltLength  uint32 // bytes
-	KeyLength   uint32 // bytes
+	Memory      uint32
+	Iterations  uint32
+	Parallelism uint8
+	SaltLength  uint32
+	KeyLength   uint32
 }
 
 // DefaultArgon2Params trả về params mạnh (OWASP baseline).
 func DefaultArgon2Params() *Argon2Params {
 	return &Argon2Params{
-		Memory:      64 * 1024, // 64 MB
+		Memory:      64 * 1024,
 		Iterations:  3,
 		Parallelism: 2,
 		SaltLength:  16,
@@ -216,7 +213,7 @@ func DefaultArgon2Params() *Argon2Params {
 	}
 }
 
-// HashPassword hash password với Argon2id. Trả về encoded PHC-format string.
+// HashPassword hash password với Argon2id.
 func HashPassword(password string) (string, error) {
 	return HashPasswordWithParams(password, DefaultArgon2Params())
 }
@@ -236,7 +233,7 @@ func HashPasswordWithParams(password string, p *Argon2Params) (string, error) {
 	return encoded, nil
 }
 
-// VerifyPassword so sánh password với hash, dùng constant-time comparison.
+// VerifyPassword so sánh password với hash.
 func VerifyPassword(password, encoded string) (bool, error) {
 	parts := splitEncoded(encoded)
 	if len(parts) != 6 {

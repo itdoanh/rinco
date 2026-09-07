@@ -4,7 +4,7 @@ import { use } from 'react';
 import { notFound } from 'next/navigation';
 import { BlockRenderer } from '@/components/blocks';
 import { useLandingStore, type BlockData } from '@/lib/store';
-import { Skeleton } from '@repo/ui/components/ui/skeleton';
+import { Skeleton } from '@rinco/ui'
 
 interface TenantPageProps {
   params: Promise<{

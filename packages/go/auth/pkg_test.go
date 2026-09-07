@@ -172,8 +172,8 @@ func TestRBACAddCustomRole(t *testing.T) {
 		t.Fatal("custom role should have permission")
 	}
 	// Cannot override built-in
-	if err := e.AddRole(Role{Name: "admin"}); err == nil {
-		t.Fatal("should not override built-in admin role")
+	if err := e.AddRole(Role{Name: "super_admin", Permissions: []string{"x"}}); err == nil {
+		t.Fatal("should not override built-in super_admin role")
 	}
 }
 
@@ -192,7 +192,7 @@ func TestGenerateAndParseAPIKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	if prefix != "rinco" || env != APIKeyLive || len(secret) < 16 {
-		t.Fatalf("parse mismatch: %+v", prefix, env, secret)
+		t.Fatalf("parse mismatch: %+v %+v %+v", prefix, env, secret)
 	}
 }
 

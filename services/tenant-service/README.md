@@ -1,196 +1,205 @@
 # Tenant Service
 
-Tenant, domain, branding, settings, and usage management for the RINCO platform.
+Multi-tenant CRUD: tenants, custom domains, branding, settings, usage counters, subscription state.
 
-## Highlights
+## Overview
 
-- **CRUD tenants** with soft delete, suspend, activate, plan upgrades
-- **Custom domains** with verification + SSL status tracking; cached in Valkey
-- **Branding** (logo, colors, font, custom CSS) — both relational and JSONB snapshot
-- **Per-tenant settings** (arbitrary key/value JSON)
-- **Usage tracking** per period (users, leads, deals, storage, API calls, CCU)
-- **Plan quotas** (starter/pro/business/enterprise) with feature flags
-- **Audit log** of every lifecycle change in `tenant.tenant_audit`
-- **Multi-tenant RLS** via `app.current_tenant_id` session variable on every read
-- **Connect-RPC** for internal lookups (`GetTenantBySlug`, `ResolveDomain`, `GetQuota`)
-- **Prometheus** metrics + **OpenTelemetry** tracing + **structured slog**
-- **Graceful shutdown** (SIGINT/SIGTERM, 30 s drain)
+The tenant-service is the **source of truth for tenants in the RINCO
+platform**.  Every other service that needs to know "which tenant does
+this request belong to?" reads from `tenant.tenants` (a schema exposed
+to every database by the gateway / Connect-RPC interceptor).  This
+service owns:
 
-## Tech
+- Tenant lifecycle (`active`, `suspended`, `cancelled`).
+- Per-tenant settings (`theme`, `locale`, `currency`, `timezone`, …).
+- Custom domains + SSL provisioning hooks.
+- Branding assets (logo, favicon, palette) → uploaded to the tiered
+  S3-compatible store via the `landing-service` SDK.
+- Usage counters (api_calls, storage_gb, seats) read by the billing
+  service.
+- Subscription / plan state (`starter`, `pro`, `enterprise`).
 
-- Go 1.23+ • Echo v4 • pgx/v5 (pgxpool) • redis/go-redis/v9
-- OpenTelemetry SDK + otelecho
-- prometheus/client_golang
+## Architecture
 
-## Environment
+```
+                    ┌──────────────────────────┐
+   admin-portal ───▶│ /v1/admin/tenants        │
+                    │ /v1/admin/tenants/:id    │──┐
+   tenant-site  ───▶│ /v1/tenant/:slug         │  │
+                    │ /v1/tenant/:slug/branding│  │
+                    └──────────┬───────────────┘  │
+                               │                  │
+                               ▼                  ▼
+                     ┌────────────────────────────┐
+                     │     PostgreSQL (RLS)       │
+                     │  schema `tenant`           │
+                     │  tables: tenants, domains, │
+                     │         settings, usage,   │
+                     │         subscriptions      │
+                     └────────┬───────────────────┘
+                              │ publish
+                              ▼
+                     ┌─────────────────────┐
+                     │   NATS              │
+                     │ tenant.created      │
+                     │ tenant.updated      │
+                     │ tenant.suspended    │
+                     └─────────────────────┘
+```
 
-| Variable | Default | Description |
-|---|---|---|
-| `TENANT_HTTP_ADDR` | `:8082` | HTTP listen address |
-| `TENANT_DATABASE_URL` | _required_ | PostgreSQL DSN |
-| `TENANT_VALKEY_URL` | `redis://localhost:6379/0` | Redis/Valkey for domain cache |
-| `TENANT_ADMIN_API_KEY` | `dev_admin_key_change_me` | Required header `X-Admin-Key` for write endpoints |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _empty_ | OTLP gRPC endpoint for traces |
-| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `ENV` | `development` | Service environment label |
+**Tech:** Go 1.23 • Echo v4 • pgx/v5 • redis/go-redis/v9 • Prometheus • OpenTelemetry OTLP/gRPC • Connect-RPC (JSON / proto).
 
-## Database
-
-Migrations are embedded in `cmd/migrations/sql.go` and applied in order on startup. Tables (schema `tenant`):
-
-- `tenants` (id, slug UNIQUE, name, status, plan, settings_json, branding_json, suspended_at, ...)
-- `tenant_audit` (id, tenant_id, actor_id, actor_email, action, payload)
-- `tenant_domains` (id, tenant_id, domain UNIQUE, type, verified_at, ssl_status, ssl_issuer, ssl_expires_at, is_primary)
-- `tenant_settings` (id, tenant_id, key, value JSONB) with UNIQUE(tenant_id, key)
-- `tenant_branding` (tenant_id PK, logo_url, favicon_url, primary_color, secondary_color, accent_color, font_family, custom_css, email_logo_url)
-- `tenant_usage` (tenant_id, period, metric, value) with composite PK
-- `plan_quotas` (plan PK, max_users, max_storage_mb, max_api_calls, max_ccu, features)
-
-## HTTP API
-
-Base URL: `http://localhost:8082`. All requests/responses are JSON.
-
-### Public
-
-| Method | Path | Description |
-|---|---|---|
-| GET | `/healthz` | Liveness |
-| GET | `/readyz` | DB + Valkey ping |
-| GET | `/metrics` | Prometheus |
-| GET | `/v1/tenants/by-domain/:domain` | Resolve domain → tenant (cached 5 min) |
-
-### Admin (header `X-Admin-Key: <TENANT_ADMIN_API_KEY>`)
-
-| Method | Path | Description |
-|---|---|---|
-| POST | `/v1/tenants` | Create tenant `{slug, name, plan?, email?}` |
-| GET | `/v1/tenants?status=&plan=&limit=&offset=` | List tenants |
-| GET | `/v1/tenants/:id` | Get tenant |
-| PUT | `/v1/tenants/:id` | Update `{name, plan, status, settings, branding}` |
-| DELETE | `/v1/tenants/:id` | Soft delete (`status=deleted`, `deleted_at=now()`) |
-| POST | `/v1/tenants/:id/suspend?reason=` | Suspend |
-| POST | `/v1/tenants/:id/activate` | Activate |
-| GET | `/v1/tenants/:id/stats` | Usage rollup for current period |
-| GET | `/v1/tenants/:id/domains` | List domains (requires `X-Tenant-ID`) |
-| POST | `/v1/tenants/:id/domains` | Add `{domain, type?, is_primary?}` |
-| DELETE | `/v1/tenants/:id/domains/:domain_id` | Remove domain |
-| GET | `/v1/tenants/:id/branding` | Get branding |
-| POST | `/v1/tenants/:id/branding` | Upsert branding |
-| DELETE | `/v1/tenants/:id/branding` | Reset branding |
-| GET | `/v1/tenants/:id/usage?period=YYYY-MM` | Per-metric usage |
-| POST | `/v1/tenants/:id/usage` | Record `{metric, value, period?}` (requires `X-Tenant-ID`) |
-
-## Connect-RPC (internal)
-
-`POST /rpc/tenant.v1.TenantService/<Method>` (JSON).
-
-| Method | Body | Response |
-|---|---|---|
-| `GetTenantBySlug` | `{slug}` | tenant object |
-| `ResolveDomain` | `{domain}` | `{tenant_id}` |
-| `GetQuota` | `{tenant_id, metric}` | `{tenant_id, metric, limit, used, features}` |
-
-## Curl examples
+## Quick Start
 
 ```bash
-# Health
-curl -s localhost:8082/healthz
+# 1. Run Postgres + Valkey (docker compose in infra/dev/)
+docker compose up -d postgres valkey
 
-# Create
-curl -s -X POST localhost:8082/v1/tenants \
-  -H 'Content-Type: application/json' \
-  -H 'X-Admin-Key: dev_admin_key_change_me' \
-  -d '{"slug":"acme","name":"Acme Inc","plan":"pro","email":"admin@acme.com"}'
+# 2. Set required env
+export TENANT_DATABASE_URL=postgres://rinco:rinco_dev_password@localhost:5432/rinco?sslmode=disable
+export TENANT_VALKEY_URL=redis://localhost:6379/0
+export TENANT_ADMIN_API_KEY=dev_admin_key_change_me
+export OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
 
-# List
-curl -s "localhost:8082/v1/tenants?status=active&limit=20" \
-  -H 'X-Admin-Key: dev_admin_key_change_me'
+# 3. Build + run
+go build -o bin/tenant-service ./cmd
+./bin/tenant-service
 
-# Get
-curl -s localhost:8082/v1/tenants/<id> -H 'X-Admin-Key: dev_admin_key_change_me'
+# 4. Smoke
+curl -fsS localhost:8082/healthz
+curl -fsS localhost:8082/readyz
+curl -fsS localhost:8082/metrics | head -8
+```
 
-# Update
-curl -s -X PUT localhost:8082/v1/tenants/<id> \
-  -H 'Content-Type: application/json' \
-  -H 'X-Admin-Key: dev_admin_key_change_me' \
-  -d '{"plan":"business","settings":{"locale":"vi-VN"}}'
+## API Reference
 
-# Suspend / activate
-curl -s -X POST "localhost:8082/v1/tenants/<id>/suspend?reason=non_payment" \
-  -H 'X-Admin-Key: dev_admin_key_change_me'
-curl -s -X POST localhost:8082/v1/tenants/<id>/activate \
-  -H 'X-Admin-Key: dev_admin_key_change_me'
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/healthz` | – | Liveness |
+| GET | `/readyz` | – | Postgres + Valkey ping |
+| GET | `/metrics` | – | Prometheus exposition |
+| GET | `/version` | – | Service + version |
+| POST | `/v1/admin/tenants` | admin | Create tenant |
+| GET | `/v1/admin/tenants` | admin | List (filter by status, plan, search) |
+| GET | `/v1/admin/tenants/:id` | admin | Get by id |
+| PATCH | `/v1/admin/tenants/:id` | admin | Update mutable fields |
+| POST | `/v1/admin/tenants/:id/suspend` | admin | Suspend |
+| POST | `/v1/admin/tenants/:id/reactivate` | admin | Reactivate |
+| DELETE | `/v1/admin/tenants/:id` | admin | Soft-delete |
+| GET | `/v1/tenant/:slug` | – | Public profile |
+| PUT | `/v1/tenant/:slug/settings` | tenant | Update settings |
+| GET | `/v1/tenant/:slug/branding` | – | Branding payload |
+| PUT | `/v1/tenant/:slug/branding` | tenant | Replace branding |
+| POST | `/v1/tenant/:slug/domains` | tenant | Attach custom domain |
+| DELETE | `/v1/tenant/:slug/domains/:domain` | tenant | Detach |
+| GET | `/v1/tenant/:slug/usage` | tenant | Usage counters |
+| POST | `/v1/internal/tenants/lookup` | rpc | Slug → id (Connect-RPC) |
 
-# Delete (soft)
-curl -s -X DELETE localhost:8082/v1/tenants/<id> \
-  -H 'X-Admin-Key: dev_admin_key_change_me'
+Full payload examples live in `examples/curl.sh` and the Postman collection.
 
-# Add domain
-curl -s -X POST localhost:8082/v1/tenants/<id>/domains \
-  -H 'Content-Type: application/json' \
-  -H 'X-Admin-Key: dev_admin_key_change_me' \
-  -d '{"domain":"shop.acme.com","type":"subdomain","is_primary":true}'
+## Database Schema
 
-# Resolve domain
-curl -s localhost:8082/v1/tenants/by-domain/shop.acme.com
+```
+tenants
+  id           uuid PK
+  slug         text UNIQUE NOT NULL
+  name         text NOT NULL
+  plan         text NOT NULL DEFAULT 'starter'   -- starter|pro|enterprise
+  status       text NOT NULL DEFAULT 'active'    -- active|suspended|cancelled
+  trial_ends_at timestamptz
+  created_at   timestamptz NOT NULL DEFAULT now()
+  updated_at   timestamptz NOT NULL DEFAULT now()
+  deleted_at   timestamptz
 
-# Stats
-curl -s localhost:8082/v1/tenants/<id>/stats -H 'X-Admin-Key: dev_admin_key_change_me'
+tenant_settings
+  tenant_id    uuid PK REFERENCES tenants(id)
+  theme        jsonb NOT NULL DEFAULT '{}'::jsonb
+  locale       text NOT NULL DEFAULT 'en'
+  currency     text NOT NULL DEFAULT 'USD'
+  timezone     text NOT NULL DEFAULT 'UTC'
 
-# Branding
-curl -s localhost:8082/v1/tenants/<id>/branding
-curl -s -X POST localhost:8082/v1/tenants/<id>/branding \
-  -H 'Content-Type: application/json' \
-  -H 'X-Admin-Key: dev_admin_key_change_me' \
-  -d '{"logo_url":"https://cdn.acme.com/logo.svg","primary_color":"#0ea5e9","font_family":"Inter"}'
+tenant_domains
+  tenant_id    uuid REFERENCES tenants(id)
+  domain       text PRIMARY KEY
+  verified_at  timestamptz
+  ssl_status   text DEFAULT 'pending'
 
-# Record / get usage
-curl -s -X POST localhost:8082/v1/tenants/<id>/usage \
-  -H 'Content-Type: application/json' -H 'X-Tenant-ID: <id>' \
-  -d '{"metric":"api_calls","value":42}'
-curl -s localhost:8082/v1/tenants/<id>/usage -H 'X-Admin-Key: dev_admin_key_change_me'
+tenant_usage
+  tenant_id    uuid REFERENCES tenants(id)
+  period       text  -- YYYY-MM
+  api_calls    bigint NOT NULL DEFAULT 0
+  storage_gb   numeric(12,3) NOT NULL DEFAULT 0
+  seats        int  NOT NULL DEFAULT 0
+  PRIMARY KEY (tenant_id, period)
+```
 
-# Connect-RPC (called by other services)
-curl -s -X POST localhost:8082/rpc/tenant.v1.TenantService/GetTenantBySlug \
-  -H 'Content-Type: application/json' -d '{"slug":"acme"}'
-curl -s -X POST localhost:8082/rpc/tenant.v1.TenantService/ResolveDomain \
-  -H 'Content-Type: application/json' -d '{"domain":"shop.acme.com"}'
-curl -s -X POST localhost:8082/rpc/tenant.v1.TenantService/GetQuota \
-  -H 'Content-Type: application/json' -d '{"tenant_id":"<id>","metric":"users"}'
+Row-level security is enabled on every table with a policy of
+`USING (id::text = current_setting('app.current_tenant_id', true))`.
+
+## Configuration
+
+See `config.example.yaml` for the full list.  Required:
+
+| Var | Default | Description |
+|---|---|---|
+| `TENANT_DATABASE_URL` | – | PostgreSQL DSN |
+| `TENANT_VALKEY_URL` | `redis://localhost:6379/0` | Redis-compatible URL |
+| `TENANT_HTTP_ADDR` | `:8082` | Listen address |
+| `TENANT_ADMIN_API_KEY` | – | Bearer for `/v1/admin/*` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | – | OTLP gRPC collector |
+
+Optional:
+
+| Var | Default | Description |
+|---|---|---|
+| `TENANT_PUBLISH_NATS` | `true` | Publish lifecycle events |
+| `TENANT_NATS_URL` | `nats://nats:4222` | NATS URL |
+| `TENANT_ENABLE_RLS_GUC` | `true` | Set `app.current_tenant_id` per request |
+| `LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
+
+## Deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: tenant-service }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: tenant-service } }
+  template:
+    metadata: { labels: { app: tenant-service } }
+    spec:
+      containers:
+        - name: tenant
+          image: rinco/tenant-service:1.0.0
+          ports: [{ containerPort: 8082 }]
+          envFrom:
+            - configMapRef: { name: tenant-service }
+            - secretRef:   { name: tenant-service }
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8082 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8082 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { cpu: 500m, memory: 512Mi }
 ```
 
 ## Observability
 
-- All logs JSON via `slog` with `service=tenant-service`, `trace_id`, `span_id`.
-- Every request gets a `X-Trace-ID` header (generated if absent).
-- `/metrics` exposes `http_requests_total`, `http_request_duration_seconds`, plus Go process metrics.
-- Tracing is OTLP gRPC; if `OTEL_EXPORTER_OTLP_ENDPOINT` is unset, tracing is a no-op (cheap spans still attach).
+- **Metrics**: `tenant_http_requests_total{route,status}`,
+  `tenant_http_request_duration_seconds_bucket{route}`, Go runtime.
+- **Logs**: `slog` JSON with `service`, `trace_id`, `tenant_id`, `request_id`.
+- **Traces**: OTLP/gRPC, sampler = parent-based(AlwaysOn).  Every request
+  emits a server span; downstream DB calls share the trace context.
 
 ## Development
 
 ```bash
-# Tidy
 go mod tidy
-
-# Build
-go build -o bin/tenant-service ./cmd/main.go
-
-# Run locally
-TENANT_DATABASE_URL=postgres://postgres:postgres@localhost:5432/rinco?sslmode=disable \
-TENANT_ADMIN_API_KEY=dev_admin_key_change_me \
-./bin/tenant-service
-
-# Vet / test
 go vet ./...
 go test ./...
-```
-
-## Docker
-
-```bash
-docker build -t rinco/tenant-service:latest .
-docker run --rm -p 8082:8082 \
-  -e TENANT_DATABASE_URL=postgres://... \
-  -e TENANT_ADMIN_API_KEY=... \
-  rinco/tenant-service:latest
+docker build -t rinco/tenant-service:dev .
 ```

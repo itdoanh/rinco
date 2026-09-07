@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
       server_timestamp: Date.now(),
       metadata: {
         user_agent: request.headers.get("user-agent"),
-        ip: request.ip,
+        ip: request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip"),
         referrer: request.headers.get("referer"),
         url: body.properties?.url || request.url,
       },

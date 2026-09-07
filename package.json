@@ -1,0 +1,28 @@
+{
+  "name": "rinco-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RINCO Platform — multi-tenant SaaS with polyglot microservices",
+  "workspaces": [
+    "frontend/*",
+    "packages/frontend/*"
+  ],
+  "scripts": {
+    "dev": "make dev",
+    "build": "make build",
+    "test": "make test",
+    "lint": "make lint",
+    "migrate": "make migrate",
+    "deploy": "make deploy",
+    "clean": "make clean",
+    "check": "make check"
+  },
+  "engines": {
+    "node": ">=20",
+    "bun": ">=1.0.0"
+  },
+  "packageManager": "bun@1.1.0",
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

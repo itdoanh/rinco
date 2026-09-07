@@ -31,7 +31,9 @@ type TxOptions struct {
 	OnRetry     func(attempt int, err error)
 }
 
-func (o *TxOptions) defaults() TxOptions {
+// defaults fills zero-value fields with safe defaults. The receiver is a
+// value so the function is not a method.
+func (o TxOptions) defaults() TxOptions {
 	if o.MaxRetries == 0 {
 		o.MaxRetries = 3
 	}
@@ -41,7 +43,7 @@ func (o *TxOptions) defaults() TxOptions {
 	if o.IsoLevel == "" {
 		o.IsoLevel = pgx.ReadCommitted
 	}
-	return *o
+	return o
 }
 
 // SerializableTxOptions preset cho high-stakes transactions.
@@ -74,7 +76,7 @@ func isRetryable(err error) bool {
 // Trước khi fn chạy, sẽ set RLS context (tenant_id, user_id, is_super_admin, bypass_rls).
 // Tất cả errors từ fn sẽ rollback transaction (trừ khi fn gọi panic).
 func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) error, opts ...TxOptions) error {
-	o := (TxOptions{}).defaults()
+	o := TxOptions{}.defaults()
 	if len(opts) > 0 {
 		o = opts[0].defaults()
 	}

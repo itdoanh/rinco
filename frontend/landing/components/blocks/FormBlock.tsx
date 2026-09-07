@@ -6,17 +6,17 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { cn } from '@/lib/utils';
 import { FormBlockData, LeadFormData } from '@/lib/block-types';
 import { leadSchema } from '@/lib/schemas';
-import { Button } from '@repo/ui/components/ui/button';
-import { Input } from '@repo/ui/components/ui/input';
-import { Label } from '@repo/ui/components/ui/label';
-import { Textarea } from '@repo/ui/components/ui/textarea';
+import { Button } from '@rinco/ui';
+import { Input } from '@rinco/ui';
+import { Label } from '@rinco/ui';
+import { Textarea } from '@rinco/ui';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@repo/ui/components/ui/select';
+} from '@rinco/ui';
 import { Loader2, CheckCircle } from 'lucide-react';
 
 interface FormBlockProps {

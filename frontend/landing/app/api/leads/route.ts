@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
       },
       metadata: {
         user_agent: request.headers.get("user-agent"),
-        ip: request.ip,
+        ip: request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip"),
         referrer: request.headers.get("referer"),
       },
     };

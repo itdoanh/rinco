@@ -119,4 +119,5 @@ export function TestimonialSection({ data }: TestimonialSectionProps) {
   );
 }
 
+export { TestimonialSection, TestimonialSection as Testimonial }
 export default TestimonialSection;
