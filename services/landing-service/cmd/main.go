@@ -1,374 +1,145 @@
-// Landing Service - serve landing page + lead ingestion + Facebook CAPI worker.
+// Package main — RINCO landing-service entrypoint.
+//
+// Self-contained landing service handling dynamic page rendering, form
+// submission, server-side tracking pixels, click redirectors, and
+// Facebook Conversions API (CAPI) delivery.  Tiered S3 storage with
+// auto-transition between hot SSD bucket and cold HDD bucket based on
+// object age.  Multi-tenant via X-Tenant-ID / X-User-ID headers; row
+// level security expected at the database level.
 package main
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"database/sql"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"go.uber.org/zap"
-
-	"github.com/gocql/gocql"
 	"github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/mongo"
+	mongoOpts "go.mongodb.org/mongo-driver/mongo/options"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	"go.opentelemetry.io/otel"
 
-	"github.com/rinco/go/pkg/db"
-	"github.com/rinco/go/pkg/logger"
-	rincowebmw "github.com/rinco/go/pkg/middleware"
+	"github.com/rinco/services/landing-service/internal/handler"
+	"github.com/rinco/services/landing-service/internal/middleware"
+	"github.com/rinco/services/landing-service/internal/platform"
+	"github.com/rinco/services/landing-service/internal/storage"
 )
 
-const (
-	serviceName = "landing-service"
-	version     = "1.0.0"
-)
+const serviceName = "landing-service"
+const version = "1.0.0"
 
-type leadSubmission struct {
-	FormID       string                 `json:"form_id"`
-	TenantID     string                 `json:"tenant_id"`
-	FullName     string                 `json:"full_name"`
-	Phone        string                 `json:"phone"`
-	Email        string                 `json:"email"`
-	UtmSource    string                 `json:"utm_source"`
-	UtmMedium    string                 `json:"utm_medium"`
-	UtmCampaign  string                 `json:"utm_campaign"`
-	UtmContent   string                 `json:"utm_content"`
-	UtmTerm      string                 `json:"utm_term"`
-	FBCLID       string                 `json:"fbclid"`
-	GCLID        string                 `json:"gclid"`
-	TTCLID       string                 `json:"ttclid"`
-	IPAddress    string                 `json:"ip_address"`
-	UserAgent    string                 `json:"user_agent"`
-	Extra        map[string]string      `json:"extra"`
-	Idempotency  string                 `json:"idempotency_key"`
-	ClientSentAt int64                  `json:"client_sent_at"`
+type config struct {
+	Env, HTTPAddr, DatabaseURL, MongoURL, S3Endpoint, S3AccessKey, S3SecretKey string
+	HotBucket, ColdBucket, ValkeyURL, NatsURL string
+	FBPixelID, FBAppSecret, TrackingSalt, S3UseSSL string
 }
 
-type ingestResponse struct {
-	Status      string `json:"status"`
-	EventID     string `json:"event_id"`
-	LeadID      string `json:"lead_id"`
-	Accepted    bool   `json:"accepted"`
-	ValidationErrors map[string]string `json:"validation_errors,omitempty"`
+func loadConfig() config {
+	return config{
+		Env:          platform.Getenv("ENV", "development"),
+		HTTPAddr:     platform.Getenv("LANDING_HTTP_ADDR", ":8086"),
+		DatabaseURL:  os.Getenv("LANDING_DATABASE_URL"),
+		MongoURL:     platform.Getenv("LANDING_MONGO_URL", ""),
+		S3Endpoint:   os.Getenv("LANDING_S3_ENDPOINT"),
+		S3AccessKey:  os.Getenv("LANDING_S3_ACCESS_KEY"),
+		S3SecretKey:  os.Getenv("LANDING_S3_SECRET_KEY"),
+		HotBucket:    platform.Getenv("LANDING_S3_BUCKET_HOT", "rinco-hot-ssd"),
+		ColdBucket:   platform.Getenv("LANDING_S3_BUCKET_COLD", "rinco-cold-hdd"),
+		S3UseSSL:     platform.Getenv("LANDING_S3_SSL", "false"),
+		ValkeyURL:    platform.Getenv("LANDING_VALKEY_URL", "localhost:6379"),
+		NatsURL:      platform.Getenv("LANDING_NATS_URL", ""),
+		FBPixelID:    os.Getenv("LANDING_FB_PIXEL_ID"),
+		FBAppSecret:  os.Getenv("LANDING_FB_APP_SECRET"),
+		TrackingSalt: platform.Getenv("LANDING_TRACKING_SALT", "rinco-tracking-salt"),
+	}
 }
-
-var (
-	scyllaSession *gocql.Session
-	valkeyClient  *redis.Client
-)
 
 func main() {
-	env := getEnv("ENV", "development")
-	logger.Init(serviceName, env, version)
-	defer logger.Sync()
+	cfg := loadConfig()
+	logger := platform.InitLogger(cfg.Env, version)
+	logger.Info("landing-service starting", slog.String("addr", cfg.HTTPAddr))
 
-	// PostgreSQL for lead validation + custom field lookup
-	dbCfg := db.Config{
-		Host:     getEnv("DB_HOST", "localhost"),
-		Port:     5432,
-		User:     getEnv("DB_USER", "rinco"),
-		Password: getEnv("DB_PASSWORD", "rinco_dev_password"),
-		Database: getEnv("DB_NAME", "rinco"),
-		SSLMode:  "disable",
-	}
-	database, err := db.New(dbCfg)
-	if err != nil {
-		logger.Fatal(context.Background(), "postgres connect failed", err)
-	}
-	defer database.Close()
+	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	// ScyllaDB session
-	scyllaCluster := gocql.NewCluster(getEnv("SCYLLA_HOST", "localhost"))
-	scyllaCluster.Keyspace = "rinco_leads"
-	scyllaCluster.Consistency = gocql.LocalOne
-	scyllaCluster.Timeout = 10 * time.Second
-	scyllaSession, err = scyllaCluster.CreateSession()
-	if err != nil {
-		logger.Warn(context.Background(), "scylla connect failed (continuing without)", zap.Error(err))
-	} else {
-		defer scyllaSession.Close()
+	tp, err := platform.InitTracer(rootCtx, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"), cfg.Env)
+	if err == nil && tp != nil {
+		otel.SetTracerProvider(tp)
+		defer func() { _ = tp.Shutdown(context.Background()) }()
 	}
 
-	// Valkey for rate limiting + dedup
-	valkeyClient = redis.NewClient(&redis.Options{
-		Addr: getEnv("VALKEY_HOST", "localhost:6379"),
-	})
-	defer valkeyClient.Close()
+	pool, err := platform.OpenPool(rootCtx, cfg.DatabaseURL)
+	if err != nil { logger.Error("db connect failed", slog.String("error", err.Error())); os.Exit(1) }
+	defer pool.Close()
+	if err := platform.RunMigrations(rootCtx, pool); err != nil { logger.Error("migrations failed", slog.String("error", err.Error())); os.Exit(1) }
 
-	e := echo.New()
-	e.HideBanner = true
-	e.Use(rincowebmw.Recovery())
-	e.Use(rincowebmw.Trace())
-	e.Use(rincowebmw.Logger())
-	e.Use(rincowebmw.Metrics(serviceName))
-	e.Use(rincowebmw.CORS([]string{"*"}))
-	e.Use(rincowebmw.SecurityHeaders())
+	var mongoClient *mongo.Client
+	if cfg.MongoURL != "" {
+		mongoClient, err = mongo.Connect(rootCtx, mongoOpts.Client().ApplyURI(cfg.MongoURL))
+		if err != nil { logger.Warn("mongo connect failed", slog.String("error", err.Error())) } else { defer func() { _ = mongoClient.Disconnect(context.Background()) }() }
+	}
 
-	e.GET("/health", healthHandler)
+	valkey := redis.NewClient(&redis.Options{Addr: cfg.ValkeyURL})
+	defer valkey.Close()
+	if err := valkey.Ping(rootCtx).Err(); err != nil { logger.Warn("valkey unavailable", slog.String("error", err.Error())) }
+
+	store, err := storage.New(storage.Config{Endpoint: cfg.S3Endpoint, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey, HotBucket: cfg.HotBucket, ColdBucket: cfg.ColdBucket, UseSSL: strings.EqualFold(cfg.S3UseSSL, "true"), MaxHotAge: 30 * 24 * time.Hour})
+	if err != nil { logger.Warn("tiered storage disabled", slog.String("error", err.Error())) }
+	if store != nil { _ = store.EnsureBuckets(rootCtx) }
+
+	srv := handler.New(pool, mongoClient, store, cfg.FBPixelID, cfg.FBAppSecret, cfg.TrackingSalt)
+	_ = srv.MongoInit(rootCtx)
+
+	e := newEcho(cfg, srv, pool, valkey)
+	go func() { if err := e.Start(cfg.HTTPAddr); err != nil && !errors.Is(err, http.ErrServerClosed) { logger.Error("http server", slog.String("error", err.Error())) } }()
+	<-rootCtx.Done()
+	logger.Info("shutdown requested")
+	shut, cancel := context.WithTimeout(context.Background(), 30*time.Second); defer cancel()
+	if err := e.Shutdown(shut); err != nil { logger.Error("graceful shutdown", slog.String("error", err.Error())) }
+	logger.Info("landing-service stopped")
+}
+
+func newEcho(cfg config, srv *handler.Server, pool *pgxpool.Pool, valkey *redis.Client) *echo.Echo {
+	e := echo.New(); e.HideBanner = true; e.HidePort = true
+	e.Use(middleware.Recovery()); e.Use(middleware.RequestLog()); e.Use(middleware.CORS()); e.Use(middleware.SecurityHeaders()); e.Use(otelecho.Middleware(serviceName))
+
+	e.GET("/healthz", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"status": "ok", "service": serviceName, "version": version}) })
+	e.GET("/readyz", func(c echo.Context) error { ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second); defer cancel(); if err := pool.Ping(ctx); err != nil { return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "db_unreachable", "error": err.Error()}) }; if err := valkey.Ping(ctx).Err(); err != nil { return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "valkey_unreachable", "error": err.Error()}) }; return c.JSON(http.StatusOK, map[string]string{"status": "ready"}) })
 	e.GET("/metrics", echo.WrapHandler(promhttp.Handler()))
+	e.GET("/version", func(c echo.Context) error { return c.JSON(http.StatusOK, map[string]string{"service": serviceName, "version": version}) })
 
-	// Serve static landing (chiase_cu clone)
-	e.Static("/", "./static")
+	v1 := e.Group("/v1")
+	v1.GET("/pages/:tenant_slug/:page_slug", srv.RenderPage)
+	v1.GET("/pages/:tenant_slug/index", srv.RenderPage)
+	v1.GET("/preview/:page_id", srv.PreviewPage, middleware.EditorAuth)
+	v1.POST("/pages", srv.CreatePage, middleware.EditorAuth)
+	v1.GET("/pages/:id", srv.GetPage, middleware.EditorAuth)
+	v1.POST("/forms/:form_slug/submit", srv.SubmitForm)
+	v1.POST("/forms/:form_slug/submit/batch", srv.SubmitFormBatch)
+	v1.GET("/forms/:form_slug/schema", srv.FormSchema)
+	v1.POST("/track/pageview", srv.TrackPageview)
+	v1.POST("/track/event", srv.TrackEvent)
+	v1.POST("/track/conversion", srv.TrackConversion)
+	v1.GET("/track/pixel/:tenant_slug/p.gif", srv.TrackingPixel)
+	v1.GET("/track/redirect/:tenant_slug/:click_id", srv.TrackingRedirect)
+	v1.POST("/capi/send", srv.CAPISend)
+	v1.GET("/capi/status", srv.CAPIStatus)
+	v1.POST("/capi/test", srv.CAPITest, middleware.EditorAuth)
 
-	// Ingestion endpoint
-	e.POST("/v1/leads/submit", submitLeadHandler(database))
-	e.POST("/v1/track", trackHandler(database)) // Browser-side events
-
-	// CAPI worker endpoint (internal)
-	e.POST("/v1/internal/capi/send", capiSendHandler())
-
-	// Webhooks
-	e.POST("/v1/webhooks/form", formWebhookHandler(database))
-
-	// Anti-bot
-	e.POST("/v1/pow/challenge", powChallengeHandler())
-	e.POST("/v1/pow/verify", powVerifyHandler())
-
-	port := ":" + getEnv("PORT", "8086")
-	logger.Info(context.Background(), "starting landing service", zap.String("port", port))
-	if err := e.Start(port); err != nil && err != http.ErrServerClosed {
-		logger.Fatal(context.Background(), "server failed", err)
-	}
+	rpc := e.Group("/internal/landing.v1.LandingService")
+	rpc.POST("/GetPageConfig", srv.RenderPage)
+	rpc.POST("/SubmitLead", srv.SubmitForm)
+	rpc.POST("/TrackEvent", srv.TrackEvent)
+	rpc.POST("/SendCAPIEvent", srv.CAPISend)
+	rpc.POST("/GetFBPixelConfig", srv.CAPIStatus)
+	return e
 }
-
-func healthHandler(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]string{"status": "ok", "service": serviceName})
-}
-
-func submitLeadHandler(database *sql.DB) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		ctx := c.Request().Context()
-		var req leadSubmission
-		if err := c.Bind(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, ingestResponse{Status: "error", ValidationErrors: map[string]string{"body": err.Error()}})
-		}
-
-		// HMAC validation
-		signature := c.Request().Header.Get("X-Signature")
-		if !verifyHMAC(signature, req) {
-			logger.Warn(ctx, "HMAC verification failed", zap.String("tenant_id", req.TenantID))
-			return c.JSON(http.StatusUnauthorized, ingestResponse{Status: "error"})
-		}
-
-		// Idempotency check via Valkey
-		if req.Idempotency != "" {
-			key := fmt.Sprintf("idem:lead:%s", req.Idempotency)
-			_, err := valkeyClient.SetNX(ctx, key, "1", 24*time.Hour).Result()
-			if err == nil {
-				valkeyClient.Expire(ctx, key, 24*time.Hour)
-			}
-		}
-
-		// Validate against dynamic model schema
-		if err := validateLead(ctx, database, req); err != nil {
-			return c.JSON(http.StatusUnprocessableEntity, ingestResponse{
-				Status:           "error",
-				ValidationErrors: err,
-			})
-		}
-
-		// Generate event ID
-		eventID := uuid.NewV7()
-		eventTime := time.Now().UnixMilli()
-
-		// Persist to ScyllaDB leads_raw
-		if scyllaSession != nil {
-			extraMap := make(map[string]string)
-			for k, v := range req.Extra {
-				extraMap[k] = v
-			}
-			err := scyllaSession.Query(`
-				INSERT INTO rinco_leads.leads_raw (
-					tenant_id, event_time, event_id, idempotency_key,
-					full_name, phone, email,
-					utm_source, utm_medium, utm_campaign, utm_content, utm_term,
-					fbclid, gclid, ttclid, ip_address, user_agent, source, form_id,
-					extra, processed, fb_capi_sent
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, false)
-			`, req.TenantID, eventTime, eventID, req.Idempotency,
-				req.FullName, req.Phone, req.Email,
-				req.UtmSource, req.UtmMedium, req.UtmCampaign, req.UtmContent, req.UtmTerm,
-				req.FBCLID, req.GCLID, req.TTCLID, req.IPAddress, req.UserAgent, "landing", req.FormID,
-				extraMap,
-			).WithContext(ctx).Exec()
-
-			if err != nil {
-				logger.Error(ctx, "scylla insert", err)
-			}
-		}
-
-		// Create lead in PostgreSQL
-		leadID := uuid.NewV7()
-		customFields := map[string]interface{}{
-			"utm_source":   req.UtmSource,
-			"utm_medium":   req.UtmMedium,
-			"utm_campaign": req.UtmCampaign,
-			"form_id":      req.FormID,
-		}
-		for k, v := range req.Extra {
-			customFields[k] = v
-		}
-
-		_, err := database.ExecContext(ctx, `
-			INSERT INTO leads.leads (id, tenant_id, email, phone, full_name, source, custom_fields)
-			VALUES ($1, $2, $3, $4, $5, 'landing', $6)
-		`, leadID, req.TenantID, req.Email, req.Phone, req.FullName, customFields)
-		if err != nil {
-			logger.Error(ctx, "postgres insert", err)
-			// Don't fail: ScyllaDB is source of truth for ingestion
-		}
-
-		// Trigger lead scoring async (NATS publish in production)
-		logger.Info(ctx, "lead accepted", zap.String("lead_id", leadID.String()))
-
-		return c.JSON(http.StatusOK, ingestResponse{
-			Status:   "accepted",
-			EventID:  eventID.String(),
-			LeadID:   leadID.String(),
-			Accepted: true,
-		})
-	}
-}
-
-func trackHandler(database *sql.DB) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		ctx := c.Request().Context()
-		var body map[string]interface{}
-		if err := c.Bind(&body); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-
-		eventName, _ := body["event_name"].(string)
-		tenantID, _ := body["tenant_id"].(string)
-
-		if eventName == "" || tenantID == "" {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "event_name and tenant_id required"})
-		}
-
-		// Log browser-side event for dedup
-		logger.Info(ctx, "browser event",
-			zap.String("event_name", eventName),
-			zap.String("tenant_id", tenantID),
-			zap.Any("payload", body),
-		)
-
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	}
-}
-
-func capiSendHandler() echo.HandlerFunc {
-	return func(c echo.Context) error {
-		// In production: this is called by NATS subscriber for new leads
-		// Implementation: POST to Facebook Conversions API with HMAC user_data
-		ctx := c.Request().Context()
-		var body map[string]interface{}
-		if err := c.Bind(&body); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-
-		logger.Info(ctx, "CAPI send requested", zap.Any("payload_size", len(fmt.Sprintf("%v", body))))
-		return c.JSON(http.StatusOK, map[string]string{"status": "queued"})
-	}
-}
-
-func formWebhookHandler(database *sql.DB) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	}
-}
-
-func powChallengeHandler() echo.HandlerFunc {
-	return func(c echo.Context) error {
-		challenge := uuid.NewV7().String()
-		difficulty := 2
-		ttl := 60
-		valkeyClient.Set(context.Background(), "pow:"+challenge, difficulty, time.Duration(ttl)*time.Second)
-		return c.JSON(http.StatusOK, map[string]interface{}{
-			"challenge":  challenge,
-			"difficulty": difficulty,
-			"ttl":        ttl,
-		})
-	}
-}
-
-func powVerifyHandler() echo.HandlerFunc {
-	return func(c echo.Context) error {
-		var body struct {
-			Challenge string `json:"challenge"`
-			Nonce     string `json:"nonce"`
-		}
-		if err := c.Bind(&body); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-		}
-
-		// Verify PoW: hash(challenge + nonce) must start with N zeros
-		combined := body.Challenge + body.Nonce
-		hash := sha256.Sum256([]byte(combined))
-		hashHex := hex.EncodeToString(hash[:])
-
-		// Check Valkey
-		stored, _ := valkeyClient.Get(context.Background(), "pow:"+body.Challenge).Result()
-		if stored == "" {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "challenge expired"})
-		}
-
-		// Verify difficulty
-		requiredZeros := 2
-		if !strings.HasPrefix(hashHex, strings.Repeat("0", requiredZeros)) {
-			return c.JSON(http.StatusUnauthorized, map[string]string{"error": "invalid PoW"})
-		}
-
-		valkeyClient.Del(context.Background(), "pow:"+body.Challenge)
-		return c.JSON(http.StatusOK, map[string]string{"status": "verified"})
-	}
-}
-
-func validateLead(ctx context.Context, database *sql.DB, lead leadSubmission) map[string]string {
-	errors := make(map[string]string)
-
-	if lead.TenantID == "" {
-		errors["tenant_id"] = "required"
-	}
-	if lead.Email == "" && lead.Phone == "" {
-		errors["contact"] = "email or phone required"
-	}
-	if lead.Email != "" && !strings.Contains(lead.Email, "@") {
-		errors["email"] = "invalid format"
-	}
-
-	return errors
-}
-
-func verifyHMAC(signature string, lead leadSubmission) bool {
-	secret := getEnv("INGESTION_HMAC_SECRET", "dev_secret_change_me")
-	if signature == "" {
-		// Skip HMAC in dev mode for ease of testing
-		return true
-	}
-
-	body, _ := json.Marshal(lead)
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-
-	return hmac.Equal([]byte(signature), []byte(expected))
-}
-
-func getEnv(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
-var _ = io.Discard

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Landing Page</title>
+    <!-- Landing assets will be served from frontend/landing build -->
+    <script>
+        // Dynamic landing page loader
+        (function() {
+            var path = window.location.pathname;
+            var tenantSlug = path.split('/')[1] || 'default';
+            var pageSlug = path.split('/')[2] || 'index';
+            
+            // Redirect to API for server-side rendering
+            fetch('/v1/pages/' + tenantSlug + '/' + pageSlug)
+                .then(function(response) {
+                    if (response.ok) {
+                        return response.text();
+                    }
+                    throw new Error('Page not found');
+                })
+                .then(function(html) {
+                    document.open();
+                    document.write(html);
+                    document.close();
+                })
+                .catch(function() {
+                    document.body.innerHTML = '<div style="padding:40px;text-align:center;font-family:sans-serif"><h1>Page not found</h1><p>The landing page you requested does not exist.</p></div>';
+                });
+        })();
+    </script>
+</head>
+<body>
+    <noscript>
+        <p style="padding:20px;text-align:center;font-family:sans-serif">
+            Please enable JavaScript to view this page.
+        </p>
+    </noscript>
+</body>
+</html>

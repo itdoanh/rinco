@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preview</title>
+</head>
+<body>
+    <!-- Preview placeholder - actual preview rendered server-side -->
+    <div id="preview-container" data-page-id="">
+        <p>Loading preview...</p>
+    </div>
+    <script>
+        // Extract page ID from URL and load preview
+        var pageId = new URLSearchParams(window.location.search).get('page_id');
+        if (pageId) {
+            document.getElementById('preview-container').dataset.pageId = pageId;
+        }
+    </script>
+</body>
+</html>

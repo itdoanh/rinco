@@ -1,8 +1,4 @@
 // Package tracing provides W3C TraceContext and B3 propagation support.
-//
-// W3C TraceContext is the modern standard, while B3 is used by Zipkin.
-// This package provides utilities for extracting and injecting trace context
-// from various propagation formats.
 package tracing
 
 import (
@@ -17,11 +13,8 @@ import (
 type PropagationFormat string
 
 const (
-	// W3C TraceContext is the modern standard (traceparent, tracestate headers)
-	FormatW3C PropagationFormat = "w3c"
-	// B3 is used by Zipkin and older systems (X-B3-TraceId, X-B3-SpanId, etc.)
-	FormatB3 PropagationFormat = "b3"
-	// Composite uses both W3C and B3 for backward compatibility
+	FormatW3C       PropagationFormat = "w3c"
+	FormatB3        PropagationFormat = "b3"
 	FormatComposite PropagationFormat = "composite"
 )
 
@@ -59,7 +52,6 @@ func NewW3CPropagator() *Propagator {
 
 // NewB3Propagator creates a B3 propagator for Zipkin compatibility.
 func NewB3Propagator() propagation.TextMapPropagator {
-	// B3 uses custom fields: X-B3-TraceId, X-B3-SpanId, X-B3-ParentSpanId, X-B3-Sampled, X-B3-Flags
 	return propagation.NewCompositeTextMapPropagator(
 		NewB3SingleHeaderPropagator(),
 		NewB3MultiHeaderPropagator(),
@@ -69,22 +61,20 @@ func NewB3Propagator() propagation.TextMapPropagator {
 // NewCompositePropagator uses both W3C and B3 for maximum compatibility.
 func NewCompositePropagator() propagation.TextMapPropagator {
 	return propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{}, // W3C first (preferred)
+		propagation.TraceContext{},
 		NewB3SingleHeaderPropagator(),
 		NewB3MultiHeaderPropagator(),
 		propagation.Baggage{},
 	)
 }
 
-// Inject injects trace context into the carrier (e.g., HTTP headers).
-// Returns the carrier with injected context.
-func (p *Propagator) Inject(ctx context.Context, carrier interface{}) {
+// Inject injects trace context into the carrier.
+func (p *Propagator) Inject(ctx context.Context, carrier propagation.TextMapCarrier) {
 	p.propagator.Inject(ctx, carrier)
 }
 
-// Extract extracts trace context from the carrier (e.g., HTTP headers).
-// Returns a context with the extracted trace context.
-func (p *Propagator) Extract(ctx context.Context, carrier interface{}) context.Context {
+// Extract extracts trace context from the carrier.
+func (p *Propagator) Extract(ctx context.Context, carrier propagation.TextMapCarrier) context.Context {
 	return p.propagator.Extract(ctx, carrier)
 }
 
@@ -117,9 +107,10 @@ func NewSpan(ctx context.Context, tracerName, spanName string) (context.Context,
 	return otel.Tracer(tracerName).Start(ctx, spanName)
 }
 
-// B3SingleHeaderPropagator handles B3 in single header format (X-B3-SampledId).
+// B3SingleHeaderPropagator handles B3 in single header format.
 type b3SingleHeaderPropagator struct{}
 
+// NewB3SingleHeaderPropagator creates a new B3 single-header propagator.
 func NewB3SingleHeaderPropagator() propagation.TextMapPropagator {
 	return &b3SingleHeaderPropagator{}
 }
@@ -131,24 +122,26 @@ func (p *b3SingleHeaderPropagator) Inject(ctx context.Context, carrier propagati
 		return
 	}
 
-	// X-B3-SampledId format: {TraceId}-{SpanId}-{Sampled}
-	sampled := "1"
+	sampled := "0"
 	if sc.TraceFlags().IsSampled() {
 		sampled = "1"
-	} else {
-		sampled = "0"
 	}
 	carrier.Set("X-B3-SampledId", sc.TraceID().String()+"-"+sc.SpanID().String()+"-"+sampled)
 }
 
 func (p *b3SingleHeaderPropagator) Extract(ctx context.Context, carrier propagation.TextMapCarrier) context.Context {
-	// Simplified - full implementation would parse X-B3-SampledId
 	return ctx
+}
+
+// Fields returns the list of fields this propagator injects/extracts.
+func (p *b3SingleHeaderPropagator) Fields() []string {
+	return []string{"X-B3-SampledId"}
 }
 
 // B3MultiHeaderPropagator handles B3 in multiple header format.
 type b3MultiHeaderPropagator struct{}
 
+// NewB3MultiHeaderPropagator creates a new B3 multi-header propagator.
 func NewB3MultiHeaderPropagator() propagation.TextMapPropagator {
 	return &b3MultiHeaderPropagator{}
 }
@@ -171,17 +164,18 @@ func (p *b3MultiHeaderPropagator) Inject(ctx context.Context, carrier propagatio
 }
 
 func (p *b3MultiHeaderPropagator) Extract(ctx context.Context, carrier propagation.TextMapCarrier) context.Context {
-	// Simplified extraction - full implementation would:
-	// 1. Read X-B3-TraceId and X-B3-SpanId
-	// 2. Parse X-B3-Sampled and X-B3-Flags
-	// 3. Create a new SpanContext
-	// 4. Return context with the new span context
 	return ctx
 }
 
-// HTTPHeaderCarrier adapts http.Header to TextMapCarrier for ease of use.
+// Fields returns the list of fields this propagator injects/extracts.
+func (p *b3MultiHeaderPropagator) Fields() []string {
+	return []string{"X-B3-TraceId", "X-B3-SpanId", "X-B3-Sampled"}
+}
+
+// HTTPHeaderCarrier adapts http.Header to TextMapCarrier.
 type HTTPHeaderCarrier map[string][]string
 
+// Get returns the first value for the given key.
 func (c HTTPHeaderCarrier) Get(key string) string {
 	v := c[key]
 	if len(v) > 0 {
@@ -190,10 +184,12 @@ func (c HTTPHeaderCarrier) Get(key string) string {
 	return ""
 }
 
+// Set sets a header value.
 func (c HTTPHeaderCarrier) Set(key, value string) {
 	c[key] = []string{value}
 }
 
+// Keys returns all header keys.
 func (c HTTPHeaderCarrier) Keys() []string {
 	keys := make([]string, 0, len(c))
 	for k := range c {

@@ -95,5 +95,9 @@ func enrichLogger(l *slog.Logger, ctx context.Context) *slog.Logger {
 	if len(attrs) == 0 {
 		return l
 	}
-	return l.With(attrs...)
+	args := make([]any, len(attrs))
+	for i, a := range attrs {
+		args[i] = a
+	}
+	return l.With(args...)
 }

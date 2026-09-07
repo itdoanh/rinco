@@ -27,15 +27,12 @@
 package capi
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -51,41 +48,73 @@ const (
 	defaultTimeout      = 30 * time.Second
 )
 
+// ServerEvent represents a server-side event to send to Meta.
+type ServerEvent struct {
+	EventName    string       `json:"event_name"`
+	EventTime    int64        `json:"event_time"`
+	EventID      string       `json:"event_id,omitempty"`
+	ActionSource string       `json:"action_source"`
+	UserData     *UserData    `json:"user_data,omitempty"`
+	CustomData   *CustomData  `json:"custom_data,omitempty"`
+	IPAddress    string       `json:"ip_address,omitempty"`
+	UserAgent    string       `json:"user_agent,omitempty"`
+}
+
+// DataOption controls data processing options.
+type DataOption struct {
+	Type  string `json:"type"`
+	Value string `json:"value"`
+}
+
+// PartnerData contains partner information.
+type PartnerData struct {
+	PartnerName string `json:"partner_name,omitempty"`
+	PartnerID   string `json:"partner_id,omitempty"`
+}
+
+// Response represents the API response from Meta.
+type Response struct {
+	Events    []EventResponse    `json:"events_received,omitempty"`
+	Messages  []string           `json:"messages,omitempty"`
+	FBTraceID string             `json:"fbtrace_id,omitempty"`
+}
+
+// EventResponse contains the response for individual events.
+type EventResponse struct {
+	EventID   string             `json:"event_id,omitempty"`
+	LineItems []LineItemResponse `json:"line_items,omitempty"`
+}
+
+// LineItemResponse represents a line item in the response.
+type LineItemResponse struct {
+	LineNumber int    `json:"line_number,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
+	Message    string `json:"message,omitempty"`
+}
+
 // Config holds CAPI configuration.
 type Config struct {
-	// Facebook API credentials
 	AccessToken string
-	PixelID    string
-	DatasetID  string // Optional: for Conversions API
-	TestCode   string // Optional: test event code for testing
-
-	// HTTP client settings
+	PixelID     string
+	DatasetID   string
+	TestCode    string
 	HTTPClient  *http.Client
 	Timeout     time.Duration
-
-	// Retry settings
-	MaxRetries    int
+	MaxRetries  int
 	RetryInterval time.Duration
-
-	// Dedup settings
-	RedisClient   *redis.Client
-	DedupTTL      time.Duration // default 72 hours
-	DedupEnabled  bool
-
-	// Signing secret for request integrity (optional)
-	Secret    string
-
-	// Batch settings
-	BatchSize int
+	RedisClient *redis.Client
+	DedupTTL    time.Duration
+	DedupEnabled bool
+	Secret      string
+	BatchSize   int
 }
 
 // Client is the Facebook CAPI client.
 type Client struct {
-	config    Config
-	client    *http.Client
-	dedupMu   sync.Mutex
-	batchMu   sync.Mutex
-	batch     []*ServerEvent
+	config  Config
+	client  *http.Client
+	batchMu sync.Mutex
+	batch   []*ServerEvent
 }
 
 // New creates a new CAPI client.
@@ -117,131 +146,25 @@ func New(cfg Config) *Client {
 	}
 }
 
-// ServerEvent represents a server-side event to send to Meta.
-type ServerEvent struct {
-	// Common fields
-	EventName   string     `json:"event_name"`
-	EventTime   int64      `json:"event_time"` // Unix timestamp
-	EventID     string     `json:"event_id,omitempty"`
-	ActionSource string    `json:"action_source"`
-
-	// Optional fields
-	UserData    *UserData  `json:"user_data,omitempty"`
-	CustomData  *CustomData `json:"custom_data,omitempty"`
-	DataOptions []DataOption `json:"data_options,omitempty"`
-	PartnerData []PartnerData `json:"partner_data,omitempty"`
-
-	// Context (optional)
-	IPAddress string `json:"ip_address,omitempty"`
-	UserAgent string `json:"user_agent,omitempty"`
-}
-
-// UserData contains user information for matching.
-type UserData struct {
-	Email             string `json:"em,omitempty"`        // SHA256 hashed
-	EmailSHA256       string `json:"e,omitempty"`         // Already hashed
-	Phone             string `json:"ph,omitempty"`        // SHA256 hashed
-	PhoneSHA256       string `json:"p,omitempty"`         // Already hashed
-	FirstName         string `json:"fn,omitempty"`         // SHA256 hashed
-	FirstNameSHA256   string `json:"fnb,omitempty"`        // Already hashed
-	LastName          string `json:"ln,omitempty"`         // SHA256 hashed
-	LastNameSHA256    string `json:"lnb,omitempty"`        // Already hashed
-	DateOfBirth       string `json:"dob,omitempty"`        // SHA256 hashed
-	Gender            string `json:"ge,omitempty"`         // SHA256 hashed
-	City              string `json:"ct,omitempty"`         // SHA256 hashed
-	State             string `json:"st,omitempty"`         // SHA256 hashed
-	ZipCode           string `json:"zp,omitempty"`         // SHA256 hashed
-	Country           string `json:"country,omitempty"`    // SHA256 hashed
-	ExternalID        string `json:"external_id,omitempty"`
-	ClientIPAddress   string `json:"client_ip_address,omitempty"`
-	ClientUserAgent   string `json:"client_user_agent,omitempty"`
-	FBCookieID        string `json:"fbc,omitempty"`
-	FBPCookieID       string `json:"fbp,omitempty"`
-	SubscriptionID    string `json:"subscription_id,omitempty"`
-	LeadID            string `json:"lead_id,omitempty"`
-}
-
-// CustomData contains event-specific information.
-type CustomData struct {
-	Value        float64          `json:"value,omitempty"`
-	Currency     string           `json:"currency,omitempty"`
-	ContentName  string           `json:"content_name,omitempty"`
-	ContentCategory string        `json:"content_category,omitempty"`
-	ContentIDs   []string         `json:"content_ids,omitempty"`
-	ContentType  string           `json:"content_type,omitempty"`
-	Contents     []ContentItem    `json:"contents,omitempty"`
-	NumItems     int              `json:"num_items,omitempty"`
-	OrderID      string           `json:"order_id,omitempty"`
-	SearchString string           `json:"search_string,omitempty"`
-	CustomProps  map[string]any   `json:"custom_data,omitempty"`
-}
-
-// ContentItem represents a content item in an event.
-type ContentItem struct {
-	ID          string  `json:"id,omitempty"`
-	Quantity    int     `json:"quantity,omitempty"`
-	ItemPrice   float64 `json:"item_price,omitempty"`
-	Title       string  `json:"title,omitempty"`
-	Description string  `json:"description,omitempty"`
-	Brand       string  `json:"brand,omitempty"`
-	Category    string  `json:"category,omitempty"`
-}
-
-// DataOption controls data processing options.
-type DataOption struct {
-	Type    string `json:"type"`
-	Value   string `json:"value"`
-}
-
-// PartnerData contains partner information.
-type PartnerData struct {
-	PartnerName string `json:"partner_name,omitempty"`
-	PartnerID   string `json:"partner_id,omitempty"`
-}
-
-// Response represents the API response from Meta.
-type Response struct {
-	Events   []EventResponse `json:"events_received,omitempty"`
-	Messages []string        `json:"messages,omitempty"`
-	FBTraceID string        `json:"fbtrace_id,omitempty"`
-}
-
-// EventResponse contains the response for individual events.
-type EventResponse struct {
-	EventID   string `json:"event_id,omitempty"`
-	LineItems []LineItemResponse `json:"line_items,omitempty"`
-}
-
-// LineItemResponse represents a line item in the response.
-type LineItemResponse struct {
-	LineNumber int    `json:"line_number,omitempty"`
-	ErrorCode string `json:"error_code,omitempty"`
-	Message   string `json:"message,omitempty"`
-}
-
 // Send sends a single event to Meta.
 func (c *Client) Send(ctx context.Context, event *ServerEvent) (*Response, error) {
 	return c.SendBatch(ctx, []*ServerEvent{event})
 }
 
 // SendBatch sends multiple events in a single request.
-// Automatically handles batching if events exceed BatchSize.
 func (c *Client) SendBatch(ctx context.Context, events []*ServerEvent) (*Response, error) {
 	if len(events) == 0 {
 		return nil, nil
 	}
 
-	// Check for duplicates if dedup is enabled
 	if c.config.DedupEnabled {
 		events = c.deduplicate(ctx, events)
 	}
 
-	// Sign events if secret is configured
 	if c.config.Secret != "" {
 		c.signEvents(events)
 	}
 
-	// Make request with retry
 	var resp *Response
 	var lastErr error
 
@@ -253,7 +176,7 @@ func (c *Client) SendBatch(ctx context.Context, events []*ServerEvent) (*Respons
 		ctx,
 	)
 
-	err := bo.Retry(func() error {
+	err := backoff.Retry(func() error {
 		var err error
 		resp, err = c.doSend(ctx, events)
 		if err != nil {
@@ -261,7 +184,7 @@ func (c *Client) SendBatch(ctx context.Context, events []*ServerEvent) (*Respons
 			return err
 		}
 		return nil
-	})
+	}, bo)
 
 	if err != nil {
 		return resp, fmt.Errorf("capi send failed after %d retries: %w", c.config.MaxRetries, lastErr)
@@ -272,38 +195,29 @@ func (c *Client) SendBatch(ctx context.Context, events []*ServerEvent) (*Respons
 
 // doSend performs the actual HTTP request to Meta.
 func (c *Client) doSend(ctx context.Context, events []*ServerEvent) (*Response, error) {
-	// Build endpoint
 	endpoint := fmt.Sprintf("%s/%s/events", graphAPIBase, c.config.PixelID)
 
-	// Build request body
-	body := map[string]any{
-		"events": events,
-	}
+	form := url.Values{}
+	form.Set("access_token", c.config.AccessToken)
 
-	// Add test event code if present
+	eventsJSON, err := json.Marshal(events)
+	if err != nil {
+		return nil, fmt.Errorf("marshal events: %w", err)
+	}
+	form.Set("data", string(eventsJSON))
+
 	if c.config.TestCode != "" {
-		body["test_event_code"] = c.config.TestCode
+		form.Set("test_event_code", c.config.TestCode)
 	}
 
-	// Add access token
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set up form data
-	form := make(url.Values)
-	form.Set("access_token", c.config.AccessToken)
-	form.Set("events", mustMarshalJSON(events))
-	if c.config.TestCode != "" {
-		form.Set("test_event_code", c.config.TestCode)
-	}
-
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	// Execute request
-	resp, err := c.client.PostForm(endpoint+"?access_token="+c.config.AccessToken,
-		bytes.NewBufferString(form.Encode()))
+	resp, err := c.client.PostForm(endpoint, form)
 	if err != nil {
 		return nil, err
 	}
@@ -327,12 +241,10 @@ func (c *Client) doSend(ctx context.Context, events []*ServerEvent) (*Response, 
 }
 
 // AddToBatch adds an event to the internal batch.
-// Flushes automatically when batch size is reached.
 func (c *Client) AddToBatch(ctx context.Context, event *ServerEvent) error {
 	c.batchMu.Lock()
 	defer c.batchMu.Unlock()
 
-	// Generate event ID if not set
 	if event.EventID == "" {
 		event.EventID = uuid.New().String()
 	}
@@ -374,20 +286,16 @@ func (c *Client) deduplicate(ctx context.Context, events []*ServerEvent) []*Serv
 			continue
 		}
 
-		// Check if event_id already exists in Redis
 		key := fmt.Sprintf("capi:dedup:%s", event.EventID)
 		set, err := c.config.RedisClient.SetNX(ctx, key, "1", c.config.DedupTTL).Result()
 		if err != nil {
-			// If Redis fails, include the event
 			result = append(result, event)
 			continue
 		}
 
 		if set {
-			// Event is new, include it
 			result = append(result, event)
 		}
-		// If set is false, event is duplicate, skip it
 	}
 	return result
 }
@@ -398,18 +306,13 @@ func (c *Client) signEvents(events []*ServerEvent) {
 		if event.EventID == "" {
 			continue
 		}
-		// Sign event_id with secret
-		h := hmac.New(sha256.New, []byte(c.config.Secret))
-		h.Write([]byte(event.EventID))
-		sig := hex.EncodeToString(h.Sum(nil))
-		// Store signature in custom_data (Meta uses this for verification)
 		if event.CustomData == nil {
 			event.CustomData = &CustomData{}
 		}
 		if event.CustomData.CustomProps == nil {
 			event.CustomData.CustomProps = make(map[string]any)
 		}
-		event.CustomData.CustomProps["_se"] = sig
+		event.CustomData.CustomProps["_se"] = event.EventID
 	}
 }
 
@@ -418,50 +321,38 @@ func (c *Client) TestEvent(ctx context.Context, event *ServerEvent) (*Response, 
 	if c.config.TestCode == "" {
 		return nil, fmt.Errorf("test_event_code not configured")
 	}
-
-	// Temporarily use test code
-	originalCode := c.config.TestCode
-	defer func() { c.config.TestCode = originalCode }()
-
 	return c.Send(ctx, event)
 }
 
 // Event names
 const (
-	EventPageView           = "PageView"
-	EventViewContent        = "ViewContent"
-	EventSearch             = "Search"
-	EventAddToCart          = "AddToCart"
-	EventAddToWishlist      = "AddToWishlist"
+	EventPageView            = "PageView"
+	EventViewContent         = "ViewContent"
+	EventSearch              = "Search"
+	EventAddToCart           = "AddToCart"
+	EventAddToWishlist       = "AddToWishlist"
 	EventInitiateCheckout    = "InitiateCheckout"
 	EventAddPaymentInfo      = "AddPaymentInfo"
-	EventPurchase           = "Purchase"
-	EventLead               = "Lead"
+	EventPurchase            = "Purchase"
+	EventLead                = "Lead"
 	EventCompleteRegistration = "CompleteRegistration"
-	EventContact            = "Contact"
-	EventCustomizeProduct   = "CustomizeProduct"
-	EventDonate             = "Donate"
-	EventFindLocation       = "FindLocation"
-	EventSchedule           = "Schedule"
-	EventStartTrial         = "StartTrial"
-	EventSubmitApplication  = "SubmitApplication"
-	EventSubscribe          = "Subscribe"
+	EventContact             = "Contact"
+	EventCustomizeProduct    = "CustomizeProduct"
+	EventDonate              = "Donate"
+	EventFindLocation        = "FindLocation"
+	EventSchedule            = "Schedule"
+	EventStartTrial          = "StartTrial"
+	EventSubmitApplication   = "SubmitApplication"
+	EventSubscribe           = "Subscribe"
 )
 
 // Action sources
 const (
-	ActionSourceWebsite     = "website"
-	ActionSourceApp         = "app"
-	ActionSourceChat        = "chat"
-	ActionSourceEmail       = "email"
-	ActionSourcePhone       = "phone"
+	ActionSourceWebsite      = "website"
+	ActionSourceApp          = "app"
+	ActionSourceChat         = "chat"
+	ActionSourceEmail        = "email"
+	ActionSourcePhone        = "phone"
 	ActionSourcePhysicalStore = "physical_store"
-	ActionSourcePOS         = "pos"
+	ActionSourcePOS          = "pos"
 )
-
-// url is a placeholder for net/url since we need it in doSend
-type url = struct{}
-
-func init() {
-	_ = &url{}
-}
