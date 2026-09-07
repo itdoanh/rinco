@@ -5,9 +5,11 @@ package pagination
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"net/url"
 	"strconv"
 	"strings"
@@ -30,17 +32,23 @@ type Cursor string
 func (c Cursor) Empty() bool { return string(c) == "" }
 
 // EncodeCursor marshals an arbitrary value as a JSON payload and returns a
-// base64url-encoded string. Use this to encode "where to start next page"
-// markers.
+// base64url-encoded string with a 4-byte crc32 checksum suffix. Use this to
+// encode "where to start next page" markers.
 func EncodeCursor(v any) (Cursor, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return "", fmt.Errorf("pagination: encode cursor: %w", err)
 	}
-	return Cursor(base64.RawURLEncoding.EncodeToString(b)), nil
+	// Compute crc32 checksum to detect tampering.
+	sum := crc32.ChecksumIEEE(b)
+	sumBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(sumBytes, sum)
+	payload := append(b, sumBytes...)
+	return Cursor(base64.RawURLEncoding.EncodeToString(payload)), nil
 }
 
 // DecodeCursor parses a cursor produced by EncodeCursor into out.
+// Returns an error if the cursor is empty, malformed, or tampered with.
 func DecodeCursor(c Cursor, out any) error {
 	if c.Empty() {
 		return errors.New("pagination: cursor is empty")
@@ -49,7 +57,16 @@ func DecodeCursor(c Cursor, out any) error {
 	if err != nil {
 		return fmt.Errorf("pagination: invalid cursor encoding: %w", err)
 	}
-	if err := json.Unmarshal(raw, out); err != nil {
+	if len(raw) < 4 {
+		return errors.New("pagination: cursor too short")
+	}
+	body := raw[:len(raw)-4]
+	gotSum := binary.BigEndian.Uint32(raw[len(raw)-4:])
+	wantSum := crc32.ChecksumIEEE(body)
+	if gotSum != wantSum {
+		return errors.New("pagination: cursor checksum mismatch (tampered)")
+	}
+	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("pagination: invalid cursor json: %w", err)
 	}
 	return nil

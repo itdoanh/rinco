@@ -2,7 +2,6 @@ package pagination
 
 import (
 	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,8 +22,8 @@ func TestEncodeDecodeCursor(t *testing.T) {
 	require.NoError(t, DecodeCursor(cur, &out))
 	assert.Equal(t, in, out)
 
-	// Tampered cursor
-	bad := Cursor(strings.Replace(string(cur), "a", "Z", 1))
+	// Tampered cursor (flip first char to detect tampering)
+	bad := Cursor("Z" + string(cur)[1:])
 	var out2 payload
 	assert.Error(t, DecodeCursor(bad, &out2))
 

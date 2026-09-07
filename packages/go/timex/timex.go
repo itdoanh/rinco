@@ -144,39 +144,55 @@ func HumanizeDuration(d time.Duration) string {
 	if neg {
 		sb.WriteString("-")
 	}
-	switch {
-	case d >= 365*24*time.Hour:
+	if d >= 365*24*time.Hour {
 		years := int(d / (365 * 24 * time.Hour))
 		fmt.Fprintf(&sb, "%dy", years)
 		d -= time.Duration(years) * 365 * 24 * time.Hour
-		fallthrough
-	case d >= 30*24*time.Hour:
+	}
+	if d >= 30*24*time.Hour {
 		months := int(d / (30 * 24 * time.Hour))
 		fmt.Fprintf(&sb, "%dmo", months)
 		d -= time.Duration(months) * 30 * 24 * time.Hour
-		fallthrough
-	case d >= 7*24*time.Hour:
+		// After month, show days only (skip weeks) so 45d -> 1mo15d
+		if d >= 24*time.Hour {
+			days := int(d / (24 * time.Hour))
+			fmt.Fprintf(&sb, "%dd", days)
+			d -= time.Duration(days) * 24 * time.Hour
+		}
+	} else if d >= 7*24*time.Hour {
+		// No month — show weeks
 		weeks := int(d / (7 * 24 * time.Hour))
 		fmt.Fprintf(&sb, "%dw", weeks)
 		d -= time.Duration(weeks) * 7 * 24 * time.Hour
-		fallthrough
-	case d >= 24*time.Hour:
+		if d >= 24*time.Hour {
+			days := int(d / (24 * time.Hour))
+			fmt.Fprintf(&sb, "%dd", days)
+			d -= time.Duration(days) * 24 * time.Hour
+		}
+	}
+	if d >= 24*time.Hour {
 		days := int(d / (24 * time.Hour))
 		fmt.Fprintf(&sb, "%dd", days)
 		d -= time.Duration(days) * 24 * time.Hour
-		fallthrough
-	case d >= time.Hour:
+	}
+	if d >= time.Hour {
 		hours := int(d / time.Hour)
 		fmt.Fprintf(&sb, "%dh", hours)
 		d -= time.Duration(hours) * time.Hour
-		fallthrough
-	case d >= time.Minute:
+	}
+	if d >= time.Minute {
 		mins := int(d / time.Minute)
 		fmt.Fprintf(&sb, "%dm", mins)
 		d -= time.Duration(mins) * time.Minute
-		fallthrough
-	case d >= time.Second:
-		fmt.Fprintf(&sb, "%ds", int(d/time.Second))
+	}
+	if d >= time.Second {
+		secs := int(d / time.Second)
+		if secs > 0 {
+			fmt.Fprintf(&sb, "%ds", secs)
+		}
+	}
+	if sb.Len() == 0 || (neg && sb.Len() == 1) {
+		sb.WriteString("0s")
 	}
 	return sb.String()
 }

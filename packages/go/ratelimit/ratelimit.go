@@ -208,11 +208,14 @@ func (f *FixedWindow) AllowN(ctx context.Context, key string, n int) (Decision, 
 	allowed := int(count) <= f.maxN
 	retryAfter := time.Duration(0)
 	if !allowed {
-		retryAfter = bucket*int64(f.window/time.Second) + int64(f.window/time.Second) - now.Unix()
-		if retryAfter < 0 {
-			retryAfter = 0
+		// Compute retry-after as Duration
+		windowSec := int64(f.window / time.Second)
+		nextBucket := bucket + windowSec
+		retryAfterSec := nextBucket - now.Unix()
+		if retryAfterSec < 0 {
+			retryAfterSec = 0
 		}
-		retryAfter *= time.Second
+		retryAfter = time.Duration(retryAfterSec) * time.Second
 	}
 	return Decision{
 		Allowed:    allowed,

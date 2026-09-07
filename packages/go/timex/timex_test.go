@@ -74,8 +74,10 @@ func TestISOFormatting(t *testing.T) {
 }
 
 func TestISOWeekAndDayOfWeek(t *testing.T) {
+	// ISO Week 1 of 2026 starts Mon 2025-12-29 (since Jan 1 2026 is Thu).
+	// Mon 2026-01-05 belongs to ISO Week 2.
 	mon := time.Date(2026, 1, 5, 12, 0, 0, 0, time.UTC) // Monday
-	assert.Equal(t, 1, ISOWeek(mon))
+	assert.Equal(t, 2, ISOWeek(mon))
 	assert.Equal(t, 1, ISODayOfWeek(mon))
 
 	sun := time.Date(2026, 1, 4, 12, 0, 0, 0, time.UTC) // Sunday
