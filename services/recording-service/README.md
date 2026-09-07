@@ -1,145 +1,122 @@
-# Recording Service
+# Recording Service – GPU-accelerated egress + tiered S3 storage + STT
 
-Service thu và lưu trữ recordings cho WebRTC meetings, sử dụng MinIO/S3 storage.
+Egress pipeline for the WebRTC SFU. Receives RTP streams from one or more
+meetings, composites them, muxes audio, encodes the result to MP4, and
+uploads the finished recording to a multi-bucket S3-compatible store.
+Optionally transcribes the audio via the `stt-service`.
 
-## Tính năng
+## Highlights
 
-- **Multipart Upload**: Hỗ trợ upload file lớn (lên đến 1GB+)
-- **MinIO/S3 Storage**: Lưu trữ object storage với presigned URLs
-- **Recording Metadata**: Lưu thông tin (room_id, user_id, duration, size)
-- **Presigned Download**: Tạo URL download có thời hạn
-- **GraphQL API**: Query recordings theo room/tenant
-- **Storage Lifecycle**: TTL và archival policies
-- **Multi-tenant**: Tenant isolation trong storage paths
+- **Egress worker** (`egress::worker`): spawns per room, accepts video
+  frames + audio frames, finalises when the meeting ends.
+- **Compositor** (`egress::compositor`): CPU `image`-based blit with
+  `Gallery` and `Focused` layouts. GPU backend behind `gpu` feature
+  flag (falls back to CPU when disabled or when no CUDA device is
+  available).
+- **Audio mixer** (`egress::audio_mixer`): N input streams → 1 stereo
+  track at the target sample rate, with simple linear resampling.
+- **Uploader** (`egress::uploader`): encodes the final MP4 via
+  `ffmpeg-next` (optional `ffmpeg` feature). When ffmpeg is disabled
+  the encoder emits a placeholder buffer so the rest of the pipeline
+  remains testable.
+- **AI pipeline** (`egress::ai_pipeline`): posts audio to the STT
+  service and persists the returned transcript.
+- **Tiered storage** (`storage::tiered`): hot (SSD) → cold (HDD) →
+  deep (Glacier) transitions. Each tier has its own bucket.
+- **Background jobs** (`jobs`):
+  - `transition` – daily sweep that moves objects between tiers based
+    on age.
+  - `transcript_indexer` – pushes transcript segments into Meilisearch
+    / OpenSearch.
+- **PostgreSQL metadata** (`storage::metadata`): durable metadata store
+  via `sqlx`. An `InMemoryMetadata` shim is included for local dev.
 
-## Công nghệ
-
-- **Language**: Rust 1.75+
-- **Framework**: Axum
-- **S3 Client**: aws-sdk-s3 (compatible với MinIO)
-- **Storage**: MinIO (local) hoặc AWS S3 (production)
-
-## API Endpoints
-
-```
-POST   /upload                                - Upload recording (multipart)
-GET    /download/:recording_id                - Get presigned download URL
-GET    /graphql                               - GraphQL API
-GET    /health                                - Health check
-```
-
-### GraphQL
-
-```graphql
-type RecordingInfo {
-  id: UUID!
-  room_id: UUID!
-  filename: String!
-  size_bytes: BigInt!
-  duration_seconds: Int!
-  status: RecordingStatus!
-  created_at: DateTime!
-  download_url: String
-  expires_at: DateTime
-}
-
-enum RecordingStatus {
-  PENDING
-  RECORDING
-  PROCESSING
-  COMPLETED
-  FAILED
-}
-
-type Query {
-  recording(id: UUID!): RecordingInfo
-  roomRecordings(roomId: UUID!): [RecordingInfo!]!
-}
-
-type Mutation {
-  createRecording(input: CreateRecordingInput!): RecordingInfo!
-  updateRecording(
-    id: UUID!,
-    size_bytes: BigInt!,
-    duration_seconds: Int!
-  ): Boolean!
-}
-```
-
-## Upload Format
-
-Multipart form-data:
+## Module layout
 
 ```
-POST /upload
-Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
-
-------WebKitFormBoundary
-Content-Disposition: form-data; name="recording_id"
-
-uuid
-------WebKitFormBoundary
-Content-Disposition: form-data; name="filename"
-
-meeting_2026_09_07.webm
-------WebKitFormBoundary
-Content-Disposition: form-data; name="room_id"
-
-uuid
-------WebKitFormBoundary
-Content-Disposition: form-data; name="tenant_id"
-
-uuid
-------WebKitFormBoundary
-Content-Disposition: form-data; name="file"; filename="recording.webm"
-Content-Type: video/webm
-
-[binary data]
-------WebKitFormBoundary--
+src/
+├── main.rs                       # actix-web server
+├── lib.rs                        # Re-exports
+├── config.rs                     # Env-driven configuration
+├── error.rs                      # RecordingError + RecordingResult
+├── observability.rs              # OTel + Prometheus
+├── storage/
+│   ├── tiered.rs                 # Multi-bucket S3 client
+│   └── metadata.rs               # RecordingRow + InMemoryMetadata
+├── egress/
+│   ├── worker.rs                 # EgressWorker lifecycle
+│   ├── compositor.rs             # Video frame composite
+│   ├── audio_mixer.rs            # N→1 audio mix
+│   ├── uploader.rs               # MP4 mux + S3 upload
+│   └── ai_pipeline.rs            # STT integration
+├── api/recording_service.rs      # Connect-RPC RecordingService
+└── jobs/
+    ├── transition.rs             # Tier lifecycle
+    └── transcript_indexer.rs     # Search indexing
+migrations/0001_recordings.sql    # PostgreSQL schema
 ```
 
-## Storage Structure
+## Endpoints
 
-```
-s3://recordings/
-├── recordings/
-│   ├── {tenant_id}/
-│   │   ├── {room_id}/
-│   │   │   ├── {recording_id}/
-│   │   │   │   ├── meeting_001.webm
-│   │   │   │   ├── meeting_001.meta.json
-```
+| Path                                       | Method | Purpose                            |
+|--------------------------------------------|--------|------------------------------------|
+| `/healthz`                                 | GET    | Liveness                           |
+| `/readyz`                                  | GET    | Readiness                          |
+| `/metrics`                                 | GET    | Prometheus exposition              |
+| `/v1/recordings/start`                     | POST   | Start recording (Connect-RPC)      |
+| `/v1/recordings/stop`                      | POST   | Stop recording                     |
+| `/v1/recordings`                           | GET    | List recordings                    |
+| `/v1/recordings/{id}`                      | GET    | Recording detail                   |
+| `/v1/recordings/{id}/delete`               | POST   | Delete recording                   |
+| `/v1/recordings/{id}/transcript`           | GET    | Transcript URL                     |
+| `/v1/recordings/{id}/tier`                 | POST   | Update tier (hot/cold/deep)        |
 
-## Environment Variables
+## Connect-RPC `RecordingService`
 
-```bash
-RECORDING_SERVICE_PORT=8083
-MINIO_ENDPOINT=http://minio:9000
-AWS_REGION=us-east-1
-MINIO_ACCESS_KEY=minioadmin
-MINIO_SECRET_KEY=minioadmin
-MINIO_BUCKET=recordings
-MAX_UPLOAD_SIZE=1073741824  # 1GB
-PRESIGNED_URL_TTL=3600
-```
+| RPC              | Request                  | Response                |
+|------------------|--------------------------|-------------------------|
+| StartRecording   | StartRecordingRequest    | StartRecordingResponse  |
+| StopRecording    | StopRecordingRequest     | Empty                   |
+| GetRecording     | GetRecordingRequest      | GetRecordingResponse    |
+| ListRecordings   | ListRecordingsRequest    | ListRecordingsResponse  |
+| DeleteRecording  | DeleteRecordingRequest   | Empty                   |
+| GetTranscript    | GetTranscriptRequest     | GetTranscriptResponse   |
+| UpdateTier       | UpdateTierRequest        | Empty                   |
 
-## Performance
+## Environment variables
 
-- **Upload throughput**: 200MB/s/instance
-- **Concurrent uploads**: 50+
-- **Storage cost**: ~$0.023/GB/month (S3 Standard)
-- **Retrieval latency**: < 100ms (presigned URL)
+| Key                            | Default                                                |
+|--------------------------------|--------------------------------------------------------|
+| `RECORDING_HTTP_ADDR`          | `0.0.0.0:8085`                                         |
+| `RECORDING_DATABASE_URL`       | `postgres://rinco:rinco@postgres:5432/rinco_recordings`|
+| `RECORDING_VALKEY_URL`         | `redis://valkey:6379`                                  |
+| `RECORDING_NATS_URL`           | `nats://nats:4222`                                     |
+| `RECORDING_S3_ENDPOINT`        | `http://minio:9000`                                    |
+| `RECORDING_S3_REGION`          | `us-east-1`                                            |
+| `RECORDING_S3_ACCESS_KEY`      | `minioadmin`                                           |
+| `RECORDING_S3_SECRET_KEY`      | `minioadmin`                                           |
+| `RECORDING_S3_HOT_BUCKET`      | `rinco-recordings-hot`                                 |
+| `RECORDING_S3_COLD_BUCKET`     | `rinco-recordings-cold`                                |
+| `RECORDING_S3_DEEP_BUCKET`     | (none)                                                 |
+| `RECORDING_GPU_AVAILABLE`      | `false`                                                |
+| `RECORDING_STT_RPC_URL`        | `http://stt-service:8086`                              |
+| `RECORDING_OTLP_ENDPOINT`      | `http://otel-collector:4317`                           |
 
-## Development
+## Tier policy
+
+| Age        | Tier  | Bucket                       |
+|------------|-------|------------------------------|
+| 0 – 30 d   | Hot   | `rinco-recordings-hot`       |
+| 30 – 365 d | Cold  | `rinco-recordings-cold`      |
+| > 365 d    | Deep  | `rinco-recordings-deep` (or cold fallback) |
+
+## Build
 
 ```bash
 cargo build --release
-cargo run --release
+cargo test
 ```
 
-## Cost Optimization
+## Commit
 
-1. **S3 Intelligent-Tiering**: Auto-move infrequent recordings
-2. **Glacier**: Archive recordings > 90 days
-3. **Compression**: Use VP9/AV1 for 50% size reduction
-4. **CDN**: CloudFront for distribution
+`feat(recording-service): GPU-accelerated egress (NVENC), tiered S3 storage, STT pipeline`

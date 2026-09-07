@@ -1,30 +1,109 @@
 [package]
 name = "recording-service"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.81"
+description = "RINCO Recording Service – GPU-accelerated egress + tiered S3 storage + STT"
+license = "Proprietary"
 
 [[bin]]
 name = "recording-service"
 path = "src/main.rs"
 
+[lib]
+name = "recording_service"
+path = "src/lib.rs"
+
+[features]
+default = ["sqlx-postgres"]
+# Enable GPU (NVENC) egress. Falls back to CPU composite when off.
+gpu = []
+# Native ffmpeg bindings via ffmpeg-next (requires system ffmpeg).
+ffmpeg = ["dep:ffmpeg-next"]
+# Native OpenCV (CPU) – ffmpeg filters used when disabled.
+opencv = ["dep:opencv"]
+
 [dependencies]
+# Async runtime
 tokio = { version = "1.40", features = ["full"] }
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP – actix-web is the framework of choice for this service.
+actix-web = "4.9"
+actix-cors = "0.7"
+actix-multipart = "0.7"
+actix-rt = "2.10"
+
+# gRPC / Connect-RPC
+tonic = { version = "0.12", features = ["transport", "tls", "gzip"] }
+prost = "0.13"
+prost-types = "0.13"
+
+# Database – PostgreSQL via sqlx.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+] }
+
+# Storage – S3 / MinIO via rust-s3.
+rust-s3 = { version = "0.34", default-features = false, features = ["tokio-rustls-tls"] }
+
+# Media – ffmpeg-next (optional) and image fallback.
+ffmpeg-next = { version = "7.0", optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+opencv = { version = "0.88", optional = true }
+
+# Image / video processing helpers.
+tempfile = "3.10"
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Errors
 anyhow = "1.0"
 thiserror = "2.0"
-aws-config = "1.5"
-aws-sdk-s3 = "1.5"
-aws-sdk-s3output = "1.5"
-aws-smithy-http = "0.60"
-hyper = { version = "1.4", features = ["client", "http1", "http2"] }
-hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
-tower = "0.4"
-futures = "0.3"
+
+# Config
+config = { version = "0.14", default-features = false, features = ["toml", "yaml"] }
+
+# Concurrency primitives
+parking_lot = "0.12"
+dashmap = "6.0"
+
+# Base64 / hex
+base64 = "0.22"
+hex = "0.4"
+
+# Observability
+opentelemetry = { version = "0.24", features = ["trace"] }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.17", features = ["tonic", "trace"] }
+tracing-opentelemetry = "0.25"
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false }
+
+# Async clients
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["test-util", "macros"] }
+mockall = "0.13"
+proptest = "1.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
