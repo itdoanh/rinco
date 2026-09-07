@@ -1,89 +1,72 @@
-# Observability Service
+# observability-service
 
-> **Phân hệ #8 — Self-hosted Observability API** · Aggregates logs (Loki),
-> traces (Jaeger/Tempo), metrics (Prometheus), audit (ClickHouse) vào 1
-> unified REST surface.  Built-in dashboards (Grafana JSON), alert
-> aggregation từ AlertManager webhook.
+Unified self-hosted observability aggregator.  Proxies Loki / Prometheus /
+Jaeger / Tempo, stores application audit (Postgres + ClickHouse rollups) and
+manages AlertManager alerts.
 
-## 1. Endpoints (13)
+## Endpoints
 
-| Method | Path | Mô tả |
-|--------|------|-------|
-| GET | `/health` / `/ready` / `/metrics` | Self health |
-| GET | `/v1/observability/logs` | Query logs (Loki passthrough) |
-| GET | `/v1/observability/traces/:trace_id` | Query trace (Jaeger) |
-| GET | `/v1/observability/metrics` | Query PromQL (`?query=...`) |
-| GET | `/v1/observability/services` | List all services' health (probes `/health` trên 15 service) |
-| GET | `/v1/observability/services/:service` | Health check 1 service |
-| GET | `/v1/observability/alerts/active` | Active alerts |
-| POST | `/v1/observability/alerts/ack/:id` | Ack 1 alert |
-| GET | `/v1/observability/audit/logs` | ClickHouse audit query |
-| POST | `/v1/observability/webhook/alertmanager` | AlertManager webhook receiver |
-| GET | `/v1/observability/dashboards` | List auto-generated Grafana dashboards |
-| GET | `/v1/observability/dashboards/:name` | Dashboard JSON (`overview`, `service-latency`, `ai-sre`, ...) |
+| Method | Path                                | Backend |
+|--------|------------------------------------|--------|
+| GET    | `/healthz`                         | local |
+| GET    | `/readyz`                          | local + pool ping |
+| GET    | `/metrics`                         | Prometheus exposition |
+| GET    | `/v1/logs`                         | Loki `query_range` |
+| GET    | `/v1/logs/aggregate`               | Loki LogQL aggregate |
+| GET    | `/v1/traces/:trace_id`             | Jaeger `/api/traces/{id}` |
+| GET    | `/v1/traces`                       | Jaeger search |
+| GET    | `/v1/metrics`                      | PromQL instant query |
+| GET    | `/v1/metrics/range`                | PromQL range query |
+| GET    | `/v1/services`                     | Prom `up{}` + alert count |
+| GET    | `/v1/services/:service/health`     | Prom summary |
+| GET    | `/v1/alerts/active`                | Postgres `observability.alerts` |
+| GET    | `/v1/alerts`                       | Postgres history |
+| POST   | `/v1/alerts/:id/ack`               | Postgres |
+| GET    | `/v1/audit/logs`                   | Postgres `observability.audit_logs` |
+| POST   | `/v1/webhook/alertmanager`         | AlertManager v4 receiver |
+| POST   | `/internal/observability.v1.*`     | Connect-RPC adapter |
 
-## 2. Upstream backends
+## Configuration
 
-| Backend   | URL env var           | Default                  |
-|-----------|-----------------------|--------------------------|
-| Loki      | `LOKI_URL`            | `http://loki:3100`       |
-| Jaeger    | `JAEGER_URL`          | `http://jaeger:16686`    |
-| Prometheus| `PROM_URL`            | `http://prometheus:9090` |
-| ClickHouse| `CLICKHOUSE_URL`      | `http://clickhouse:8123` |
+| Env var                          | Default                       | Purpose |
+|----------------------------------|-------------------------------|---------|
+| `OBSERVABILITY_HTTP_ADDR`        | `:8099`                       | HTTP listen addr |
+| `OBSERVABILITY_DATABASE_URL`     | —                             | alerts + audit storage |
+| `OBSERVABILITY_CLICKHOUSE_URL`   | `http://localhost:8123`       | audit rollups (HTTP gateway) |
+| `OBSERVABILITY_PROMETHEUS_URL`   | `http://localhost:9090`       | metrics |
+| `OBSERVABILITY_LOKI_URL`         | `http://localhost:3100`       | logs |
+| `OBSERVABILITY_JAEGER_URL`       | `http://localhost:16686`      | traces |
+| `OBSERVABILITY_TEMPO_URL`        | `http://localhost:3200`       | trace search fallback |
+| `OBSERVABILITY_FANOUT_WEBHOOK`   | —                             | where to POST alert payloads (Slack/…) |
+| `OBSERVABILITY_RATE_LIMIT`       | `600`                         | per-tenant per-route req/min |
 
-Service URL overrides: `AUTH_URL`, `CRM_URL`, `DMS_URL`, ...
+## Data model
 
-## 3. AlertManager Integration
+Postgres:
 
-Register AlertManager webhook tới `/v1/observability/webhook/alertmanager` →
-service sẽ tự dedupe theo `service + alertname` và emit "firing/resolved"
-events.  POST `/v1/observability/alerts/ack/:id` để ack.
+* `observability.alerts(id, fingerprint, status, severity, labels, annotations,
+  service, tenant_id, title, message, fired_at, resolved_at, ack_by, ack_at)`
+* `observability.alert_history(alert_id, event, payload, ts)`
+* `observability.audit_logs(tenant_id, actor_user_id, actor_ip, action,
+  resource_type, resource_id, payload, ts)`
+* `observability.service_health_cache(service, status, error_rate, p99_latency,
+  active_alerts, updated_at)`
 
-## 4. Examples
+ClickHouse (`observability` database, applied on startup when reachable):
 
-### Logs
+* `app_audit_logs` (MergeTree PARTITION BY toYYYYMM(ts))
+* `app_incidents`  (MergeTree PARTITION BY toYYYYMM(started_at))
+* `app_metric_rollup` (MergeTree PARTITION BY toYYYYMM(ts))
+
+## Build
+
 ```bash
-curl 'http://localhost:8089/v1/observability/logs?service=auth-service&limit=50&filter=login' | jq
+go build ./...
+go vet ./...
 ```
 
-### Trace
-```bash
-curl 'http://localhost:8089/v1/observability/traces/018f3a9b-7c1e-7000-...'
-```
-
-### Metric (PromQL)
-```bash
-curl 'http://localhost:8089/v1/observability/metrics?query=up' | jq .data.result
-```
-
-### Services
-```bash
-curl http://localhost:8089/v1/observability/services | jq
-```
-
-### Alert ack
-```bash
-curl -X POST http://localhost:8089/v1/observability/alerts/ack/auth-service%2FHighErrorRate \
-  -H 'Content-Type: application/json' -d '{"user_id":"u-1"}'
-```
-
-### Grafana Dashboard JSON
-```bash
-curl http://localhost:8089/v1/observability/dashboards/service-latency > /tmp/dash.json
-# import vào Grafana qua HTTP API hoặc file mount.
-```
-
-## 5. ENV
-
-| Var | Default |
-|-----|---------|
-| `PORT` | `8089` |
-| `LOKI_URL` / `JAEGER_URL` / `PROM_URL` / `CLICKHOUSE_URL` | Docker service names |
-| `AUTH_URL` / `CRM_URL` / `DMS_URL` / `LANDING_URL` / `EMAIL_URL` / `NOTIF_URL` / `LEAD_SCORE_URL` / `AI_SRE_URL` / `RAG_URL` / `STT_URL` / `REC_URL` / `CHAT_URL` / `SFU_URL` / `TENANT_URL` | per-service probe URLs |
-
-## 6. Run
+Multi-stage Docker:
 
 ```bash
-cd services/observability-service
-go build ./cmd && ./observability-service
+docker build -f services/observability-service/Dockerfile -t rinco/observability-service .
 ```
