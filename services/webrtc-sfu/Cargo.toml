@@ -1,28 +1,88 @@
 [package]
 name = "webrtc-sfu"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
+rust-version = "1.81"
+description = "RINCO WebRTC SFU with AV1/VP9 SVC, SRTP forwarder, bandwidth adaptation"
+license = "Proprietary"
 
 [[bin]]
 name = "webrtc-sfu"
 path = "src/main.rs"
 
+[lib]
+name = "webrtc_sfu"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Enable native webrtc crate. Disabled by default to keep `cargo check` quick
+# (the crate needs system OpenSSL + libdatachannel).
+webrtc = ["dep:webrtc"]
+# Optional str0m-based alternative SFU. Selected by `--features str0m`.
+str0m = []
+# SVC heuristics
+svc = []
+
 [dependencies]
+# Async runtime
 tokio = { version = "1.40", features = ["full"] }
-axum = "0.7"
-tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-uuid = { version = "1.10", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-anyhow = "1.0"
-thiserror = "2.0"
-async-graphql = "7.0"
-async-graphql-axum = "7.0"
+tokio-tungstenite = "0.24"
+tokio-stream = "0.1"
 futures = "0.3"
+async-trait = "0.1"
+
+# HTTP / WS
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "limit"] }
+hyper = "1.4"
+
+# gRPC / Connect-RPC
+tonic = { version = "0.12", features = ["transport", "tls", "gzip"] }
+prost = "0.13"
+prost-types = "0.13"
+
+# Concurrency primitives
 parking_lot = "0.12"
 dashmap = "6.0"
-webrtc = "0.10"
+bytes = "1.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Errors
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Config
+config = { version = "0.14", default-features = false, features = ["toml", "yaml"] }
+
+# WebRTC (optional – behind feature flag).
+webrtc = { version = "0.11", optional = true }
+
+# Metrics + tracing
+opentelemetry = { version = "0.24", features = ["trace"] }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.17", features = ["tonic", "trace"] }
+tracing-opentelemetry = "0.25"
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1.40", features = ["test-util", "macros"] }
+mockall = "0.13"
+proptest = "1.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
