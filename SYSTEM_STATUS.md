@@ -643,7 +643,8 @@ All tests passing across 10+ Go modules. Build verified on all services.
 **Test coverage**: **Adequate+** for MVP — packages fully tested, services have handler + db tests. **Loop summary**:
 - Loop 3: +68 unit tests (crm, lead, tenant, analytics, meta-capi, observability, email)
 - Loop 4: +13 unit tests (landing-service handler + storage)
-- Total: **81+ unit tests added across 8 services**
+- Loop 8: +32 unit tests (dynamic-model-service validator + search-service handler)
+- Total: **113+ unit tests added across 10 services**
 
 **Build verification**: All 13 Go services build cleanly. All tests pass.
 
