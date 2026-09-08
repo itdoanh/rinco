@@ -201,6 +201,45 @@ services:
     networks:
       - rinco-net
 
+  analytics-service:
+    build: ./services/analytics-service
+    container_name: rinco-analytics-service
+    restart: unless-stopped
+    environment:
+      ENV: production
+      CLICKHOUSE_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_DATABASE: analytics
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+    ports:
+      - "8099:8099"
+    depends_on:
+      clickhouse:
+        condition: service_started
+    networks:
+      - rinco-net
+
+  meta-capi-service:
+    build: ./services/meta-capi-service
+    container_name: rinco-meta-capi-service
+    restart: unless-stopped
+    environment:
+      ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rinco
+      DB_PASSWORD: rinco_dev_password
+      DB_NAME: rinco
+      DB_SSLMODE: disable
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
+    ports:
+      - "8100:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
   # ============================================================
   # Rust Services
   # ============================================================

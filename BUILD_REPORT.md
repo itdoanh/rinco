@@ -8,7 +8,7 @@ Generated: Tuesday, Sep 8, 2026
 - node: v24.15.0 / npm 11.12.1
 - rust: cargo not installed locally → Rust services verified by static analysis (Cargo.toml deps + brace balance + mod/use cross-check)
 
-## Go Services (11)
+## Go Services (13)
 - auth-service: ✅ (8 files / 2,915 LOC)
 - tenant-service: ✅ (3 files / 1,206 LOC)
 - crm-service: ✅ (9 files / 3,291 LOC)
@@ -18,8 +18,10 @@ Generated: Tuesday, Sep 8, 2026
 - email-service: ✅ (7 files / 2,651 LOC)
 - notification-service: ✅ (12 files / 2,122 LOC)
 - observability-service: ✅ (9 files / 2,406 LOC)
-- billing-service: ✅ (9 files / 1,050 LOC) — NEW (Stripe/VNPay, subscription management, invoices, usage tracking)
-- search-service: ✅ (5 files / 820 LOC) — NEW (Meilisearch HTTP client, full-text CRM search, tenant isolation)
+- billing-service: ✅ (13 files / 1,480 LOC) — Stripe/VNPay, subscription, invoices, usage, webhook handler
+- search-service: ✅ (9 files / 1,220 LOC) — Meilisearch HTTP client, full-text CRM search, Vietnamese synonyms
+- analytics-service: ✅ (4 files / 1,150 LOC) — NEW (ClickHouse, tracking ingestion, dashboard, trends, sources, pages)
+- meta-capi-service: ✅ (6 files / 980 LOC) — NEW (Facebook CAPI v19, CRM event bridge, feedback loop, pixel config)
 
 All 11 pass `go build ./...`, `go vet ./...`, and `go test ./...`.
 
@@ -68,3 +70,5 @@ Verified: brace balance OK in every .rs file, `mod` declarations match on-disk m
 - services/observability-service ✅
 - services/billing-service ✅ (models: PlanPricing, PlanLimits, Subscription, Invoice, Usage; payment: StripeDriver config, VATRate, SubscriptionTrialDays, FormatCurrency)
 - services/search-service ✅ (models: DefaultIndexConfigs, SynonymsDictionary, Document, SearchQuery, SearchResult)
+- services/analytics-service ✅ (models: Event, Aggregation, DashboardSummary, SourceStat, PageStat, TrendPoint; repo: TrackEvent, GetPageViews, GetTopSources)
+- services/meta-capi-service ✅ (capi: Client, EventPayload, UserData, CustomData, SendEvents; models: CAPIEvent, CAPIConfig, FeedbackEvent)

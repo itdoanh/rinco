@@ -34,7 +34,7 @@ jobs:
 
       - name: Run linters
         run: |
-          for svc in services/auth-service services/tenant-service services/crm-service services/dynamic-model-service services/lead-service services/landing-service services/email-service services/notification-service services/observability-service services/billing-service services/search-service; do
+          for svc in services/auth-service services/tenant-service services/crm-service services/dynamic-model-service services/lead-service services/landing-service services/email-service services/notification-service services/observability-service services/billing-service services/search-service services/analytics-service services/meta-capi-service; do
             if [ -d "$svc" ] && [ -f "$svc/go.mod" ]; then
               echo "==> Linting $svc"
               (cd $svc && go vet ./... 2>&1) || true
@@ -64,6 +64,8 @@ jobs:
           - services/observability-service
           - services/billing-service
           - services/search-service
+          - services/analytics-service
+          - services/meta-capi-service
     steps:
       - uses: actions/checkout@v4
 
