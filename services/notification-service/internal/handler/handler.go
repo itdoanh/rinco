@@ -119,29 +119,44 @@ func (s *Server) resolveSubtreeByPath(ctx context.Context, tenantID, rootPath st
 	return out
 }
 
+// setRLS applies RLS context with parameterized queries (SQL-injection-safe).
+//
+// KNOWN LIMITATION: SET LOCAL outside a tx has no effect — same as crm-
+// service. The variables die with the tx commit below. Subsequent handler
+// queries on a different pool conn see NULL settings, so RLS policies may
+// not match. Architectural refactor pending.
 func (s *Server) setRLS(ctx context.Context, tenantID, userID string, isAdmin bool) error {
 	if tenantID == "" {
 		return fmt.Errorf("tenant_id missing")
+	}
+	if _, err := uuid.Parse(tenantID); err != nil {
+		return fmt.Errorf("invalid tenant_id: %w", err)
 	}
 	adminVal := "false"
 	if isAdmin {
 		adminVal = "true"
 	}
-	if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_tenant_id = '%s'", esc(tenantID))); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant_id', $1, true)", tenantID); err != nil {
 		return err
 	}
 	if userID != "" {
-		if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_user_id = '%s'", esc(userID))); err != nil {
+		if _, err := uuid.Parse(userID); err != nil {
+			return fmt.Errorf("invalid user_id: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID); err != nil {
 			return err
 		}
 	}
-	if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.is_admin = '%s'", adminVal)); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_admin', $1, true)", adminVal); err != nil {
 		return err
 	}
-	return nil
+	return tx.Commit(ctx)
 }
-
-func esc(s string) string { return strings.ReplaceAll(s, "'", "''") }
 
 // =============================================================================
 // Common types

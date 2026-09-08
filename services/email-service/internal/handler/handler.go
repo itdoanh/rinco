@@ -83,25 +83,34 @@ func (s *Server) setRLS(ctx context.Context, tenantID, userID string, isAdmin bo
 	if tenantID == "" {
 		return fmt.Errorf("tenant_id missing")
 	}
-	if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_tenant_id = '%s'", escapeSingle(tenantID))); err != nil {
-		return err
-	}
-	if userID != "" {
-		if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_user_id = '%s'", escapeSingle(userID))); err != nil {
-			return err
-		}
+	if _, err := uuid.Parse(tenantID); err != nil {
+		return fmt.Errorf("invalid tenant_id: %w", err)
 	}
 	adminVal := "false"
 	if isAdmin {
 		adminVal = "true"
 	}
-	if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.is_admin = '%s'", adminVal)); err != nil {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant_id', $1, true)", tenantID); err != nil {
 		return err
 	}
-	return nil
+	if userID != "" {
+		if _, err := uuid.Parse(userID); err != nil {
+			return fmt.Errorf("invalid user_id: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_admin', $1, true)", adminVal); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
-
-func escapeSingle(v string) string { return strings.ReplaceAll(v, "'", "''") }
 
 // =============================================================================
 // Common types

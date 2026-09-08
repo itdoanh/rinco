@@ -49,13 +49,35 @@ func (s *Server) tenantFromCtx(c echo.Context) (tenantID, userID string, isAdmin
 	return
 }
 
-// Helper to set RLS context.
+// Helper to set RLS context with parameterized queries (SQL-injection-safe).
+//
+// KNOWN LIMITATION: Same as crm-service: SET LOCAL outside a tx has no
+// effect. The variables are bound to a tx that's immediately committed,
+// so subsequent handler queries on a different pool conn still see NULL.
+//
+// SQL injection is prevented by:
+//   1. UUID-format validation for tenant_id/user_id
+//   2. Parameterized queries via set_config()
 func (s *Server) setRLS(ctx context.Context, tenantID, userID string, isAdmin bool) error {
-	if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_tenant_id = '%s'", tenantID)); err != nil {
+	if tenantID == "" {
+		return errors.New("setRLS: tenantID is required")
+	}
+	if _, err := uuid.Parse(tenantID); err != nil {
+		return fmt.Errorf("setRLS: invalid tenant_id: %w", err)
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant_id', $1, true)", tenantID); err != nil {
 		return fmt.Errorf("set tenant: %w", err)
 	}
 	if userID != "" {
-		if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_user_id = '%s'", userID)); err != nil {
+		if _, err := uuid.Parse(userID); err != nil {
+			return fmt.Errorf("setRLS: invalid user_id: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID); err != nil {
 			return fmt.Errorf("set user: %w", err)
 		}
 	}
@@ -63,10 +85,10 @@ func (s *Server) setRLS(ctx context.Context, tenantID, userID string, isAdmin bo
 	if isAdmin {
 		adminVal = "true"
 	}
-	if _, err := s.pool.Exec(ctx, fmt.Sprintf("SET LOCAL app.is_admin = '%s'", adminVal)); err != nil {
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_admin', $1, true)", adminVal); err != nil {
 		return fmt.Errorf("set admin: %w", err)
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // Pagination helper.

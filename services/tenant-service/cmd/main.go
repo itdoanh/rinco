@@ -144,7 +144,13 @@ func (s *server) withTenant(ctx context.Context, tenantID string, fn func(pgx.Tx
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if tenantID != "" {
-		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL app.current_tenant_id = '%s'", sanitize(tenantID))); err != nil {
+		// Validate UUID format and use parameterized SET LOCAL to prevent
+		// SQL injection. set_config(name, value, is_local=true) is the safe
+		// equivalent of SET LOCAL.
+		if _, err := uuid.Parse(tenantID); err != nil {
+			return fmt.Errorf("withTenant: invalid tenant_id: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant_id', $1, true)", tenantID); err != nil {
 			return err
 		}
 	}
@@ -152,16 +158,6 @@ func (s *server) withTenant(ctx context.Context, tenantID string, fn func(pgx.Tx
 		return err
 	}
 	return tx.Commit(ctx)
-}
-
-func sanitize(s string) string {
-	out := make([]byte, 0, len(s))
-	for _, c := range []byte(s) {
-		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-' {
-			out = append(out, c)
-		}
-	}
-	return string(out)
 }
 
 // =============================================================================
