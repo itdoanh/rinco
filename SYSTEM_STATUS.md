@@ -652,7 +652,10 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 13: +22 unit tests (lead-service platform)
 - Loop 14: +21 unit tests (crm-service platform)
 - Loop 15: +30 unit tests (dynamic-model/analytics/meta-capi models + dynamic-model platform)
-- Total: **247+ unit tests added across 18 modules**
+- Loop 15b: +9 files (.gitignore fix + 4 Go models.go + 4 Go models_test.go tracked)
+- Loop 15c: +2 files (lead-scoring Python models tracked)
+- Loop 16: +18 unit tests (billing/email handler tests)
+- Total: **265+ unit tests added across 20 modules**
 
 **Build verification**: All 13 Go services build cleanly. All tests pass.
 
