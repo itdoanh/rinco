@@ -499,7 +499,7 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `services/auth-service` | 2 | ✅ Platform + integration |
 | `services/crm-service` | 2 | ✅ Handler + db (Loop 3: 15 tests) |
 | `services/lead-service` | 1 | ✅ db (Loop 3) |
-| `services/landing-service` | 0 | ❌ |
+| `services/landing-service` | 2 | ✅ Handler + storage tiered (Loop 4: 13 tests) |
 | `services/email-service` | 1 | ✅ Tracking pixel (Loop 3) |
 | `services/notification-service` | 1 | ✅ Audience parsing |
 | `services/tenant-service` | 1 | ✅ 14 tests (Loop 3) |
