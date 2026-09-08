@@ -65,7 +65,10 @@ func New(pool *pgxpool.Pool, mongoClient *mongo.Client, store *storage.TieredSto
 func (s *Server) dispatchCAPI() {
 	for event := range s.queue {
 		if err := s.sendCAPI(event); err != nil {
-			fmt.Println("capi dispatch error", err)
+			slog.Error("capi dispatch error",
+				slog.String("event_id", event.EventID),
+				slog.String("event_name", event.EventName),
+				slog.String("err", err.Error()))
 		}
 	}
 }
