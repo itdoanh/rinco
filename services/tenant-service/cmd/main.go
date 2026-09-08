@@ -4,8 +4,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -297,7 +296,7 @@ func (s *server) adminAuthMW() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			key := c.Request().Header.Get("X-Admin-Key")
-			if key == "" || subtleCompare(key, s.cfg.AdminAPIKey) != 0 {
+			if key == "" || !subtleCompare(key, s.cfg.AdminAPIKey) {
 				return jsonErr(c, 401, "UNAUTHORIZED", "admin key required")
 			}
 			return next(c)
@@ -325,15 +324,11 @@ func (s *server) requireTenantMW() echo.MiddlewareFunc {
 	}
 }
 
-func subtleCompare(a, b string) int {
+func subtleCompare(a, b string) bool {
 	if len(a) != len(b) {
-		return 1
+		return false
 	}
-	var v byte
-	for i := 0; i < len(a); i++ {
-		v |= a[i] ^ b[i]
-	}
-	return int(v)
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // =============================================================================
@@ -1186,8 +1181,3 @@ func main() {
 	}
 	logger.Info("bye")
 }
-
-// Attribute key helper to silence unused import warning.
-var _ = attribute.Key("k")
-var _ = sha256.Sum256
-var _ = hex.EncodeToString
