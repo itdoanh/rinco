@@ -639,6 +639,7 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - landing-service goroutine leak fixed via `Close()` with `sync.Once`
 - auth-service OAuth state map has periodic GC
 - meta-capi-service sampling math corrected
+- observability-service: last `fmt.Println` replaced with structured `slog`
 
 **Test coverage**: **Adequate+** for MVP — packages fully tested, services have handler + db tests. **Loop summary**:
 - Loop 3: +68 unit tests (crm, lead, tenant, analytics, meta-capi, observability, email)

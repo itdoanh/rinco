@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -501,7 +502,7 @@ func (s *Server) WriteAuditFromRequest(c echo.Context, action, resourceType, res
 		Payload:      payload,
 	}
 	if err := s.WriteAudit(c.Request().Context(), rec); err != nil {
-		fmt.Println("audit write failed:", err)
+		slog.Default().Error("audit write failed", slog.String("err", err.Error()))
 	}
 }
 
