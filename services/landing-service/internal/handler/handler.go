@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -39,6 +40,8 @@ type Server struct {
 	appSecret    string
 	trackingSalt string
 	queue        chan capiEvent
+	lifecycleStop chan struct{}
+	closeOnce    sync.Once
 }
 
 type capiEvent struct {
@@ -51,15 +54,27 @@ type capiEvent struct {
 	TenantID, PixelID  string
 }
 
+// Stop channel for lifecycle worker — closed on Close().
 func New(pool *pgxpool.Pool, mongoClient *mongo.Client, store *storage.TieredStore, pixelID, appSecret, salt string) *Server {
 	srv := &Server{
 		pool: pool, mongo: mongoClient, mongoDB: "rinco_landing",
 		store: store, pixelID: pixelID, appSecret: appSecret, trackingSalt: salt,
 		queue: make(chan capiEvent, 1024),
+		lifecycleStop: make(chan struct{}),
 	}
 	go srv.dispatchCAPI()
 	go srv.lifecycleWorker()
 	return srv
+}
+
+// Close gracefully shuts down background goroutines.
+// It closes the CAPI event queue and stops the lifecycle ticker.
+// Idempotent: subsequent calls are no-ops.
+func (s *Server) Close() {
+	s.closeOnce.Do(func() {
+		close(s.queue)
+		close(s.lifecycleStop)
+	})
 }
 
 func (s *Server) dispatchCAPI() {
@@ -75,8 +90,16 @@ func (s *Server) dispatchCAPI() {
 
 func (s *Server) lifecycleWorker() {
 	if s.store == nil || !s.store.Enabled() { return }
-	ticker := time.NewTicker(6 * time.Hour); defer ticker.Stop()
-	for range ticker.C { _ = s.store.MigrateOldObjects(context.Background()) }
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			_ = s.store.MigrateOldObjects(context.Background())
+		case <-s.lifecycleStop:
+			return
+		}
+	}
 }
 
 func (s *Server) sendCAPI(event capiEvent) error {

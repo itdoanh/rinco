@@ -83,8 +83,9 @@ func TestNew_StartsWorkers(t *testing.T) {
 	if s.queue == nil {
 		t.Error("queue should be initialized")
 	}
-	// Close queue to stop dispatchCAPI goroutine.
-	close(s.queue)
+	// Close should not panic; second Close should be safe (channel already closed).
+	s.Close()
+	s.Close() // idempotent check
 }
 
 func TestCAPISendRequest_Binds(t *testing.T) {

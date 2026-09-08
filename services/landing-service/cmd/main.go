@@ -105,6 +105,8 @@ func main() {
 	logger.Info("shutdown requested")
 	shut, cancel := context.WithTimeout(context.Background(), 30*time.Second); defer cancel()
 	if err := e.Shutdown(shut); err != nil { logger.Error("graceful shutdown", slog.String("error", err.Error())) }
+	// Stop background goroutines (dispatchCAPI, lifecycleWorker)
+	srv.Close()
 	logger.Info("landing-service stopped")
 }
 
