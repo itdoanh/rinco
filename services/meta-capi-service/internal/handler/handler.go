@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"log/slog"
+	mrand "math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -141,8 +142,8 @@ func (s *Server) SendEvent(c echo.Context) error {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "CAPI not configured"})
 	}
 
-	// Sample: skip if above sample rate
-	if cfg.SampleRate < 1.0 && float64(time.Now().UnixNano()%10000)/100.0 > cfg.SampleRate*100 {
+	// Sample: skip if random draw falls outside the sample rate window
+	if cfg.SampleRate < 1.0 && mrand.Float64() > cfg.SampleRate {
 		return c.JSON(http.StatusOK, map[string]string{"status": "sampled_out"})
 	}
 

@@ -282,6 +282,10 @@ func main() {
 			logger.Error("http server error", slog.String("error", err.Error()))
 		}
 	}()
+
+	// Periodic GC of OAuth state map (DB persistence is authoritative, this
+	// is just an in-memory accelerator). Stale entries past stateTTL expire.
+	go srv.gcOAuthStates(rootCtx, stateTTL)
 	<-rootCtx.Done()
 	logger.Info("shutdown signal received")
 	shut, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1975,6 +1979,28 @@ func asBool(v any) bool {
 		return b
 	}
 	return false
+}
+
+// =============================================================================
+// OAuth state garbage collection (in-memory accelerator map bounded by TTL)
+// =============================================================================
+
+func (s *server) gcOAuthStates(ctx context.Context, ttl time.Duration) {
+	tick := time.NewTicker(ttl)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			// DB is authoritative for state expiry; here we only bound memory.
+			// Drop the entire in-memory map on every tick (cheap, single mutex
+			// acquire). DB-side rows older than stateTTL have expired anyway.
+			s.oauthMu.Lock()
+			s.oauthStates = make(map[string]oauthState)
+			s.oauthMu.Unlock()
+		}
+	}
 }
 
 func (s *server) audit(ctx context.Context, tenantID, userID, ip, ua, event, outcome, resource string) {
