@@ -644,7 +644,8 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 3: +68 unit tests (crm, lead, tenant, analytics, meta-capi, observability, email)
 - Loop 4: +13 unit tests (landing-service handler + storage)
 - Loop 8: +32 unit tests (dynamic-model-service validator + search-service handler)
-- Total: **113+ unit tests added across 10 services**
+- Loop 9: +33 unit tests (auth API key edge cases + observability rate limit middleware)
+- Total: **146+ unit tests added across 11 modules**
 
 **Build verification**: All 13 Go services build cleanly. All tests pass.
 
