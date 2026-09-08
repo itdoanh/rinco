@@ -44,7 +44,10 @@ type slackBlock struct {
 }
 
 func (c *SlackChannel) Send(ctx context.Context, n Notification) (DeliveryResult, error) {
-	webhook := n.Data["webhook_url"].(string)
+	var webhook string
+	if v, ok := n.Data["webhook_url"]; ok {
+		webhook, _ = v.(string)
+	}
 	if webhook == "" {
 		webhook = c.defaultWebhook
 	}
@@ -104,7 +107,10 @@ type discordEmbed struct {
 }
 
 func (c *DiscordChannel) Send(ctx context.Context, n Notification) (DeliveryResult, error) {
-	webhook := n.Data["webhook_url"].(string)
+	var webhook string
+	if v, ok := n.Data["webhook_url"]; ok {
+		webhook, _ = v.(string)
+	}
 	if webhook == "" {
 		webhook = c.defaultWebhook
 	}

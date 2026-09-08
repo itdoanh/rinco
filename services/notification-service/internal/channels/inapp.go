@@ -45,15 +45,20 @@ func (c *InAppChannel) Send(ctx context.Context, n Notification) (DeliveryResult
 	if n.UserID == "" {
 		return DeliveryResult{Status: "failed", Provider: "in_app"}, fmt.Errorf("user_id required for in_app channel")
 	}
+	// Defensive extraction: Data may be nil and notif_id may be any type.
+	var id string
+	if v, ok := n.Data["notif_id"]; ok {
+		id, _ = v.(string)
+	}
 	payload := inAppPayload{
-		ID:       n.Data["notif_id"].(string),
-		UserID:   n.UserID,
-		Type:     n.Type,
-		Title:    n.Title,
-		Body:     n.Body,
-		Icon:     n.Icon,
-		Data:     n.Data,
-		SentAt:   time.Now(),
+		ID:        id,
+		UserID:    n.UserID,
+		Type:      n.Type,
+		Title:     n.Title,
+		Body:      n.Body,
+		Icon:      n.Icon,
+		Data:      n.Data,
+		SentAt:    time.Now(),
 		ExpiresAt: n.ExpiresAt,
 	}
 	if c.nc == nil {

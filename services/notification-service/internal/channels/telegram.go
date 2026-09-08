@@ -37,7 +37,10 @@ func (c *TelegramChannel) Send(ctx context.Context, n Notification) (DeliveryRes
 	if c.botToken == "" {
 		return DeliveryResult{Status: "failed", Provider: "telegram"}, fmt.Errorf("telegram bot token not configured")
 	}
-	chatID := n.Data["chat_id"].(string)
+	var chatID string
+	if v, ok := n.Data["chat_id"]; ok {
+		chatID, _ = v.(string)
+	}
 	if chatID == "" {
 		return DeliveryResult{Status: "failed", Provider: "telegram"}, fmt.Errorf("chat_id required")
 	}
