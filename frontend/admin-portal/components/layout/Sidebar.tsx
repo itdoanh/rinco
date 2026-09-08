@@ -13,6 +13,8 @@ import {
   Settings,
   FileText,
   Shield,
+  Bell,
+  Flag,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -37,10 +39,14 @@ const navItems = [
     title: "Analytics",
     href: "/analytics",
     icon: BarChart3,
+  },
+  {
+    title: "Notifications",
+    href: "/notifications",
+    icon: Bell,
     children: [
-      { title: "Overview", href: "/analytics" },
-      { title: "Leads", href: "/analytics/leads" },
-      { title: "Traffic", href: "/analytics/traffic" },
+      { title: "Inbox", href: "/notifications" },
+      { title: "Templates", href: "/notification-templates" },
     ],
   },
   {
@@ -57,6 +63,16 @@ const navItems = [
     title: "Audit Log",
     href: "/audit",
     icon: FileText,
+  },
+  {
+    title: "Multi-Party",
+    href: "/quorum",
+    icon: Shield,
+  },
+  {
+    title: "Feature Flags",
+    href: "/feature-flags",
+    icon: Flag,
   },
   {
     title: "Settings",
