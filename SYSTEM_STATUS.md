@@ -656,7 +656,9 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 16: +18 unit tests (billing/email handler tests)
 - Loop 17: +38 unit tests (landing/email platform + observability handler tests)
 - Loop 18: +52 unit tests (dynamic-model/lead handlers + notification platform)
-- Total: **355+ unit tests added across 20+ modules**
+- Loop 19: +13 unit tests (capi package - hash/JSON edge cases)
+- Loop 20: +28 unit tests (capifeedback + db packages)
+- Total: **395+ unit tests added across 25+ modules/packages**
 
 ### Coverage Highlights
 
@@ -665,6 +667,9 @@ All 13 Go services have:
 - ✅ Platform tests (where platform package exists)
 - ✅ Models tests (where models package exists)
 - ✅ DB tests (where db package exists)
+
+All shared Go packages (`packages/go/*`) have tests:
+- ✅ apperrs, auth, capi, capifeedback, db, id, logger, middleware, pagination, ratelimit, tenant, timex, tracing
 
 No `fmt.Println/Printf/Print` in service code (all use `slog`).
 No SQL injection via `fmt.Sprintf` in `SET LOCAL` queries.
