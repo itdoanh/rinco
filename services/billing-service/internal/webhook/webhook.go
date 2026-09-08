@@ -48,7 +48,7 @@ func (h *Handler) StripeWebhook(c echo.Context) error {
 	}
 
 	existing, _ := h.repo.GetWebhookEvent(context.Background(), rawEvent.ID)
-	if existing != nil && existing.ProcessedAt != nil {
+	if existing != nil && !existing.ProcessedAt.IsZero() {
 		// Already processed, return 200 to avoid Stripe retry
 		return c.JSON(http.StatusOK, map[string]string{"status": "already processed"})
 	}

@@ -151,6 +151,56 @@ services:
     networks:
       - rinco-net
 
+  billing-service:
+    build: ./services/billing-service
+    container_name: rinco-billing-service
+    restart: unless-stopped
+    environment:
+      ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rinco
+      DB_PASSWORD: rinco_dev_password
+      DB_NAME: rinco
+      DB_SSLMODE: disable
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
+      STRIPE_PRICE_FREE: ${STRIPE_PRICE_FREE:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
+      STRIPE_PRICE_ENTERPRISE: ${STRIPE_PRICE_ENTERPRISE:-}
+    ports:
+      - "8097:8097"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - rinco-net
+
+  search-service:
+    build: ./services/search-service
+    container_name: rinco-search-service
+    restart: unless-stopped
+    environment:
+      ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rinco
+      DB_PASSWORD: rinco_dev_password
+      DB_NAME: rinco
+      DB_SSLMODE: disable
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-masterKey}
+    ports:
+      - "8098:8098"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      meilisearch:
+        condition: service_started
+    networks:
+      - rinco-net
+
   # ============================================================
   # Rust Services
   # ============================================================
