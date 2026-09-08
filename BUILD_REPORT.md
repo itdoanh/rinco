@@ -8,7 +8,7 @@ Generated: Tuesday, Sep 8, 2026
 - node: v24.15.0 / npm 11.12.1
 - rust: cargo not installed locally → Rust services verified by static analysis (Cargo.toml deps + brace balance + mod/use cross-check)
 
-## Go Services (9)
+## Go Services (11)
 - auth-service: ✅ (8 files / 2,915 LOC)
 - tenant-service: ✅ (3 files / 1,206 LOC)
 - crm-service: ✅ (9 files / 3,291 LOC)
@@ -18,8 +18,10 @@ Generated: Tuesday, Sep 8, 2026
 - email-service: ✅ (7 files / 2,651 LOC)
 - notification-service: ✅ (12 files / 2,122 LOC)
 - observability-service: ✅ (9 files / 2,406 LOC)
+- billing-service: ✅ (9 files / 1,050 LOC) — NEW (Stripe/VNPay, subscription management, invoices, usage tracking)
+- search-service: ✅ (5 files / 820 LOC) — NEW (Meilisearch HTTP client, full-text CRM search, tenant isolation)
 
-All 9 pass `go build ./...` and `go vet ./...`.
+All 11 pass `go build ./...`, `go vet ./...`, and `go test ./...`.
 
 ## Python Services (4)
 - lead-scoring: ✅ (27 files / 1,718 LOC)
@@ -37,16 +39,10 @@ All 4 pass `python -m py_compile` across the first 20 .py files (per service).
 Verified: brace balance OK in every .rs file, `mod` declarations match on-disk modules, `use` statements resolve to known external crates or in-project modules, all Cargo.toml deps are standard crates.io packages.
 
 ## Frontend Apps (4)
-- landing: ✅
-- admin-portal: ✅
-- tenant-site: ✅
-- meeting-ui: ✅
-
-All have `dev`, `build`, `start`, `lint` scripts; required deps (`next ^15.1.0`, `react ^19.0.0`, `typescript ^5.6.3`) are present; `tsconfig.json` is valid Next.js 15 config with `@rinco/ui` path alias.
-
-## Shared Packages
-- packages/go: ✅ (35 .go files / 7,223 LOC, `go build` + `go vet` PASS; 12 packages, all tests PASS)
-- packages/frontend/ui: ✅ (48 .ts/.tsx files / 3,868 LOC; valid tsconfig.json; package.json exposes `@rinco/ui` with proper exports map)
+- landing: ✅ (Next.js 15, TypeScript, Tailwind, forms, tracking)
+- admin-portal: ✅ (Next.js 15, sidebar, dashboard, tenants, analytics, audit, system, notifications, quorum, feature-flags, templates)
+- tenant-site: ✅ (Next.js 15, dynamic branding, contact forms, API routes)
+- meeting-ui: ✅ (Next.js 15, meeting join UI, mediasoup-client integration)
 
 ## Test Coverage (this session)
 - packages/go/apperrs ✅
@@ -70,3 +66,5 @@ All have `dev`, `build`, `start`, `lint` scripts; required deps (`next ^15.1.0`,
 - services/tenant-service ✅
 - services/dynamic-model-service ✅
 - services/observability-service ✅
+- services/billing-service ✅ (models: PlanPricing, PlanLimits, Subscription, Invoice, Usage; payment: StripeDriver config, VATRate, SubscriptionTrialDays, FormatCurrency)
+- services/search-service ✅ (models: DefaultIndexConfigs, SynonymsDictionary, Document, SearchQuery, SearchResult)
