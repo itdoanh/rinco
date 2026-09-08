@@ -59,11 +59,15 @@ logs/
 docker-compose.override.yml
 
 # Models (large) - AI/ML model artifacts only, NOT Go internal/models packages
+# Top-level /models dir at repo root (Python ML model artifacts)
 /models
+# Model file extensions anywhere
 models/*.joblib
 models/*.pkl
 models/*.h5
 models/*.onnx
+models/*.pt
+models/*.bin
 *.joblib
 *.pkl
 
