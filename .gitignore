@@ -58,8 +58,12 @@ logs/
 # Docker
 docker-compose.override.yml
 
-# Models (large)
-models/
+# Models (large) - AI/ML model artifacts only, NOT Go internal/models packages
+/models
+models/*.joblib
+models/*.pkl
+models/*.h5
+models/*.onnx
 *.joblib
 *.pkl
 
