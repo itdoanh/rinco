@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 4:30 AM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 5:30 AM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -510,7 +510,8 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `services/analytics-service` | 1 | ✅ Handler (Loop 3: 6 tests) |
 | `services/meta-capi-service` | 2 | ✅ Handler + client extras (Loops 3, 131: ~33 tests) |
 
-> **Total: ~3,180+ unit tests across packages and services** (Loops 1-157)
+> **Total: ~3,260+ unit tests across packages and services** (Loops 1-171)
+> Latest additions (Loop 171): email-service handler helpers (~42 tests: mustJSON, nullableString, errMsg, firstNonEmpty, decodeBase64, ensureQueryEscape, readMsgID, guessEventType, readAll, getPagination, tenantFromCtx, json, errorResp, renderMarkdown); analytics-service repository helpers (~17 tests: formatProps + mapGranularity); tenant-service migrations (~10 SQL coverage tests); tenant-service cmd migrations registry test; lead-service nats client (5 tests: Subjects constants + empty URL + IsConnected); lead-scoring LeadFeatures schema (8 tests: defaults/extra-allow/custom-fields/roundtrip); ai-sre schemas (25 tests: IncidentCreate/Incident/RCAResult/AnalyzeRequest/Response/Hotfix/Runbook/Chat/Correlation with defaults and validation).
 > Latest additions (Loops 142-157): ai-sre analyze helpers (14), ai-sre hotfix parser (16), ai-sre incidents endpoints (14), ai-sre runbook helpers (13), ai-sre chat endpoints (7), ai-sre core (10), ai-sre correlator helpers (15), ai-sre observability clients (8), billing-service repository (22 — new DB interface refactor), search-service models (14), timex extras (~38), id extras (~22), pagination extras (~25), ratelimit extras (~12), tracing extras (~9), tenant extras (~28), apperrs extras (~22).
 
 ### 10.2 Python tests
@@ -780,8 +781,30 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 156: tenant package more tests — Validate pattern (valid + 8 invalid), SetValidator custom + nil restore, With* roundtrips + empty, Ensure missing/invalid/valid/bypass, FromContext/IntoContext/Inherit (full + empty), non-mutation of base context.
 - Loop 157: apperrs package more tests — 12 codes defined, Error/Unwrap with cause, Is-by-Code matching across constructors, WithDetail/WithDetails/WithStack/WithMessage, every constructor HTTP+gRPC status pair, Validation alias to InvalidArgument, Wrap(nil) returns nil, Wrap preserves AppError, As/HTTPStatus/GRPCStatus/Code over plain errors + nil, chain-Unwrap finds base via errors.Is.
 - Loop 158-169: crm-service logger context tests, lead-scoring feature engineering tests, landing frontend block-helpers tests, ai-sre analyze/incident/chat/runbook/correlator/loki tests, billing-service DB refactor, search-service models, timex/id/pagination/ratelimit/tracing/tenant/apperrs more tests, frontend block-helpers, lead-scoring score endpoints, auth examples client, crm logger context, meta-capi models, stt core.
-- Loop 170 (current loop): continued audit + new test files
+- Loop 170 (continued) + Loop 171 (current loop): continued audit + new test files
   - `packages/go/capi/signature_more_test.go` — ~28 tests for `DefaultSignatureConfig`, `NewSigner` defaults, `Sign`/`SignRequest`/`Verify`/`VerifyRequest`, `GenerateAppSecretProof`/`VerifyAppSecretProof`, `GenerateRequestSignature`, `ParsePrivateKey`, `SignWithRSA`, `buildStringToSign` (body is hashed via SHA-256, not plaintext), `generateNonce`.
+  - `services/notification-service/internal/channels/channels_extra3_test.go` — ~13 tests for `TelegramChannel` (Name, missing bot token, missing chat_id, JSON marshal, endpoint construction) + `InAppChannel` (Name, missing user_id, no NATS, default prefix, payload extraction, non-string notif_id).
+  - `services/chat-engine/tests/config_error_test.rs` — ~24 tests for `Config::from_env` (defaults/overrides), `default_shutdown` (30s), `Config` field validation, `env_bool` semantics, `env_or` fallback, all 9 `ChatError` variants display messages, `From<anyhow::Error>` and `From<serde_json::Error>` conversions.
+  - `services/recording-service/tests/error_test.rs` — 10 tests for all 8 `RecordingError` variants + `From<anyhow::Error>` + debug format + display variant coverage.
+  - `services/webrtc-sfu/tests/error_test.rs` — 12 tests for all 9 `SfuError` variants + anyhow conversion + debug format.
+  - `frontend/landing/tests/utils.test.mjs` — 28 inlined tests for `formatNumber` (K/M suffixes), `formatPercentage`, `slugify` (Vietnamese diacritics), `truncate`, `parseQueryParams` (url-decoding).
+  - `services/stt-service/tests/test_diarization.py` — 5 tests for `diarize()` with bytes/string/None `num_speakers` and `_pyannote_available` flag behaviour.
+  - `services/lead-scoring/tests/test_baseline_model.py` — 11 tests for `FEATURE_NAMES` const, `HAS_SKLEARN` flag, train/predict/save/load roundtrip + JSON sidecar.
+  - `services/rag-chatbot/tests/test_redact_pii.py` — 9 tests for email/phone (various formats incl. Vietnamese) and 12-digit number redaction, with surrounding-text-preservation assertions.
+  - `services/rag-chatbot/tests/test_chunker_extra.py` — 9 tests for unicode, long paragraphs, huge overlap, single-separator, word fallback, negative chunk size, zero overlap, max depth.
+  - `frontend/meeting-ui/test/signaling.test.mjs` — ~18 pure-JS tests for `SignalingClient` offer/answer/ice-candidate/join/leave/chat/participants message construction.
+  - `frontend/landing/tests/block-types.test.mjs` — ~26 inlined tests for `isHeroBlock`, `isFeatureGridBlock`, `isTestimonialBlock`, `isFAQBlock`, `isFormBlock`, `isCTABlock`, `isPricingBlock`, `isStatsBlock` type guards + `BlockType` enum completeness + form-field types/alignments/themes.
+  - `services/lead-scoring/tests/test_score_schemas.py` — ~12 tests for `ScoreResponse`, `TrainRequest`, `TrainResponse`, `ModelInfo`, `HealthResponse`, `ExplainResponse` fields/defaults/serialization.
+- Loop 171 (this loop): closing remaining test-coverage gaps.
+  - `services/email-service/internal/handler/handler_helpers_extra_test.go` — ~42 tests for `mustJSON` (slice/map/empty/invalid-fallback), `nullableString`, `errMsg`, `firstNonEmpty`, `decodeBase64` (empty/invalid/valid), `ensureQueryEscape`, `readMsgID` (4 keys/missing/invalid/empty), `guessEventType` (4 keys/missing/invalid), `readAll` (EOF/empty/large), `getPagination` (defaults/custom/too-large/zero/invalid), `tenantFromCtx`, `json`, `errorResp` (with/without err), `renderMarkdown` (plain/empty/html/template).
+  - `services/analytics-service/internal/repository/repo_helpers_test.go` — ~17 tests for `formatProps` (empty/single/multiple/quotes) + `mapGranularity` (minute/min/hour/hr/day/week/month/case-insensitive/unknown defaults day) + `New(nil)`.
+  - `services/tenant-service/cmd/migrations/sql_test.go` — 10 tests for SQL_0001_init/0002_domains_settings/0003_usage SQL content (schema, tables, plans).
+  - `services/tenant-service/cmd/migrations_extra_test.go` — 2 tests for `Migrations` registry (count + names + non-empty SQL + contains CREATE).
+  - `services/lead-service/internal/nats/nats_test.go` — 5 tests for Subject constants + `NewClient("")` + `IsConnected` (no conn) + `Close` (no conn).
+  - `services/lead-scoring/tests/test_lead_schema.py` — 8 tests for `LeadFeatures` (defaults/full construction/extra-allow/dict-roundtrip/invalid-int/default-factory/non-shared-mutation/model_config).
+  - `services/ai-sre/tests/test_schemas.py` — 25 tests for `IncidentCreate`, `Incident`, `RCAResult`, `AnalyzeRequest`, `AnalyzeResponse`, `HotfixGenerateRequest/Response`, `RunbookCreateRequest/Response`, `ChatRequest/Response`, `CorrelationResponse` (defaults/required/validation/edge cases).
+  - Verified all Go services build + test cleanly; all Python services (ai-sre/lead-scoring/rag-chatbot/stt-service) pass tests from their directory.
+- Total: **~3,260+ unit tests across Loops 1-171**
   - `services/notification-service/internal/channels/channels_extra3_test.go` — ~13 tests for `TelegramChannel` (Name, missing bot token, missing chat_id, JSON marshal, endpoint construction) + `InAppChannel` (Name, missing user_id, no NATS, default prefix, payload extraction, non-string notif_id).
   - `services/chat-engine/tests/config_error_test.rs` — ~24 tests for `Config::from_env` (defaults/overrides), `default_shutdown` (30s), `Config` field validation, `env_bool` semantics, `env_or` fallback, all 9 `ChatError` variants display messages, `From<anyhow::Error>` and `From<serde_json::Error>` conversions.
   - `services/recording-service/tests/error_test.rs` — 10 tests for all 8 `RecordingError` variants + `From<anyhow::Error>` + debug format + display variant coverage.
