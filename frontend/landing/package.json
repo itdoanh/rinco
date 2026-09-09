@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "test:helpers": "tsx test/block-renderer-helpers.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {

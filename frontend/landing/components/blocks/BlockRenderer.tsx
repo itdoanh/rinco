@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { openLeadModal } from "@/components/layout/LeadModal";
 
 // Block components
@@ -15,147 +14,202 @@ import { CTA } from "./CTA";
 import TestimonialSection from "./Testimonial";
 import { RiskWarning } from "./RiskWarning";
 import { FormBlock } from "@/components/form/FormBlock";
+import { PricingTable } from "./PricingTable";
 
-interface BlockProps {
-  id: string;
-  type: string;
-  data: any; // eslint-disable-line @typescript-eslint/no-explicit-any -- heterogeneous block payloads
+import {
+  BLOCK_TYPE_ALIASES,
+  resolveBlockType,
+  asObject,
+} from "./block-helpers";
+
+/**
+ * Payload for a single editable block on a landing page.
+ *
+ * The marketing backend stores blocks as opaque JSON objects keyed by
+ * ``type``.  We use ``unknown`` (not ``any``) on purpose so that
+ * per-block components can narrow ``data`` via runtime guards.
+ */
+export interface BlockData {
+  id?: string;
+  type?: string;
+  data?: unknown;
   tenantSlug?: string;
   pageSlug?: string;
   tenantId?: string;
   pageId?: string;
 }
 
-type AnyBlockProps = {
-  id?: string;
-  type?: string;
-  data?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  tenantSlug?: string;
-  pageSlug?: string;
-  tenantId?: string;
-  pageId?: string;
-};
+export interface BlockRenderCallbacks {
+  onCtaClick?: () => void;
+}
+
+/** Re-export for callers that imported the constants from
+ * ``BlockRenderer.tsx``. */
+export { BLOCK_TYPE_ALIASES, resolveBlockType, asObject };
 
 export function BlockRenderer({
   blocks,
   tenantSlug,
   pageSlug,
 }: {
-  blocks: AnyBlockProps[];
+  blocks: BlockData[];
   tenantSlug?: string;
   pageSlug?: string;
 }) {
-  const [showModal, setShowModal] = useState(false)
-
   const handleCtaClick = () => {
-    setShowModal(true)
-    openLeadModal("button")
-  }
+    openLeadModal("button");
+  };
 
   return (
     <>
       {blocks.map((block) => {
-        const id = block.id ?? Math.random().toString(36).slice(2)
-        const type = block.type ?? "unknown"
-        const data = (block.data ?? {}) as Record<string, unknown>
-        const onCtaClick = handleCtaClick
-        const sharedProps = { tenantSlug, pageSlug }
+        const id = block.id ?? Math.random().toString(36).slice(2);
+        const canonical = resolveBlockType(block.type);
+        if (!canonical) {
+          if (
+            typeof window !== "undefined" &&
+            process.env.NODE_ENV === "development"
+          ) {
+            console.warn(`Unknown block type: ${block.type}`);
+          }
+          return null;
+        }
+        const data = asObject(block.data);
+        const sharedProps = {
+          tenantSlug,
+          pageSlug,
+          tenantId: block.tenantId,
+          pageId: block.pageId,
+        };
 
-        switch (type) {
+        switch (canonical) {
           case "hero":
-            return <Hero key={id} data={data} onCtaClick={onCtaClick} {...sharedProps} />
-          case "feature_grid":
+            return (
+              <Hero
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+                {...sharedProps}
+              />
+            );
           case "features":
-            return <FeatureGrid key={id} data={data} onCtaClick={onCtaClick} />
-          case "logo_cloud":
+            return (
+              <FeatureGrid
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           case "logos":
-            return <LogoCloud key={id} data={data} onCtaClick={onCtaClick} />
-          case "speaker":
+            return (
+              <LogoCloud
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           case "speakers":
-            return <SpeakerSection key={id} data={data} onCtaClick={onCtaClick} />
+            return (
+              <SpeakerSection
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           case "trust":
-          case "trust_section":
-            return <TrustSection key={id} data={data} onCtaClick={onCtaClick} />
+            return (
+              <TrustSection
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           case "stats":
-          case "statistics":
-            return <Stats key={id} data={data} onCtaClick={onCtaClick} />
+            return (
+              <Stats
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           case "faq":
-          case "faqs":
-            return <FAQSection key={id} data={data} />
+            return <FAQSection key={id} data={data} />;
           case "cta":
-          case "call_to_action":
-            return <CTA key={id} data={data} onCtaClick={onCtaClick} />
+            return (
+              <CTA
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           case "testimonial":
-          case "testimonials":
-            return <TestimonialSection key={id} data={data} />
+            return <TestimonialSection key={id} data={data} />;
           case "risk_warning":
-          case "risk":
-            return <RiskWarning key={id} data={data} />
+            return <RiskWarning key={id} data={data} />;
           case "form":
-          case "registration_form":
             return (
               <FormBlock
                 key={id}
                 data={data}
-                onCtaClick={onCtaClick}
+                onCtaClick={handleCtaClick}
                 {...sharedProps}
               />
-            )
+            );
+          case "pricing_table":
+            return (
+              <PricingTable
+                key={id}
+                data={data}
+                onCtaClick={handleCtaClick}
+              />
+            );
           default:
-            if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
-              console.warn(`Unknown block type: ${type}`)
-            }
-            return null
+            return null;
         }
       })}
     </>
-  )
+  );
 }
 
-// Helper to render a single block
+/** Render a single block by canonical type.  Useful for previews. */
 export function renderBlock(
   type: string,
-  data: Record<string, unknown>,
-  callbacks?: { onCtaClick?: () => void }
+  data: unknown,
+  callbacks?: BlockRenderCallbacks,
 ) {
-  const props = { data, ...callbacks }
+  const canonical = resolveBlockType(type);
+  if (!canonical) return null;
+  const safeData = asObject(data);
+  const props = { data: safeData, ...(callbacks ?? {}) };
 
-  switch (type) {
+  switch (canonical) {
     case "hero":
-      return <Hero key={Math.random()} {...props} />
-    case "feature_grid":
+      return <Hero key={Math.random()} {...props} />;
     case "features":
-      return <FeatureGrid key={Math.random()} {...props} />
-    case "logo_cloud":
+      return <FeatureGrid key={Math.random()} {...props} />;
     case "logos":
-      return <LogoCloud key={Math.random()} {...props} />
-    case "speaker":
+      return <LogoCloud key={Math.random()} {...props} />;
     case "speakers":
-      return <SpeakerSection key={Math.random()} {...props} />
+      return <SpeakerSection key={Math.random()} {...props} />;
     case "trust":
-    case "trust_section":
-      return <TrustSection key={Math.random()} {...props} />
+      return <TrustSection key={Math.random()} {...props} />;
     case "stats":
-    case "statistics":
-      return <Stats key={Math.random()} {...props} />
+      return <Stats key={Math.random()} {...props} />;
     case "faq":
-    case "faqs":
-      return <FAQSection key={Math.random()} {...props} />
+      return <FAQSection key={Math.random()} {...props} />;
     case "cta":
-    case "call_to_action":
-      return <CTA key={Math.random()} {...props} />
+      return <CTA key={Math.random()} {...props} />;
     case "testimonial":
-    case "testimonials":
-      return <TestimonialSection key={Math.random()} {...props} />
+      return <TestimonialSection key={Math.random()} {...props} />;
     case "risk_warning":
-    case "risk":
-      return <RiskWarning key={Math.random()} {...props} />
+      return <RiskWarning key={Math.random()} {...props} />;
     case "form":
-    case "registration_form":
-      return <FormBlock key={Math.random()} {...props} />
+      return <FormBlock key={Math.random()} {...props} />;
+    case "pricing_table":
+      return <PricingTable key={Math.random()} {...props} />;
     default:
-      return null
+      return null;
   }
 }
 
-export default BlockRenderer
+export default BlockRenderer;

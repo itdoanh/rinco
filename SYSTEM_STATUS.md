@@ -716,7 +716,8 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 84: +15 tests (observability-service alertmanager webhook)
 - Loop 85: +21 tests (observability-service jaeger client)
 - Loop 86: Admin-portal stores + 3 mock pages → real data integration (Feature Flags, Notification Templates, Quorum), Audit page → TanStack Query + adminApi.getAuditLogs fallback, new e2e admin-stores.spec.ts
-- Total: **1,754+ unit tests added across 76+ modules/packages**
+- Loop 87: Landing BlockRenderer refactor — extracted block-helpers.ts (typed `CanonicalBlockType`, `EMPTY_OBJECT` sentinel, `isPlainObject` guard), fixed 2 latent bugs (`resolveBlockType("hero")` returned null because hero wasn't self-aliased; `asObject(null)` returned `{}` which was treated as data), added `pricing_table` alias. 56 unit tests in block-renderer-helpers.test.ts.
+- Total: **1,810+ unit tests added across 76+ modules/packages**
 
 ### Coverage Highlights
 
