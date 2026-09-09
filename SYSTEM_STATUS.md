@@ -658,7 +658,17 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 18: +52 unit tests (dynamic-model/lead handlers + notification platform)
 - Loop 19: +13 unit tests (capi package - hash/JSON edge cases)
 - Loop 20: +28 unit tests (capifeedback + db packages)
-- Total: **395+ unit tests added across 25+ modules/packages**
+- Loop 21: WithTxTenant helper + +24 tests (db/ai-sre/lead-scoring)
+- Loop 22: +13 tests (rag-chatbot chunker)
+- Loop 23: +10 tests (stt-service preprocessor)
+- Loop 24: +10 tests (lead-scoring schemas)
+- Loop 25: +24 tests (crm-service logger + middleware)
+- Loop 26: +26 tests (dynamic-model validator extra)
+- Loop 27: +17 tests (landing-service storage tiered)
+- Loop 28: +25 tests (logger redactor extra)
+- Loop 29: +30 tests (timex package)
+- Loop 30: +24 tests (tenant package)
+- Total: **540+ unit tests added across 30+ modules/packages**
 
 ### Coverage Highlights
 
