@@ -214,3 +214,96 @@ func BypassRLSFromContext(ctx context.Context) bool {
 	v, _ := ctx.Value(BypassRLSKey).(bool)
 	return v
 }
+
+// WithTxTenant runs fn within a transaction with explicit RLS context set.
+//
+// This is the canonical RLS-aware path: the variables are bound to the
+// transaction's lifetime and reset on commit/rollback. Any subsequent
+// query in fn on the same tx will see the RLS context correctly.
+//
+// Retries up to MaxRetries on serialization_failure (40001) or
+// deadlock_detected (40P01). Non-retryable errors return immediately.
+//
+// If tenantID is empty, fn runs without RLS context (only use for admin
+// queries that explicitly bypass tenant isolation).
+func WithTxTenant(ctx context.Context, pool *pgxpool.Pool, tenantID, userID string, isAdmin bool, fn func(ctx context.Context, tx pgx.Tx) error, opts ...TxOptions) error {
+	o := TxOptions{}.defaults()
+	if len(opts) > 0 {
+		o = opts[0].defaults()
+	}
+
+	var lastErr error
+	for attempt := 0; attempt <= o.MaxRetries; attempt++ {
+		if attempt > 0 {
+			if o.OnRetry != nil {
+				o.OnRetry(attempt, lastErr)
+			}
+			delay := o.RetryDelay * time.Duration(1<<(attempt-1))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+			}
+		}
+
+		err := func() error {
+			tx, err := pool.BeginTx(ctx, pgx.TxOptions{
+				IsoLevel:   o.IsoLevel,
+				AccessMode: o.AccessMode,
+			})
+			if err != nil {
+				return fmt.Errorf("begin tx: %w", err)
+			}
+			defer func() {
+				if p := recover(); p != nil {
+					_ = tx.Rollback(ctx)
+					panic(p)
+				}
+			}()
+
+			if tenantID != "" {
+				if err := setTenantConfig(ctx, tx, tenantID, userID, isAdmin); err != nil {
+					_ = tx.Rollback(ctx)
+					return fmt.Errorf("set rls: %w", err)
+				}
+			}
+
+			if err := fn(ctx, tx); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			return tx.Commit(ctx)
+		}()
+
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if !isRetryable(err) {
+			return err
+		}
+	}
+	return fmt.Errorf("withTxTenant: max retries exceeded: %w", lastErr)
+}
+
+// setTenantConfig explicitly sets RLS variables from arguments (not
+// context). Used by WithTxTenant when caller has explicit identifiers
+// rather than context-bound ones.
+func setTenantConfig(ctx context.Context, tx pgx.Tx, tenantID, userID string, isAdmin bool) error {
+	if tenantID != "" {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant_id', $1, true)", tenantID); err != nil {
+			return err
+		}
+	}
+	if userID != "" {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.current_user_id', $1, true)", userID); err != nil {
+			return err
+		}
+	}
+	if isAdmin {
+		if _, err := tx.Exec(ctx, "SELECT set_config('app.is_super_admin', 'true', true)"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
