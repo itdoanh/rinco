@@ -718,7 +718,8 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 86: Admin-portal stores + 3 mock pages → real data integration (Feature Flags, Notification Templates, Quorum), Audit page → TanStack Query + adminApi.getAuditLogs fallback, new e2e admin-stores.spec.ts
 - Loop 87: Landing BlockRenderer refactor — extracted block-helpers.ts (typed `CanonicalBlockType`, `EMPTY_OBJECT` sentinel, `isPlainObject` guard), fixed 2 latent bugs (`resolveBlockType("hero")` returned null because hero wasn't self-aliased; `asObject(null)` returned `{}` which was treated as data), added `pricing_table` alias. 56 unit tests in block-renderer-helpers.test.ts.
 - Loop 88: Hardened `@rinco/ui` shared lib — `formatCurrency`/`formatNumber`/`formatDate`/`formatDateTime` now return INVALID_FORMAT_PLACEHOLDER sentinel for null/NaN/undefined input; `truncate` handles negative/zero length and null input; `getInitials` handles empty/whitespace input; `debounce` now exposes `cancel()`/`flush()`; added `generateUuid()` (RFC 4122 v4), `clamp()`, `parseFloatSafe()`. 73 unit tests in utils.test.ts.
-- Total: **1,883+ unit tests added across 76+ modules/packages**
+- Loop 89: Hardened meeting-ui — `useMeetingStore` now dedupes participants and chat messages by id, stops MediaStream tracks on `reset()` (no more leaked camera/mic), `toggleMute`/`toggleVideo` semantics clarified so `track.enabled` reflects the *next* state; added `stopMediaStream` helper; `webrtc.ts` rewritten with correct `RTCConfiguration` typing, new `replaceTrack()` helper for camera/mic hot-swap, robust `createAudioAnalyzer` with explicit `destroy()` that disconnects nodes before closing the AudioContext; `ControlBar` `toggleFullscreen` is now async + listens for Escape via `fullscreenchange`; 24 store unit tests.
+- Total: **1,907+ unit tests added across 76+ modules/packages**
 
 ### Coverage Highlights
 

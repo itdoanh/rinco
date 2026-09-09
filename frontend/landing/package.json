@@ -9,6 +9,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:helpers": "tsx test/block-renderer-helpers.test.ts",
+    "test:ui-utils": "tsx ../../packages/frontend/ui/test/utils.test.ts",
+    "test:meeting-store": "tsx ../../frontend/meeting-ui/test/store.test.ts",
+    "test:unit": "npm run test:helpers && npm run test:ui-utils && npm run test:meeting-store",
     "test:e2e": "playwright test"
   },
   "dependencies": {

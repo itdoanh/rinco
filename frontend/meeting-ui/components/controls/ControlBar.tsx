@@ -47,15 +47,29 @@ export function ControlBar() {
   const [showChat, setShowChat] = useState(false);
   const [showParticipants, setShowParticipants] = useState(false);
 
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen();
-      setIsFullscreen(false);
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsFullscreen(true);
+      } else {
+        await document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    } catch (err) {
+      // Some browsers throw if requestFullscreen is called without a
+      // user gesture or in an iframe without allow="fullscreen".
+      // eslint-disable-next-line no-console
+      console.warn("Fullscreen toggle failed:", err);
     }
   };
+
+  // Keep the icon in sync when the user exits fullscreen via Escape.
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
 
   const leaveMeeting = () => {
     // Cleanup and redirect

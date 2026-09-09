@@ -1,12 +1,12 @@
 /**
- * WebRTC utilities for peer-to-peer connections
+ * WebRTC utilities for peer-to-peer connections.
+ *
+ * Pure wrappers around the browser ``RTCPeerConnection`` API.  These
+ * helpers are intentionally framework-agnostic so they can be unit
+ * tested with a mock implementation.
  */
 
-export interface RTCConfig {
-  iceServers: RTCIceServer[];
-}
-
-export const defaultRTCConfig: RTCConfig = {
+export const defaultRTCConfig: RTCConfiguration = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },
@@ -14,29 +14,51 @@ export const defaultRTCConfig: RTCConfig = {
 };
 
 /**
- * Create a peer connection
+ * Create a peer connection using the provided configuration.
+ *
+ * Defaults to :data:`defaultRTCConfig` when ``config`` is omitted.
  */
 export function createPeerConnection(
-  config: RTCConfiguration = defaultRTCConfig.iceServers as RTCIceServer[]
+  config: RTCConfiguration = defaultRTCConfig,
 ): RTCPeerConnection {
-  return new RTCPeerConnection({ iceServers: config });
+  return new RTCPeerConnection(config);
 }
 
 /**
- * Add tracks from a MediaStream to a peer connection
+ * Add tracks from a ``MediaStream`` to a peer connection.  Returns the
+ * array of RTCRtpSender objects so callers can later replace individual
+ * tracks without renegotiating the whole connection.
  */
 export function addTracksToConnection(
   pc: RTCPeerConnection,
-  stream: MediaStream
+  stream: MediaStream,
 ): RTCRtpSender[] {
   return stream.getTracks().map((track) => pc.addTrack(track, stream));
 }
 
 /**
- * Create an offer for initiating a connection
+ * Replace the track of a given kind on a peer connection.  Returns
+ * ``true`` if the sender was found and updated, ``false`` otherwise.
+ *
+ * Useful for camera/microphone hot-swapping — without this the remote
+ * peer would continue seeing the old track until renegotiation.
+ */
+export async function replaceTrack(
+  pc: RTCPeerConnection,
+  kind: "audio" | "video",
+  newTrack: MediaStreamTrack,
+): Promise<boolean> {
+  const sender = pc.getSenders().find((s) => s.track?.kind === kind);
+  if (!sender) return false;
+  await sender.replaceTrack(newTrack);
+  return true;
+}
+
+/**
+ * Create an offer and set it as the local description in one step.
  */
 export async function createOffer(
-  pc: RTCPeerConnection
+  pc: RTCPeerConnection,
 ): Promise<RTCSessionDescriptionInit> {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
@@ -44,10 +66,10 @@ export async function createOffer(
 }
 
 /**
- * Create an answer for responding to an offer
+ * Create an answer and set it as the local description in one step.
  */
 export async function createAnswer(
-  pc: RTCPeerConnection
+  pc: RTCPeerConnection,
 ): Promise<RTCSessionDescriptionInit> {
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
@@ -55,31 +77,37 @@ export async function createAnswer(
 }
 
 /**
- * Set remote description from an offer/answer
+ * Apply a remote description.  Wraps ``RTCSessionDescription``
+ * construction so callers can pass a plain ``RTCSessionDescriptionInit``
+ * payload.
  */
 export async function setRemoteDescription(
   pc: RTCPeerConnection,
-  description: RTCSessionDescriptionInit
+  description: RTCSessionDescriptionInit,
 ): Promise<void> {
   await pc.setRemoteDescription(new RTCSessionDescription(description));
 }
 
 /**
- * Add ICE candidate
+ * Add an ICE candidate to a peer connection.  Silently no-ops when the
+ * candidate is null (which is the standard ``null`` sentinel that
+ * browsers emit at the end of candidate gathering).
  */
 export async function addIceCandidate(
   pc: RTCPeerConnection,
-  candidate: RTCIceCandidateInit
+  candidate: RTCIceCandidateInit | null,
 ): Promise<void> {
+  if (!candidate) return;
   await pc.addIceCandidate(new RTCIceCandidate(candidate));
 }
 
 /**
- * Get user media (camera and microphone)
+ * Acquire a local microphone + camera stream.  Pass ``false`` to skip
+ * the video or audio track.
  */
 export async function getUserMedia(
   video: boolean = true,
-  audio: boolean = true
+  audio: boolean = true,
 ): Promise<MediaStream> {
   return navigator.mediaDevices.getUserMedia({
     video: video
@@ -100,27 +128,33 @@ export async function getUserMedia(
 }
 
 /**
- * Get screen share stream
+ * Acquire a screen-share stream.  Audio is excluded by default — pass
+ * ``audio: true`` if you need to share application audio too.
  */
-export async function getDisplayMedia(): Promise<MediaStream> {
+export async function getDisplayMedia(
+  options: { audio?: boolean; cursor?: "always" | "motion" | "never" } = {},
+): Promise<MediaStream> {
   return navigator.mediaDevices.getDisplayMedia({
     video: {
-      cursor: "always",
+      cursor: options.cursor ?? "always",
     },
-    audio: false,
+    audio: options.audio ?? false,
   });
 }
 
 /**
- * Get available media devices
+ * Enumerate the available input/output devices.  Useful for the
+ * "Settings → Devices" panel.
  */
 export async function getMediaDevices(): Promise<{
   cameras: MediaDeviceInfo[];
   microphones: MediaDeviceInfo[];
   speakers: MediaDeviceInfo[];
 }> {
+  if (!navigator.mediaDevices?.enumerateDevices) {
+    return { cameras: [], microphones: [], speakers: [] };
+  }
   const devices = await navigator.mediaDevices.enumerateDevices();
-  
   return {
     cameras: devices.filter((d) => d.kind === "videoinput"),
     microphones: devices.filter((d) => d.kind === "audioinput"),
@@ -129,83 +163,69 @@ export async function getMediaDevices(): Promise<{
 }
 
 /**
- * Switch camera
- */
-export async function switchCamera(
-  stream: MediaStream,
-  deviceId: string
-): Promise<MediaStream> {
-  const newStream = await navigator.mediaDevices.getUserMedia({
-    video: { deviceId: { exact: deviceId } },
-    audio: false,
-  });
-
-  // Replace video track
-  const videoTrack = newStream.getVideoTracks()[0];
-  const oldVideoTrack = stream.getVideoTracks()[0];
-  
-  if (oldVideoTrack) {
-    stream.removeTrack(oldVideoTrack);
-    oldVideoTrack.stop();
-  }
-  
-  stream.addTrack(videoTrack);
-  return stream;
-}
-
-/**
- * Switch microphone
- */
-export async function switchMicrophone(
-  stream: MediaStream,
-  deviceId: string
-): Promise<MediaStream> {
-  const newStream = await navigator.mediaDevices.getUserMedia({
-    video: false,
-    audio: { deviceId: { exact: deviceId } },
-  });
-
-  // Replace audio track
-  const audioTrack = newStream.getAudioTracks()[0];
-  const oldAudioTrack = stream.getAudioTracks()[0];
-  
-  if (oldAudioTrack) {
-    stream.removeTrack(oldAudioTrack);
-    oldAudioTrack.stop();
-  }
-  
-  stream.addTrack(audioTrack);
-  return stream;
-}
-
-/**
- * Analyze audio for speaking detection
+ * Build an audio analyser for VU/speaking detection.  Returns an
+ * analyser node plus a synchronous ``isSpeaking()`` helper that
+ * computes the average byte frequency each time it is called.
+ *
+ * The caller is responsible for calling ``destroy()`` when the analyser
+ * is no longer needed to release the AudioContext.
  */
 export function createAudioAnalyzer(
-  stream: MediaStream
+  stream: MediaStream,
+  options: { fftSize?: number; speakingThreshold?: number } = {},
 ): {
   analyser: AnalyserNode;
   isSpeaking: () => boolean;
   destroy: () => void;
 } {
-  const audioContext = new AudioContext();
+  const fftSize = options.fftSize ?? 256;
+  const threshold = options.speakingThreshold ?? 30;
+
+  const AudioContextCtor: typeof AudioContext =
+    (globalThis as unknown as { AudioContext?: typeof AudioContext })
+      .AudioContext ??
+    (globalThis as unknown as { webkitAudioContext?: typeof AudioContext })
+      .webkitAudioContext;
+
+  if (!AudioContextCtor) {
+    throw new Error("AudioContext not supported in this runtime");
+  }
+
+  const audioContext = new AudioContextCtor();
   const source = audioContext.createMediaStreamSource(stream);
   const analyser = audioContext.createAnalyser();
-  
-  analyser.fftSize = 256;
+  analyser.fftSize = fftSize;
   source.connect(analyser);
-  
+
   const dataArray = new Uint8Array(analyser.frequencyBinCount);
-  
+  let destroyed = false;
+
   return {
     analyser,
     isSpeaking: () => {
+      if (destroyed) return false;
       analyser.getByteFrequencyData(dataArray);
-      const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-      return average > 30; // Threshold for speaking
+      let total = 0;
+      for (let i = 0; i < dataArray.length; i++) total += dataArray[i];
+      const average = dataArray.length === 0 ? 0 : total / dataArray.length;
+      return average > threshold;
     },
     destroy: () => {
-      audioContext.close();
+      if (destroyed) return;
+      destroyed = true;
+      try {
+        source.disconnect();
+      } catch {
+        /* ignore — already disconnected */
+      }
+      try {
+        analyser.disconnect();
+      } catch {
+        /* ignore */
+      }
+      audioContext.close().catch(() => {
+        /* ignore */
+      });
     },
   };
 }
