@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 12:45 AM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 1:30 AM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -500,7 +500,7 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `services/crm-service` | 3 | ✅ Handler + db + helpers extras (Loop 125: 13 tests) |
 | `services/lead-service` | 4 | ✅ db + db extras + middleware extras + logger + handler extras (Loops 3, 119-121, 135: ~30 tests) |
 | `services/landing-service` | 3 | ✅ Handler + storage tiered + middleware extras (Loop 122: 13 tests) |
-| `services/email-service` | 3 | ✅ Tracking pixel + driver extras + render extras (Loops 124, 130: 60 tests) |
+| `services/email-service` | 4 | ✅ Tracking pixel + driver extras + render extras + cmd helpers (Loops 124, 130, 141: ~66 tests) |
 | `services/notification-service` | 6 | ✅ Audience parsing, channels http, handler extras, platform env, middleware extras |
 | `services/tenant-service` | 2 | ✅ 14 tests + helpers/middleware extras (Loop 123: 38 tests) |
 | `services/dynamic-model-service` | 0 | ❌ |
@@ -510,8 +510,8 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `services/analytics-service` | 1 | ✅ Handler (Loop 3: 6 tests) |
 | `services/meta-capi-service` | 2 | ✅ Handler + client extras (Loops 3, 131: ~33 tests) |
 
-> **Total: ~2,950+ unit tests across packages and services** (Loops 1-137)
-> Latest additions (Loops 134-137): admin-portal utils (24), lead-service logger+handler (~17), ai-sre jaeger client (6), tenant-site branding hex (15).
+> **Total: ~3,080+ unit tests across packages and services** (Loops 1-141)
+> Latest additions (Loops 134-141): admin-portal utils (24) + main store (21) + admin-stores (40), lead-service logger+handler (~17), ai-sre jaeger client (6), tenant-site branding hex (15), email-service cmd (6).
 
 ### 10.2 Python tests
 
@@ -760,7 +760,10 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 135: lead-service additional tests — 8 logger context helpers + 9 handler helpers. Logger: WithTraceID round-trip, FromContext empty/wrong-type, LogError emits JSON with trace_id, LogInfo emits extras. Handler: json/errorResp/listResp/errResp JSON round-trips, leadNoteReq omitempty, assignLeadReq/updateStatusReq field shape, NewServer preserves args.
 - Loop 136: ai-sre jaeger_client — 6 new tests in `test_jaeger_client_extras.py`. get_trace empty-id no-HTTP, success returns JSON, HTTPStatusError → empty dict, search_traces limit capped at 200, default lookback (unknown string), JAEGER_URL env reload.
 - Loop 137: tenant-site branding.ts — 15 hexToHsl/CSS-variable tests in `branding.test.mjs`. Color HSL: red H=0, green H=120, blue H=240, white L=100%, black L=0%, mid grey L≈50%. Saturation: pure red sat=100%, grey sat=0%. Lightness monotonicity. Output format "H S% L%". Case-insensitive hex parsing, leading-# tolerance.
-- Total: **2,950+ unit tests added across 80+ modules/packages**
+- Loop 139: admin-portal admin-stores.ts — 40 runtime unit tests in `admin-stores.test.ts`. Feature flags: seed/toggle/rollout (clamp 0-100)/add/remove/isEnabled. Notification templates: add/auto-id/update/remove/findByCode. Quorum: create with auto-sign, explicit-sigs, sign duplicates ignored, threshold-reached approved, reject, tickExpiry, sign on expired → EXPIRED, reject on non-pending no-op.
+- Loop 140: admin-portal main store (index.ts) — 21 runtime tests in `index.test.ts`. Tenant CRUD: setTenants/setSelected/clear, setFilters partial-merge preserves other fields, add/update (missing-id no-op)/remove. Analytics store: null seed, setData/setLoading. UI store: sidebarOpen default true, setSidebarOpen, toggle.
+- Loop 141: email-service cmd/main.go — 6 new tests in `main_extra_test.go`. nullString (empty → nil, non-empty → string), mustJSON (struct/map/nil round-trip), nullString type assertions.
+- Total: **3,080+ unit tests added across 80+ modules/packages**
 
 ### Coverage Highlights
 
