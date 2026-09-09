@@ -136,7 +136,7 @@ func urlSafe(v any, args ...any) string {
 var mdHeading = regexp.MustCompile(`(?m)^(#{1,6})\s+(.+)$`)
 var mdBold = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 var mdItalic = regexp.MustCompile(`\*([^*]+)\*`)
-var mdLink = regexp.MustCompile(`\[([^\]]+)\)\(([^)]+)\)`)
+var mdLink = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 var mdCode = regexp.MustCompile("`([^`]+)`")
 
 // mdToHTML applies a tiny subset of Markdown that covers the common email
@@ -154,7 +154,7 @@ func mdToHTML(input string) string {
 	out = mdCode.ReplaceAllString(out, "<code>$1</code>")
 	out = mdLink.ReplaceAllStringFunc(out, func(match string) string {
 		parts := mdLink.FindStringSubmatch(match)
-		return fmt.Sprintf(`<a href="%s">%s</a`, parts[2], parts[1])
+		return fmt.Sprintf(`<a href="%s">%s</a>`, parts[2], parts[1])
 	})
 	out = strings.ReplaceAll(out, "\n\n", "</p><p>")
 	out = strings.ReplaceAll(out, "\n", "<br/>")

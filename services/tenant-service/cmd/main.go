@@ -128,15 +128,8 @@ func newPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
-func (s *server) setTenant(ctx context.Context, tenantID string) context.Context {
-	if tenantID == "" {
-		return ctx
-	}
-	// Set RLS variable via SET LOCAL inside an explicit tx. For simple SELECTs we use SET on the conn
-	// returned from Acquire to keep it scoped to that conn.
-	return ctx
-}
-
+// withTenant runs fn inside a transaction with RLS context applied.
+// Deprecated: use packages/go/db.WithTxTenant instead.
 func (s *server) withTenant(ctx context.Context, tenantID string, fn func(pgx.Tx) error) error {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
