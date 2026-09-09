@@ -484,12 +484,12 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | Package/Service | Test files | Status |
 |---|---|---|
 | `packages/go/auth` | 2 | ✅ PASETO round-trip, RBAC, API key, FIDO2 |
-| `packages/go/capi` | 2 | ✅ Hash, signature, event builders, dedup |
+| `packages/go/capi` | 3 | ✅ Hash, signature, event builders, dedup |
 | `packages/go/capifeedback` | 1 | ✅ |
 | `packages/go/db` | 1 | ✅ Repository, migrate, Tx |
 | `packages/go/id` | 1 | ✅ UUID v4/v7, ULID, NanoID, Snowflake |
 | `packages/go/logger` | 2 | ✅ Redactor, sampling |
-| `packages/go/middleware` | 1 | ✅ Tenant resolution |
+| `packages/go/middleware` | 5 | ✅ Tenant resolution, auth extra, tenant extra, tracing extra, metrics extra, audit extra |
 | `packages/go/pagination` | 1 | ✅ Cursor + crc32 |
 | `packages/go/ratelimit` | 1 | ✅ Token bucket, sliding window |
 | `packages/go/tenant` | 1 | ✅ Validate, scope |
@@ -498,24 +498,27 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `packages/go/apperrs` | 1 | ✅ |
 | `services/auth-service` | 2 | ✅ Platform + integration |
 | `services/crm-service` | 2 | ✅ Handler + db (Loop 3: 15 tests) |
-| `services/lead-service` | 1 | ✅ db (Loop 3) |
+| `services/lead-service` | 2 | ✅ db + db extras (Loops 3, 119-120) |
 | `services/landing-service` | 2 | ✅ Handler + storage tiered (Loop 4: 13 tests) |
 | `services/email-service` | 1 | ✅ Tracking pixel (Loop 3) |
-| `services/notification-service` | 1 | ✅ Audience parsing |
+| `services/notification-service` | 6 | ✅ Audience parsing, channels http, handler extras, platform env, middleware extras |
 | `services/tenant-service` | 1 | ✅ 14 tests (Loop 3) |
 | `services/dynamic-model-service` | 0 | ❌ |
-| `services/observability-service` | 1 | ✅ Platform env (Loop 3) |
+| `services/observability-service` | 6 | ✅ Platform env, prom/loki/platform extras, handler extras, alertmanager webhook, jaeger, clickhouse |
 | `services/billing-service` | 2 | ✅ Stripe driver + helpers |
 | `services/search-service` | 1 | ✅ Models |
 | `services/analytics-service` | 1 | ✅ Handler (Loop 3: 6 tests) |
 | `services/meta-capi-service` | 1 | ✅ Handler (Loop 3: 11 tests) |
+
+> **Total: ~2,700+ unit tests across packages and services** (Loops 1-120)
+> Latest additions (Loops 116-120): notification middleware + platform extras, observability prom/loki/platform extras, lead-service db validation extras.
 
 ### 10.2 Python tests
 
 | Service | Test files | Status |
 |---|---|---|
 | `lead-scoring` | 3 | ✅ test_scoring, test_features, conftest |
-| `ai-sre` | 2 | ✅ test_correlator, test_hotfix |
+| `ai-sre` | 5 | ✅ test_correlator, test_hotfix, test_incident_store_extras, test_runbook_writer_extras, test_schemas, test_hotfix_helpers, test_hotfix_parser_extras |
 | `rag-chatbot` | 3 | ✅ test_chat, test_search, test_ingest |
 | `stt-service` | 2 | ✅ test_transcribe, test_language |
 
