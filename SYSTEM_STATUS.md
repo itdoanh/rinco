@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 6:30 AM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 12:45 AM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -510,7 +510,8 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `services/analytics-service` | 1 | ✅ Handler (Loop 3: 6 tests) |
 | `services/meta-capi-service` | 2 | ✅ Handler + client extras (Loops 3, 131: ~33 tests) |
 
-> **Total: ~3,330+ unit tests across packages and services** (Loops 1-173)
+> **Total: ~3,400+ unit tests across packages and services** (Loops 1-174)
+> Latest additions (Loop 174): search-service models (~26 tests for SearchableType constants, BuildFilter empty/with-tenant, DefaultIndexConfigs entries/contact, SynonymsDictionary entries/Vietnamese, Document/SearchQuery/SearchResult/SearchHit/Facet/IndexConfig fields) + capi signature (~22 tests for Sign default-timestamp/deterministic/different-bodies/nonce-present/nonce-unique/algorithm-set/query-params, SignRequest headers, VerifyRequest missing/invalid cases, GenerateAppSecretProof length/deterministic, VerifyAppSecretProof valid/invalid-token/invalid-secret, GenerateRequestSignature/different-methods, ParsePrivateKey invalid, GenerateNonce length/unique) + lead-scoring training (8 tests for train returns-dict/default-tenant/custom-tenant/notes/metrics-when-successful/load_model-callable/global_model/train-handles-failure).
 > Latest additions (Loop 173): middleware audit helpers (~31 tests: parseActionResource covering single-part/two-part/action-at-end (create/update/delete/list/get)/UUID/numeric-ID/UUID-with-action, isUUID valid/invalid/wrong-length/empty/no-dashes/uppercase, isNumericID valid/invalid/empty, redactSensitiveData no-match/match/nested-map/array/invalid-JSON/multiple-fields/case-insensitive, AuditLogChanWriter cap + LogChan, AuditLogSlogWriter nil logger). **Also fixed a real bug** in `redactMap`: the function used `return` after first match per key so only the first sensitive field per top-level key was redacted; now uses `break` + `continue` so all matching sensitive fields are redacted.
 > Latest additions (Loop 172): lead-scoring NATS consumer (6 tests: no-nats-lib no-op, warm_global_model idempotent, signature/defaults/url/callable) + stt-service preprocessor (9 additional tests merged into existing file: ffmpeg_available_is_bool + empty/unchanged/custom-sample-rate/dbfs + signature defaults), now 18 tests in test_preprocessor.py (was 10).
 > Latest additions (Loop 171): email-service handler helpers (~42 tests: mustJSON, nullableString, errMsg, firstNonEmpty, decodeBase64, ensureQueryEscape, readMsgID, guessEventType, readAll, getPagination, tenantFromCtx, json, errorResp, renderMarkdown); analytics-service repository helpers (~17 tests: formatProps + mapGranularity); tenant-service migrations (~10 SQL coverage tests); tenant-service cmd migrations registry test; lead-service nats client (5 tests: Subjects constants + empty URL + IsConnected); lead-scoring LeadFeatures schema (8 tests: defaults/extra-allow/custom-fields/roundtrip); ai-sre schemas (25 tests: IncidentCreate/Incident/RCAResult/AnalyzeRequest/Response/Hotfix/Runbook/Chat/Correlation with defaults and validation).
