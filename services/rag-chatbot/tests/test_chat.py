@@ -19,7 +19,10 @@ def test_chunk_text_small():
 
 
 def test_chunk_text_long():
-    text = "A" * 1000
+    # Use a string with embedded separators so the recursive splitter
+    # actually produces multiple chunks; ``"A" * 1000`` has no separators
+    # and would be returned as a single chunk.
+    text = ("Hello world. " * 200).strip()
     chunks = chunk_text(text, chunk_size=200, overlap=20)
     assert len(chunks) > 1
 

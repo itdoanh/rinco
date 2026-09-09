@@ -109,41 +109,101 @@ async def _call_vllm(prompt: str) -> str:
         return r.json()["choices"][0]["message"]["content"]
 
 
+DEFAULT_HOTFIX_KEYS = ("diff", "file", "line", "confidence", "root_cause")
+
+
+def _merge_defaults(parsed: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``parsed`` with all known keys filled with defaults.
+
+    The LLM response is best-effort: it may omit fields.  Callers should
+    always be able to rely on the canonical schema, with sensible defaults
+    for any missing keys.
+    """
+    result = {
+        "diff": "",
+        "file": "",
+        "line": 0,
+        "confidence": 0.3,
+        "root_cause": "",
+    }
+    for key in DEFAULT_HOTFIX_KEYS:
+        if key in parsed and parsed[key] is not None:
+            result[key] = parsed[key]
+    # Preserve any extra keys the model returned (callers may want to inspect).
+    for key, value in parsed.items():
+        if key not in result:
+            result[key] = value
+    return result
+
+
 def _parse_hotfix_response(text: str) -> dict[str, Any]:
     """Parse JSON hotfix response from LLM with multiple fallback strategies."""
+    parsed: dict[str, Any] | None = None
+
     # Strategy 1: Direct JSON parse
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
         pass
 
     # Strategy 2: Extract JSON from code block
-    json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if json_match:
-        try:
-            return json.loads(json_match.group(1))
-        except json.JSONDecodeError:
-            pass
+    if parsed is None:
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
 
     # Strategy 3: Extract any {...} block
-    brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
-    if brace_match:
-        try:
-            return json.loads(brace_match.group(0))
-        except json.JSONDecodeError:
-            pass
+    if parsed is None:
+        brace_match = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", text, re.DOTALL)
+        if brace_match:
+            try:
+                parsed = json.loads(brace_match.group(0))
+            except json.JSONDecodeError:
+                # Try to coerce JavaScript-style object literals (unquoted keys)
+                # into valid JSON by quoting the keys.
+                coerced = _coerce_unquoted_keys(brace_match.group(0))
+                try:
+                    parsed = json.loads(coerced)
+                except json.JSONDecodeError:
+                    pass
+
+    if parsed is not None and isinstance(parsed, dict):
+        return _merge_defaults(parsed)
 
     # Strategy 4: Fallback — extract known fields via regex
-    diff_match = re.search(r'"diff"\s*:\s*"([^"]*)"', text, re.DOTALL)
-    file_match = re.search(r'"file"\s*:\s*"([^"]*)"', text)
-    line_match = re.search(r'"line"\s*:\s*(\d+)', text)
-    conf_match = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
-    root_match = re.search(r'"root_cause"\s*:\s*"([^"]*)"', text)
+    # Match both quoted keys ("diff":) and unquoted keys (diff:)
+    diff_match = re.search(r'(?:"diff"|diff)\s*:\s*"([^"]*)"', text, re.DOTALL)
+    file_match = re.search(r'(?:"file"|file)\s*:\s*"([^"]*)"', text)
+    line_match = re.search(r'(?:"line"|line)\s*:\s*(\d+)', text)
+    conf_match = re.search(r'(?:"confidence"|confidence)\s*:\s*([0-9.]+)', text)
+    root_match = re.search(r'(?:"root_cause"|root_cause)\s*:\s*"([^"]*)"', text)
 
     return {
         "diff": (diff_match.group(1) if diff_match else ""),
         "file": (file_match.group(1) if file_match else ""),
         "line": (int(line_match.group(1)) if line_match else 0),
         "confidence": (float(conf_match.group(1)) if conf_match else 0.3),
-        "root_cause": (root_match.group(1) if root_match else ""),
+        "root_cause": (
+            root_match.group(1) if root_match else (text[:500].strip() if text else "")
+        ),
     }
+
+
+def _coerce_unquoted_keys(blob: str) -> str:
+    """Quote bare identifier keys in a JS-style object literal.
+
+    Example:
+        >>> _coerce_unquoted_keys('{ a: 1, b: "two" }')
+        '{ "a": 1, "b": "two" }'
+    """
+    # Match identifier-like words followed by ``:`` that are not already
+    # inside double quotes.  This is intentionally permissive: it will not
+    # attempt to handle string values containing colons.
+    return re.sub(
+        r"([\{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)",
+        r'\1"\2"\3',
+        blob,
+    )

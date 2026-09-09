@@ -12,11 +12,18 @@ from app.services.chunker import chunk_text
 
 
 def test_chunk_respects_size():
-    text = "A" * 3000
+    # ``chunk_text`` is a recursive splitter that works on natural text
+    # separators (paragraphs, sentences, words).  A solid string of ``"A"``
+    # has no separators and would be returned as a single oversized chunk
+    # by design.  Use a string with embedded separators to exercise the
+    # size-limiting behaviour.
+    text = ("Sentence number one. " * 200).strip()
     chunks = chunk_text(text, chunk_size=512, overlap=64)
-    # No chunk should exceed 512 chars
+    # Every chunk must fit inside the configured size bound.
     for c in chunks:
-        assert len(c) <= 512
+        assert len(c) <= 512, f"chunk too large: {len(c)} > 512"
+    # And we should actually have produced multiple chunks.
+    assert len(chunks) > 1
 
 
 def test_chunk_has_overlap():

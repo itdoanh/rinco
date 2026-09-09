@@ -69,14 +69,23 @@ def mock_jaeger(monkeypatch):
 
 @pytest.fixture
 def mock_prometheus(monkeypatch):
-    """Mock prometheus_client.query to return sample metric data."""
+    """Mock prometheus_client.query to return sample metric data.
+
+    The mock matches on substring of the *PromQL expression*.  Since the
+    metric label (e.g. ``error_rate``) is a Python-side identifier that is
+    not present in the PromQL string itself, we approximate by matching on
+    fragments of the PromQL that are unique per metric.
+    """
     async def _query(query):
-        if "error_rate" in query:
-            return [{"metric": {"service": "auth-service"}, "value": "0.05", "timestamp": 1234567890.0}]
-        elif "request_rate" in query:
-            return [{"metric": {"service": "auth-service"}, "value": "150.0", "timestamp": 1234567890.0}]
-        elif "p99" in query:
-            return [{"metric": {"service": "auth-service"}, "value": "0.82", "timestamp": 1234567890.0}]
+        # ``error_rate`` query selects status=~"5.."
+        if 'status=~"5.."' in query:
+            return [{"metric": {"service": "auth-service"}, "value": "0.05"}]
+        # ``request_rate`` is the simple ``rate(http_requests_total...)``
+        elif "http_requests_total{" in query and "status" not in query:
+            return [{"metric": {"service": "auth-service"}, "value": "150.0"}]
+        # ``p99_latency`` uses histogram_quantile
+        elif "histogram_quantile" in query:
+            return [{"metric": {"service": "auth-service"}, "value": "0.82"}]
         return []
     monkeypatch.setattr(incident_correlator.prometheus_client, "query", _query)
 
@@ -134,7 +143,9 @@ async def test_correlate_incident_metrics_populated(mock_loki, mock_jaeger, mock
 
 
 @pytest.mark.asyncio
-async def test_correlate_incident_with_specific_trace_id(mock_loki, mock_jaeger, mock_prometheus):
+async def test_correlate_incident_with_specific_trace_id(
+    mock_loki, mock_jaeger, mock_prometheus, monkeypatch
+):
     """When trace_id is provided, get_trace should be called and spans returned."""
     async def mock_get_trace(tid):
         return {
