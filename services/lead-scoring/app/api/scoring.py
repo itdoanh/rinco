@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from typing import List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Body, Header, HTTPException, Request
 
 from app.core.logging import get_logger
 from app.core.metrics import (
@@ -89,20 +89,9 @@ async def score_v1(
     return await _run_scoring(features, tenant_id=x_tenant_id)
 
 
-@router.post("/v1/score/{lead_id}", response_model=ScoreResponse)
-async def score_by_lead(
-    lead_id: str,
-    request: Request,
-    x_tenant_id: str = Header("default", alias="X-Tenant-ID"),
-):
-    body = await request.json()
-    feats = LeadFeatures(**body)
-    return await _run_scoring(feats, lead_id=lead_id, tenant_id=x_tenant_id)
-
-
 @router.post("/v1/score/batch")
 async def score_batch(
-    items: List[LeadFeatures],
+    items: List[LeadFeatures] = Body(...),
     x_tenant_id: str = Header("default", alias="X-Tenant-ID"),
 ):
     if len(items) > 1000:
@@ -111,6 +100,20 @@ async def score_batch(
     for item in items:
         out.append(await _run_scoring(item, tenant_id=x_tenant_id))
     return {"count": len(out), "results": out}
+
+
+@router.post("/v1/score/{lead_id}", response_model=ScoreResponse)
+async def score_by_lead(
+    lead_id: str,
+    request: Request,
+    x_tenant_id: str = Header("default", alias="X-Tenant-ID"),
+):
+    # Reserved lead_ids that conflict with sibling routes.
+    if lead_id in ("batch",):
+        raise HTTPException(status_code=404, detail=f"unknown lead_id: {lead_id}")
+    body = await request.json()
+    feats = LeadFeatures(**body)
+    return await _run_scoring(feats, lead_id=lead_id, tenant_id=x_tenant_id)
 
 
 @router.get("/v1/health", response_model=HealthResponse)
