@@ -332,12 +332,17 @@ func redactSensitiveData(body string, fields []string) string {
 
 func redactMap(m map[string]any, fields []string) {
 	for k, v := range m {
+		redacted := false
 		// Check if this key should be redacted
 		for _, field := range fields {
 			if strings.EqualFold(k, field) {
 				m[k] = "[REDACTED]"
-				return
+				redacted = true
+				break
 			}
+		}
+		if redacted {
+			continue
 		}
 
 		// Recurse into nested objects
