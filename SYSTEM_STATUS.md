@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 12:55 AM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 1:00 AM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -497,21 +497,21 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `packages/go/tracing` | 1 | ✅ Noop init |
 | `packages/go/apperrs` | 1 | ✅ |
 | `services/auth-service` | 2 | ✅ Platform + integration |
-| `services/crm-service` | 2 | ✅ Handler + db (Loop 3: 15 tests) |
-| `services/lead-service` | 2 | ✅ db + db extras (Loops 3, 119-120) |
-| `services/landing-service` | 2 | ✅ Handler + storage tiered (Loop 4: 13 tests) |
-| `services/email-service` | 1 | ✅ Tracking pixel (Loop 3) |
+| `services/crm-service` | 3 | ✅ Handler + db + helpers extras (Loop 125: 13 tests) |
+| `services/lead-service` | 2 | ✅ db + db extras + middleware extras (Loops 3, 119-120, 121: 20 tests) |
+| `services/landing-service` | 3 | ✅ Handler + storage tiered + middleware extras (Loop 122: 13 tests) |
+| `services/email-service` | 2 | ✅ Tracking pixel + driver extras (Loop 124: 28 tests) |
 | `services/notification-service` | 6 | ✅ Audience parsing, channels http, handler extras, platform env, middleware extras |
-| `services/tenant-service` | 1 | ✅ 14 tests (Loop 3) |
+| `services/tenant-service` | 2 | ✅ 14 tests + helpers/middleware extras (Loop 123: 38 tests) |
 | `services/dynamic-model-service` | 0 | ❌ |
 | `services/observability-service` | 6 | ✅ Platform env, prom/loki/platform extras, handler extras, alertmanager webhook, jaeger, clickhouse |
-| `services/billing-service` | 2 | ✅ Stripe driver + helpers |
-| `services/search-service` | 1 | ✅ Models |
+| `services/billing-service` | 3 | ✅ Stripe driver + helpers + payment extras (Loop 125: 9 tests) |
+| `services/search-service` | 2 | ✅ Models + models extras (Loop 124: 13 tests) |
 | `services/analytics-service` | 1 | ✅ Handler (Loop 3: 6 tests) |
 | `services/meta-capi-service` | 1 | ✅ Handler (Loop 3: 11 tests) |
 
-> **Total: ~2,700+ unit tests across packages and services** (Loops 1-120)
-> Latest additions (Loops 116-120): notification middleware + platform extras, observability prom/loki/platform extras, lead-service db validation extras.
+> **Total: ~2,750+ unit tests across packages and services** (Loops 1-125)
+> Latest additions (Loops 121-125): lead-service middleware (20 tests), landing-service middleware (13 tests), tenant-service helpers/middleware (38 tests), search-service models (13 tests), email-service driver (28 tests), crm-service helpers (13 tests), billing payment driver (9 tests).
 
 ### 10.2 Python tests
 
