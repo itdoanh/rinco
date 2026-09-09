@@ -732,7 +732,8 @@ All tests passing across 10+ Go modules. Build verified on all services.
   - `tests/media_encrypt_test.rs` (7 tests): encrypt/decrypt round-trip, ciphertext differs per call, wrong key fails, attachment metadata populated (msg_id/s3_key/mime/size/encrypted_dek/encrypted_size), empty plaintext supported, 100 KB plaintext round-trip, DEK wrapping uses Signal layer.
   - `tests/storage_test.rs` (11 tests): KEK derivation deterministic for same salt, varies with different salt, varies with different passphrase, wrap/unwrap DEK round-trip, fresh nonce per wrap, wrong KEK fails, seal/unseal round-trip, wrong DEK fails, empty plaintext supported, 32 KB plaintext round-trip, nonce length is 12 bytes.
   - `tests/symmetric_cipher_test.rs` (8 tests): ChaCha20 round-trip, wrong AD fails, XChaCha20 round-trip, XChaCha20 nonce prefix ≥24 bytes, short ciphertext rejected, ChaCha20 ciphertext varies with distinct plaintexts, session_id deterministic + symmetric.
-- Total: **2,072+ unit tests added across 76+ modules/packages**
+- Loop 100: analytics-service — 21 new tests in `handler_extra_test.go`. Helpers: parseTime (empty/bad-format returns fallback, RFC3339 parses), parseTimeOrNow (empty/bad-format returns now, RFC3339 parses), getPayload (valid JSON, invalid JSON returns nil per current implementation, empty body doesn't panic). Validation paths: TrackBatch (invalid JSON → 400, invalid tenant → 400, empty events → non-400), ExportEvents (invalid JSON → 400, accepts empty → 200 with "not implemented"), GetDashboard/GetPageViews/GetTopSources/GetTopPages/GetTrend all return 400 on bad tenant. Request shape tests: TrackBatchRequest, ExportRequest, DashboardRequest field binding. Total handler tests: 28 (7 existing + 21 new), all passing.
+- Total: **2,093+ unit tests added across 76+ modules/packages**
 
 ### Coverage Highlights
 
