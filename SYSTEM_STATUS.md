@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 2:00 AM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 4:30 AM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -779,7 +779,19 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 155: tracing more tests — Init no-op when endpoint empty or env=development, Shutdown before Init, idempotent Shutdown, hostname non-empty, shutdownFuncs once-do.
 - Loop 156: tenant package more tests — Validate pattern (valid + 8 invalid), SetValidator custom + nil restore, With* roundtrips + empty, Ensure missing/invalid/valid/bypass, FromContext/IntoContext/Inherit (full + empty), non-mutation of base context.
 - Loop 157: apperrs package more tests — 12 codes defined, Error/Unwrap with cause, Is-by-Code matching across constructors, WithDetail/WithDetails/WithStack/WithMessage, every constructor HTTP+gRPC status pair, Validation alias to InvalidArgument, Wrap(nil) returns nil, Wrap preserves AppError, As/HTTPStatus/GRPCStatus/Code over plain errors + nil, chain-Unwrap finds base via errors.Is.
-- Total: **3,080+ unit tests added across 80+ modules/packages**
+- Loop 158-169: crm-service logger context tests, lead-scoring feature engineering tests, landing frontend block-helpers tests, ai-sre analyze/incident/chat/runbook/correlator/loki tests, billing-service DB refactor, search-service models, timex/id/pagination/ratelimit/tracing/tenant/apperrs more tests, frontend block-helpers, lead-scoring score endpoints, auth examples client, crm logger context, meta-capi models, stt core.
+- Loop 170 (current loop): continued audit + new test files
+  - `packages/go/capi/signature_more_test.go` — ~28 tests for `DefaultSignatureConfig`, `NewSigner` defaults, `Sign`/`SignRequest`/`Verify`/`VerifyRequest`, `GenerateAppSecretProof`/`VerifyAppSecretProof`, `GenerateRequestSignature`, `ParsePrivateKey`, `SignWithRSA`, `buildStringToSign` (body is hashed via SHA-256, not plaintext), `generateNonce`.
+  - `services/notification-service/internal/channels/channels_extra3_test.go` — ~13 tests for `TelegramChannel` (Name, missing bot token, missing chat_id, JSON marshal, endpoint construction) + `InAppChannel` (Name, missing user_id, no NATS, default prefix, payload extraction, non-string notif_id).
+  - `services/chat-engine/tests/config_error_test.rs` — ~24 tests for `Config::from_env` (defaults/overrides), `default_shutdown` (30s), `Config` field validation, `env_bool` semantics, `env_or` fallback, all 9 `ChatError` variants display messages, `From<anyhow::Error>` and `From<serde_json::Error>` conversions.
+  - `services/recording-service/tests/error_test.rs` — 10 tests for all 8 `RecordingError` variants + `From<anyhow::Error>` + debug format + display variant coverage.
+  - `services/webrtc-sfu/tests/error_test.rs` — 12 tests for all 9 `SfuError` variants + anyhow conversion + debug format.
+  - `frontend/landing/tests/utils.test.mjs` — 28 inlined tests for `formatNumber` (K/M suffixes), `formatPercentage`, `slugify` (Vietnamese diacritics), `truncate`, `parseQueryParams` (url-decoding).
+  - `services/stt-service/tests/test_diarization.py` — 5 tests for `diarize()` with bytes/string/None num_speakers, `_pyannote_available` flag.
+  - `services/lead-scoring/tests/test_baseline_model.py` — 11 tests for `FEATURE_NAMES` constant, `HAS_SKLEARN` flag, `train_baseline`/`predict`/`save`/`load` roundtrip + JSON sidecar.
+  - `services/rag-chatbot/tests/test_redact_pii.py` — 9 tests for `redact_pii` (email/phone-various formats + empty/no-PII passthrough).
+  - `services/rag-chatbot/tests/test_chunker_extra.py` — 9 tests for `chunk_text` edge cases (unicode, long paragraphs, huge overlap, single-separator, word fallback).
+- Total: **~3,180+ unit tests across Loops 1-170**
 
 ### Coverage Highlights
 
