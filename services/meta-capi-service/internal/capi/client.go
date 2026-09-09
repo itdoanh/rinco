@@ -25,7 +25,23 @@ func NewClient() *Client {
 // EventPayload represents the Facebook CAPI event payload
 type EventPayload struct {
 	Data  []CAPIEventData `json:"data"`
-	Debug DebugMode `json:"debug,omitempty"`
+	Debug *DebugMode      `json:"debug,omitempty"`
+}
+
+// NewEventPayload constructs an empty payload with a non-nil Data
+// slice so that the marshalled JSON always contains ``"data":[]``
+// instead of ``"data":null`` (which the Facebook CAPI rejects).
+func NewEventPayload() EventPayload {
+	return EventPayload{Data: []CAPIEventData{}}
+}
+
+// AppendEvent adds an event to the payload, allocating the slice if
+// nil so the marshalled result is always a JSON array.
+func (p *EventPayload) AppendEvent(e CAPIEventData) {
+	if p.Data == nil {
+		p.Data = []CAPIEventData{}
+	}
+	p.Data = append(p.Data, e)
 }
 
 // CAPIEventData represents a single event in the CAPI payload
@@ -109,7 +125,15 @@ type EventResult struct {
 // SendEvents sends events to Facebook Conversions API
 func (c *Client) SendEvents(ctx context.Context, accessToken, pixelID string, payload EventPayload, testMode bool) ([]EventResult, error) {
 	url := fmt.Sprintf("https://graph.facebook.com/v19.0/%s/events?access_token=%s", pixelID, accessToken)
+	return c.SendEventsToURL(ctx, url, payload)
+}
 
+// SendEventsToURL posts ``payload`` to the given fully-qualified URL.  It is
+// the same as :func:`SendEvents` but accepts an arbitrary endpoint, which is
+// useful for unit tests that hit a local ``httptest`` server.  Production
+// callers should prefer :func:`SendEvents`.
+func (c *Client) SendEventsToURL(ctx context.Context, url string, payload EventPayload) ([]EventResult, error) {
+	_ = ctx
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("marshal payload: %w", err)
@@ -152,7 +176,13 @@ func (c *Client) SendEvents(ctx context.Context, accessToken, pixelID string, pa
 // TestConnection tests if the CAPI access token is valid
 func (c *Client) TestConnection(ctx context.Context, accessToken, pixelID string) error {
 	url := fmt.Sprintf("https://graph.facebook.com/v19.0/%s?access_token=%s", pixelID, accessToken)
+	return c.TestConnectionToURL(ctx, url)
+}
 
+// TestConnectionToURL issues a GET against ``url`` and expects a 200 OK.
+// Like :func:`SendEventsToURL` this exists primarily so unit tests can
+// point at a local ``httptest`` server.
+func (c *Client) TestConnectionToURL(ctx context.Context, url string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
