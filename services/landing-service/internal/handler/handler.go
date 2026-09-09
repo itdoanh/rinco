@@ -42,6 +42,10 @@ type Server struct {
 	queue        chan capiEvent
 	lifecycleStop chan struct{}
 	closeOnce    sync.Once
+	// dispatchURL, when non-empty, replaces the default
+	// ``https://graph.facebook.com`` endpoint.  It exists solely so
+	// unit tests can point at a local httptest server.
+	dispatchURL string
 }
 
 type capiEvent struct {
@@ -78,14 +82,28 @@ func (s *Server) Close() {
 }
 
 func (s *Server) dispatchCAPI() {
+	s.dispatchCAPIAt()
+}
+
+// dispatchCAPIAt is the implementation behind dispatchCAPI; it lives in
+// its own method so unit tests can drive the same loop against a local
+// httptest server without spinning up goroutines.
+func (s *Server) dispatchCAPIAt() {
 	for event := range s.queue {
-		if err := s.sendCAPI(event); err != nil {
+		if err := s.sendCAPIAt(event, s.dispatchEndpoint()); err != nil {
 			slog.Error("capi dispatch error",
 				slog.String("event_id", event.EventID),
 				slog.String("event_name", event.EventName),
 				slog.String("err", err.Error()))
 		}
 	}
+}
+
+func (s *Server) dispatchEndpoint() string {
+	if s.dispatchURL != "" {
+		return s.dispatchURL
+	}
+	return ""
 }
 
 func (s *Server) lifecycleWorker() {
@@ -106,11 +124,28 @@ func (s *Server) sendCAPI(event capiEvent) error {
 	pixelID := event.PixelID
 	if pixelID == "" { pixelID = s.pixelID }
 	if pixelID == "" { return errors.New("pixel id not configured") }
-	endpoint := "https://graph.facebook.com/v18.0/" + pixelID + "/events"
-	body := map[string]interface{}{"data": []map[string]interface{}{ {"event_name": event.EventName, "event_time": event.EventTime.Unix(), "event_id": event.EventID, "action_source": event.ActionSource, "event_source_url": event.EventSourceURL, "user_data": event.UserData, "custom_data": event.CustomData} }, "access_token": s.appSecret}
+	endpoint := s.dispatchEndpoint()
+	if endpoint == "" {
+		endpoint = "https://graph.facebook.com/v18.0/" + pixelID + "/events"
+	}
+	return s.sendCAPIAt(event, endpoint)
+}
+
+// sendCAPIAt POSTs ``event`` to ``endpoint``.  When ``s.appSecret`` is
+// non-empty the access token is always added as the ``access_token`` URL
+// query parameter per the Meta CAPI contract.
+func (s *Server) sendCAPIAt(event capiEvent, endpoint string) error {
+	body := map[string]interface{}{"data": []map[string]interface{}{ {"event_name": event.EventName, "event_time": event.EventTime.Unix(), "event_id": event.EventID, "action_source": event.ActionSource, "event_source_url": event.EventSourceURL, "user_data": event.UserData, "custom_data": event.CustomData} }}
 	data, _ := json.Marshal(body)
 	req, _ := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(data)))
 	req.Header.Set("Content-Type", "application/json")
+	if s.appSecret != "" {
+		// Access tokens are part of the URL query string in Meta CAPI
+		// (https://developers.facebook.com/docs/marketing-api/conversions-api).
+		q := req.URL.Query()
+		q.Set("access_token", s.appSecret)
+		req.URL.RawQuery = q.Encode()
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil { return err }
 	defer resp.Body.Close()
@@ -208,7 +243,7 @@ func (s *Server) submitForm(c echo.Context, _ bool) error {
 	customData := map[string]interface{}{"form_slug": req.FormSlug, "submission_id": id.String()}
 	if tenant, ok := req.Data["tenant_slug"].(string); ok { customData["tenant_slug"] = tenant }
 	if email, ok := req.Data["email"].(string); ok && email != "" {
-		s.queue <- capiEvent{EventID: eventID, EventName: "Lead", EventTime: time.Now(), UserData: map[string]string{"email": email, "client_ip": c.RealIP()}, CustomData: customData, EventSourceURL: req.Meta["url"], ActionSource: "website", TenantID: tenantID}
+		_ = s.enqueueCAPI(capiEvent{EventID: eventID, EventName: "Lead", EventTime: time.Now(), UserData: map[string]string{"email": email, "client_ip": c.RealIP()}, CustomData: customData, EventSourceURL: req.Meta["url"], ActionSource: "website", TenantID: tenantID})
 	}
 	return c.JSON(http.StatusOK, map[string]interface{}{"status": "accepted", "id": id, "event_id": eventID})
 }
@@ -270,13 +305,40 @@ func (s *Server) CAPIStatus(c echo.Context) error {
 func (s *Server) CAPISend(c echo.Context) error {
 	var req capiSendReq; if err := c.Bind(&req); err != nil { return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()}) }
 	if req.EventID == "" { req.EventID = uuid.NewString() }
-	s.queue <- capiEvent{EventID: req.EventID, EventName: req.EventName, EventTime: time.Now(), UserData: req.UserData, CustomData: req.CustomData, EventSourceURL: req.EventSourceURL, ActionSource: req.ActionSource, TenantID: req.TenantID, PixelID: req.PixelID}
+	ev := capiEvent{EventID: req.EventID, EventName: req.EventName, EventTime: time.Now(), UserData: req.UserData, CustomData: req.CustomData, EventSourceURL: req.EventSourceURL, ActionSource: req.ActionSource, TenantID: req.TenantID, PixelID: req.PixelID}
+	if err := s.enqueueCAPI(ev); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued", "event_id": req.EventID})
 }
 func (s *Server) CAPITest(c echo.Context) error {
 	eventID := uuid.NewString()
-	s.queue <- capiEvent{EventID: eventID, EventName: "TestEvent", EventTime: time.Now(), UserData: map[string]string{"email": "test@rinco.app"}, CustomData: map[string]interface{}{"test": true}}
+	ev := capiEvent{EventID: eventID, EventName: "TestEvent", EventTime: time.Now(), UserData: map[string]string{"email": "test@rinco.app"}, CustomData: map[string]interface{}{"test": true}}
+	if err := s.enqueueCAPI(ev); err != nil {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "queued", "event_id": eventID})
+}
+
+// enqueueCAPI pushes ``ev`` onto the dispatch queue, returning a
+// non-nil error when the queue is full or has been closed by Close().
+// This prevents handler goroutines from panicking on a closed channel
+// during shutdown.
+func (s *Server) enqueueCAPI(ev capiEvent) error {
+	if s.queue == nil {
+		return errors.New("capi queue is not initialised")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			// Channel was closed by Close() — treat as transient.
+		}
+	}()
+	select {
+	case s.queue <- ev:
+		return nil
+	default:
+		return errors.New("capi queue is full")
+	}
 }
 
 func (s *Server) MongoInit(ctx context.Context) error {
@@ -360,7 +422,7 @@ func (s *Server) CAPIConversion(c echo.Context) error {
 		"deal_id", req.DealID,
 	)
 
-	s.queue <- capiEvent{
+	_ = s.enqueueCAPI(capiEvent{
 		EventID:   eventID,
 		EventName: req.EventName,
 		EventTime: time.Unix(req.EventTime, 0),
@@ -369,7 +431,7 @@ func (s *Server) CAPIConversion(c echo.Context) error {
 		EventSourceURL: "",
 		ActionSource: "website",
 		TenantID: c.Request().Header.Get("X-Tenant-ID"),
-	}
+	})
 
 	return c.JSON(http.StatusAccepted, map[string]interface{}{
 		"status":    "queued",
