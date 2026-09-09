@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 1:30 AM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 2:00 AM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -510,8 +510,8 @@ Implements meta-schema with field types (text/number/date/select/...), validatio
 | `services/analytics-service` | 1 | ✅ Handler (Loop 3: 6 tests) |
 | `services/meta-capi-service` | 2 | ✅ Handler + client extras (Loops 3, 131: ~33 tests) |
 
-> **Total: ~3,080+ unit tests across packages and services** (Loops 1-141)
-> Latest additions (Loops 134-141): admin-portal utils (24) + main store (21) + admin-stores (40), lead-service logger+handler (~17), ai-sre jaeger client (6), tenant-site branding hex (15), email-service cmd (6).
+> **Total: ~3,180+ unit tests across packages and services** (Loops 1-157)
+> Latest additions (Loops 142-157): ai-sre analyze helpers (14), ai-sre hotfix parser (16), ai-sre incidents endpoints (14), ai-sre runbook helpers (13), ai-sre chat endpoints (7), ai-sre core (10), ai-sre correlator helpers (15), ai-sre observability clients (8), billing-service repository (22 — new DB interface refactor), search-service models (14), timex extras (~38), id extras (~22), pagination extras (~25), ratelimit extras (~12), tracing extras (~9), tenant extras (~28), apperrs extras (~22).
 
 ### 10.2 Python tests
 
@@ -763,6 +763,22 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 139: admin-portal admin-stores.ts — 40 runtime unit tests in `admin-stores.test.ts`. Feature flags: seed/toggle/rollout (clamp 0-100)/add/remove/isEnabled. Notification templates: add/auto-id/update/remove/findByCode. Quorum: create with auto-sign, explicit-sigs, sign duplicates ignored, threshold-reached approved, reject, tickExpiry, sign on expired → EXPIRED, reject on non-pending no-op.
 - Loop 140: admin-portal main store (index.ts) — 21 runtime tests in `index.test.ts`. Tenant CRUD: setTenants/setSelected/clear, setFilters partial-merge preserves other fields, add/update (missing-id no-op)/remove. Analytics store: null seed, setData/setLoading. UI store: sidebarOpen default true, setSidebarOpen, toggle.
 - Loop 141: email-service cmd/main.go — 6 new tests in `main_extra_test.go`. nullString (empty → nil, non-empty → string), mustJSON (struct/map/nil round-trip), nullString type assertions.
+- Loop 142: ai-sre FastAPI analyze.py internal helpers — 14 tests in `test_analyze_helpers.py`. `_parse_rca_response` (JSON / code-block / inline / regex / empty / garbage), `_summarize_traces` (empty / multiple / limit=5), `_apply_fix` (at line / out-of-range / start / end), `_build_pr_body`.
+- Loop 143: ai-sre `hotfix_generator._parse_hotfix_response` + merge/coerce — 16 tests in `test_hotfix_parser_helpers.py`. Direct JSON, code-block, brace extract, unquoted keys coercion, regex fallback, empty/garbage, partial-JSON defaults, extras preserved, DEFAULT_HOTFIX_KEYS constant.
+- Loop 144: ai-sre `/v1/incidents` endpoint — 14 tests in `test_incidents_endpoint.py`. POST/GET/list (filters service/status), limit cap, sort by created_at desc, PATCH resolve/404, direct `incident_store` helpers. Fixed async fixture event-loop issue (sync fixture reset).
+- Loop 145: ai-sre `/v1/runbook` + `runbook_writer._escape_html/build_runbook_html` — 13 tests in `test_runbook.py`. ESC (&, <, >, "), `imported_datetime` UTC format, body with metrics/logs tables, log message truncation (300 chars), HTML escaping in injected fields, endpoint 400/400/502 error paths.
+- Loop 146: ai-sre `/v1/chat` FastAPI endpoint — 7 tests in `test_chat_endpoint.py`. Missing message 400, simple success, with-service context, with-incident context (env includes correlation), unknown incident no sources, LLM 503 (HTTPStatusError), general 500.
+- Loop 147: ai-sre core module — 10 tests in `test_core_module.py`. get_logger (default + named), configure_logging (DEBUG/WARNING/INVALID fallback to INFO), METRICS dict shape, prom unavailability path.
+- Loop 148: ai-sre incident_correlator + loki/jaeger pure helpers — 23 tests in `test_correlator_helpers.py` + `test_observability_clients.py`. `_build_metric_queries` content + substitution, `_is_error_log` (level fatal/error/info/message keyword/exception/empty), `_build_summary` sections (basic/metrics/error sample/traces total spans/skip None), `_timestamp_to_ns`/`_parse_ts` ISO & invalid handling.
+- Loop 149: **billing-service repository refactor**: introduced `DB` interface so tests can stub pgxpool; **22 new tests** in `repo_test.go`. All CRUD branches + ErrNotFound paths for subscription, invoice, usage, payment method, discount, webhook. Cmd/handler/cmd tests still pass after interface change.
+- Loop 150: search-service models — 14 tests in `models_more_test.go`. SearchableType constants, BuildFilter (empty / with tenant / special chars), Document JSON marshal/unmarshal, SearchHit embedded Document, FacetValues, DefaultIndexConfigs filterable contains tenant_id, Vietnamese SynonymsDictionary, SearchQuery defaults, SearchResult hit count, IndexConfig JSON.
+- Loop 151: timex package more tests — ~38 tests. All Start*/End*, ISO*, durations, HumanizeDuration zero/-/s/m/h/d, ParseRange both/each-side/invalid, AddBusinessDays 0/+1/+1 skip weekend/-1 previous Friday, Monotonic safety.
+- Loop 152: id package more tests — UUIDv7/v4 format/uniqueness, UUIDv7Bytes len, ParseUUID roundtrip + invalid, IsUUID, NewULID/At/Parse roundtrip, NanoID size customization (zero/negative → default), NanoIDWithPrefix, SecretToken 32→43 bytes/0-length, Snowflake uniqueness + string, ULID monotonic across 2 ms.
+- Loop 153: pagination more tests — Cursor.Empty, Encode/Decode (checksum tampered → reject, empty → error, too-short → error, invalid base64/json), Page defaults/MaxLimit clamp/negative offset, ParsePage query, OffsetClause fragment, HasMore boundary, CursorPage defaults + ParseQuery Desc true/false, Response marshal + WithNextCursor copy semantics, Keyset Clause/Args.
+- Loop 154: ratelimit more tests — TokenBucket Allow up to burst then deny, AllowN over-burst sets RetryAfter>0, refill semantics via Sleep, multi-key isolation, rate=0 hard-limit, StartGC stop-channel behavior.
+- Loop 155: tracing more tests — Init no-op when endpoint empty or env=development, Shutdown before Init, idempotent Shutdown, hostname non-empty, shutdownFuncs once-do.
+- Loop 156: tenant package more tests — Validate pattern (valid + 8 invalid), SetValidator custom + nil restore, With* roundtrips + empty, Ensure missing/invalid/valid/bypass, FromContext/IntoContext/Inherit (full + empty), non-mutation of base context.
+- Loop 157: apperrs package more tests — 12 codes defined, Error/Unwrap with cause, Is-by-Code matching across constructors, WithDetail/WithDetails/WithStack/WithMessage, every constructor HTTP+gRPC status pair, Validation alias to InvalidArgument, Wrap(nil) returns nil, Wrap preserves AppError, As/HTTPStatus/GRPCStatus/Code over plain errors + nil, chain-Unwrap finds base via errors.Is.
 - Total: **3,080+ unit tests added across 80+ modules/packages**
 
 ### Coverage Highlights
