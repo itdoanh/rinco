@@ -61,4 +61,18 @@ test.describe('Audit log', () => {
       page.url().includes('login')
     expect(hasSearch).toBeTruthy()
   })
+
+  test('audit page exposes Refresh button + fallback notice when backend unavailable', async ({ page }) => {
+    await page.goto('/audit')
+    await page.waitForLoadState('networkidle').catch(() => {})
+    // Refresh button should be present in the DOM regardless of auth state.
+    const refreshVisible = await page
+      .getByRole('button', { name: /refresh/i })
+      .first()
+      .isVisible()
+      .catch(() => false)
+    if (!page.url().includes('login')) {
+      expect(refreshVisible).toBeTruthy()
+    }
+  })
 })

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,104 +15,123 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Shield, Check, Clock, AlertTriangle, Plus } from "lucide-react";
+import {
+  Shield,
+  Check,
+  Clock,
+  AlertTriangle,
+  Plus,
+  RotateCcw,
+} from "lucide-react";
+import {
+  useQuorumStore,
+  type QuorumRequest,
+  type QuorumStatus,
+} from "@/store/admin-stores";
 
-interface QuorumRequest {
-  id: string
-  action: string
-  reason: string
-  initiator: string
-  requiredSigs: number
-  collectedSigs: string[]
-  status: "PENDING" | "APPROVED" | "REJECTED" | "EXPIRED"
-  expiresAt: string
-  createdAt: string
+const statusMeta: Record<
+  QuorumStatus,
+  { icon: typeof Shield; color: string; bg: string; label: string }
+> = {
+  PENDING: {
+    icon: Clock,
+    color: "text-amber-600",
+    bg: "bg-amber-50",
+    label: "PENDING",
+  },
+  APPROVED: {
+    icon: Check,
+    color: "text-emerald-600",
+    bg: "bg-emerald-50",
+    label: "APPROVED",
+  },
+  REJECTED: {
+    icon: AlertTriangle,
+    color: "text-red-600",
+    bg: "bg-red-50",
+    label: "REJECTED",
+  },
+  EXPIRED: {
+    icon: Clock,
+    color: "text-gray-500",
+    bg: "bg-gray-50",
+    label: "EXPIRED",
+  },
+};
+
+const SUPPORTED_ACTIONS: { value: string; label: string }[] = [
+  { value: "tenant.delete", label: "Delete Tenant" },
+  { value: "tenant.lock", label: "Lock Tenant" },
+  { value: "tenant.migrate", label: "Migrate Tenant" },
+  { value: "gateway.global_config", label: "Gateway Global Config" },
+  { value: "billing.refund", label: "Issue Refund" },
+  { value: "dns.rotate", label: "Rotate DNS Keys" },
+];
+
+function formatRemaining(expiresAt: string, now: number): number {
+  return Math.round((new Date(expiresAt).getTime() - now) / 1000);
 }
 
-const sampleQuorums: QuorumRequest[] = [
-  {
-    id: "qr-1",
-    action: "tenant.delete",
-    reason: "GDPR Right to be Forgotten request from customer (verified)",
-    initiator: "security@rinco.app",
-    requiredSigs: 2,
-    collectedSigs: ["security@rinco.app", "owner@rinco.app"],
-    status: "APPROVED",
-    expiresAt: new Date(Date.now() - 3600_000).toISOString(),
-    createdAt: new Date(Date.now() - 7200_000).toISOString(),
-  },
-  {
-    id: "qr-2",
-    action: "gateway.global_config",
-    reason: "Emergency rate limit increase for upcoming marketing campaign",
-    initiator: "ops@rinco.app",
-    requiredSigs: 2,
-    collectedSigs: ["ops@rinco.app"],
-    status: "PENDING",
-    expiresAt: new Date(Date.now() + 1800_000).toISOString(),
-    createdAt: new Date(Date.now() - 600_000).toISOString(),
-  },
-  {
-    id: "qr-3",
-    action: "tenant.lock",
-    reason: "Suspicious billing activity detected, locking for investigation",
-    initiator: "finance@rinco.app",
-    requiredSigs: 2,
-    collectedSigs: [],
-    status: "PENDING",
-    expiresAt: new Date(Date.now() + 3000_000).toISOString(),
-    createdAt: new Date(Date.now() - 120_000).toISOString(),
-  },
-]
-
-const statusMeta = {
-  PENDING: { icon: Clock, color: "text-amber-600", bg: "bg-amber-50", label: "PENDING" },
-  APPROVED: { icon: Check, color: "text-emerald-600", bg: "bg-emerald-50", label: "APPROVED" },
-  REJECTED: { icon: AlertTriangle, color: "text-red-600", bg: "bg-red-50", label: "REJECTED" },
-  EXPIRED: { icon: Clock, color: "text-gray-500", bg: "bg-gray-50", label: "EXPIRED" },
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 export default function QuorumPage() {
-  const [quorums, setQuorums] = useState(sampleQuorums)
-  const [open, setOpen] = useState(false)
-  const [newAction, setNewAction] = useState("")
-  const [newReason, setNewReason] = useState("")
+  const { requests, create, sign, reject, tickExpiry, reset } = useQuorumStore();
 
-  function sign(id: string) {
-    setQuorums(prev =>
-      prev.map(q => {
-        if (q.id !== id) return q
-        if (q.status !== "PENDING") return q
-        const updated = {
-          ...q,
-          collectedSigs: [...q.collectedSigs, "owner@rinco.app"],
-        }
-        if (updated.collectedSigs.length >= updated.requiredSigs) {
-          updated.status = "APPROVED" as const
-        }
-        return updated
-      })
-    )
-  }
+  // Touch hydration so SSR markup doesn't include persisted values.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+  const list: QuorumRequest[] = hydrated ? requests : [];
+
+  // Tick expiry every second once hydrated so expired PENDING requests
+  // get reclassified lazily without a backend.
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!hydrated) return;
+    const id = window.setInterval(() => {
+      tickExpiry();
+      setNow(Date.now());
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [hydrated, tickExpiry]);
+
+  const sorted = useMemo(
+    () =>
+      [...list].sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      ),
+    [list],
+  );
+
+  const [open, setOpen] = useState(false);
+  const [newAction, setNewAction] = useState("");
+  const [newReason, setNewReason] = useState("");
+  const [newSigs, setNewSigs] = useState(2);
 
   function createQuorum() {
-    if (!newAction || !newReason) return
-    const newQ: QuorumRequest = {
-      id: "qr-" + Date.now(),
+    if (!newAction || newReason.length < 10) return;
+    create({
       action: newAction,
       reason: newReason,
       initiator: "owner@rinco.app",
-      requiredSigs: 2,
-      collectedSigs: ["owner@rinco.app"],
-      status: "PENDING",
-      expiresAt: new Date(Date.now() + 300_000).toISOString(),
-      createdAt: new Date().toISOString(),
-    }
-    setQuorums(prev => [newQ, ...prev])
-    setNewAction("")
-    setNewReason("")
-    setOpen(false)
+      requiredSigs: Math.max(1, Math.min(5, newSigs)),
+      expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+    });
+    setNewAction("");
+    setNewReason("");
+    setNewSigs(2);
+    setOpen(false);
   }
+
+  const pending = sorted.filter((q) => q.status === "PENDING").length;
+  const approved = sorted.filter((q) => q.status === "APPROVED").length;
+  const rejected = sorted.filter((q) => q.status === "REJECTED").length;
+  const expired = sorted.filter((q) => q.status === "EXPIRED").length;
 
   return (
     <div className="p-6 space-y-6">
@@ -123,77 +142,138 @@ export default function QuorumPage() {
             Multi-Party Authorization
           </h1>
           <p className="text-gray-500">
-            2-of-3 YubiKey signing required for sensitive operations
+            2-of-3 YubiKey signing required for sensitive operations. State
+            persists in localStorage until the admin-gateway backend is
+            wired up (docs/15-roadmap §2 Phase 2).
           </p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="w-4 h-4 mr-2" />
-              New Quorum Request
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create Quorum Request</DialogTitle>
-              <DialogDescription>
-                Select action & provide detailed reason. Will require 2 more admins to sign.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div>
-                <Label htmlFor="action">Action</Label>
-                <select
-                  id="action"
-                  className="w-full border rounded-md px-3 py-2 mt-1"
-                  value={newAction}
-                  onChange={(e) => setNewAction(e.target.value)}
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={reset} title="Reset to defaults">
+            <RotateCcw className="w-4 h-4" />
+          </Button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button>
+                <Plus className="w-4 h-4 mr-2" />
+                New Quorum Request
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create Quorum Request</DialogTitle>
+                <DialogDescription>
+                  Select an action & provide a detailed reason. Will require
+                  the chosen number of additional admins to sign.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="action">Action</Label>
+                  <select
+                    id="action"
+                    className="w-full border rounded-md px-3 py-2 mt-1"
+                    value={newAction}
+                    onChange={(e) => setNewAction(e.target.value)}
+                  >
+                    <option value="">-- Select action --</option>
+                    {SUPPORTED_ACTIONS.map((a) => (
+                      <option key={a.value} value={a.value}>
+                        {a.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="reason">Reason (min 10 chars)</Label>
+                  <Input
+                    id="reason"
+                    value={newReason}
+                    onChange={(e) => setNewReason(e.target.value)}
+                    placeholder="e.g., Customer GDPR request ticket #12345"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="reqsigs">Required signatures</Label>
+                  <Input
+                    id="reqsigs"
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={newSigs}
+                    onChange={(e) =>
+                      setNewSigs(Number(e.target.value))
+                    }
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={createQuorum}
+                  disabled={!newAction || newReason.length < 10}
                 >
-                  <option value="">-- Select action --</option>
-                  <option value="tenant.delete">Delete Tenant</option>
-                  <option value="tenant.lock">Lock Tenant</option>
-                  <option value="tenant.migrate">Migrate Tenant</option>
-                  <option value="gateway.global_config">Gateway Global Config</option>
-                  <option value="billing.refund">Issue Refund</option>
-                  <option value="dns.rotate">Rotate DNS Keys</option>
-                </select>
-              </div>
-              <div>
-                <Label htmlFor="reason">Reason (min 10 chars)</Label>
-                <Input
-                  id="reason"
-                  value={newReason}
-                  onChange={(e) => setNewReason(e.target.value)}
-                  placeholder="e.g., Customer GDPR request ticket #12345"
-                />
-              </div>
+                  Create Request
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-amber-600">{pending}</div>
+            <div className="text-xs text-muted-foreground uppercase">
+              Pending
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={createQuorum} disabled={!newAction || newReason.length < 10}>
-                Create Request
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-emerald-600">
+              {approved}
+            </div>
+            <div className="text-xs text-muted-foreground uppercase">
+              Approved
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-red-600">{rejected}</div>
+            <div className="text-xs text-muted-foreground uppercase">
+              Rejected
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4 text-center">
+            <div className="text-3xl font-bold text-gray-500">{expired}</div>
+            <div className="text-xs text-muted-foreground uppercase">
+              Expired
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Active &amp; Recent Quorum Requests</CardTitle>
           <CardDescription>
-            Each request expires in 5 minutes after creation. Required signatures: 2 of 3 OWNER / SRE_ADMIN / SECURITY_ADMIN.
+            Each request expires in 5 minutes after creation. Required
+            signatures selected by the initiator (1-5).
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {quorums.map(q => {
-            const meta = statusMeta[q.status]
-            const Icon = meta.icon
-            const remaining = Math.round(
-              (new Date(q.expiresAt).getTime() - Date.now()) / 1000
-            )
+          {sorted.map((q) => {
+            const meta = statusMeta[q.status];
+            const Icon = meta.icon;
+            const remaining = formatRemaining(q.expiresAt, now);
+            const isExpiredByTime =
+              q.status === "PENDING" && remaining <= 0;
 
             return (
               <div
@@ -202,53 +282,90 @@ export default function QuorumPage() {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
                       <Icon className={`w-5 h-5 ${meta.color}`} />
                       <h3 className="font-semibold">{q.action}</h3>
-                      <Badge variant="outline" className={meta.color}>{meta.label}</Badge>
+                      <Badge variant="outline" className={meta.color}>
+                        {meta.label}
+                      </Badge>
                       {q.status === "PENDING" && remaining > 0 && (
-                        <Badge variant="outline" className="text-xs">
+                        <Badge
+                          variant="outline"
+                          className="text-xs"
+                          aria-label={`expires in ${formatCountdown(remaining)}`}
+                        >
                           <Clock className="w-3 h-3 mr-1" />
-                          {Math.floor(remaining / 60)}:{(remaining % 60).toString().padStart(2, "0")}
+                          {formatCountdown(remaining)}
+                        </Badge>
+                      )}
+                      {isExpiredByTime && (
+                        <Badge variant="outline" className="text-xs">
+                          expiring...
                         </Badge>
                       )}
                     </div>
-                    <p className="text-sm text-muted-foreground mb-2">{q.reason}</p>
-                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                      <span>Initiator: <span className="font-mono">{q.initiator}</span></span>
-                      <span>Signatures: {q.collectedSigs.length}/{q.requiredSigs}</span>
-                      <span>Created: {new Date(q.createdAt).toLocaleString()}</span>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      {q.reason}
+                    </p>
+                    <div className="flex items-center gap-4 text-xs text-muted-foreground flex-wrap">
+                      <span>
+                        Initiator:{" "}
+                        <span className="font-mono">{q.initiator}</span>
+                      </span>
+                      <span>
+                        Signatures: {q.collectedSigs.length}/{q.requiredSigs}
+                      </span>
+                      <span>
+                        Created: {new Date(q.createdAt).toLocaleString()}
+                      </span>
                     </div>
                     <div className="mt-2 flex flex-wrap gap-1">
                       {q.collectedSigs.map((sig, idx) => (
-                        <Badge key={idx} variant="outline" className="text-xs font-mono">
+                        <Badge
+                          key={idx}
+                          variant="outline"
+                          className="text-xs font-mono"
+                        >
                           <Check className="w-3 h-3 mr-1" />
                           {sig}
                         </Badge>
                       ))}
                     </div>
                   </div>
-                  {q.status === "PENDING" && q.initiator !== "owner@rinco.app" && (
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={() => sign(q.id)}
-                      disabled={q.collectedSigs.includes("owner@rinco.app")}
-                    >
-                      Sign with YubiKey
-                    </Button>
+                  {q.status === "PENDING" && (
+                    <div className="flex flex-col gap-1">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={() => sign(q.id, "owner@rinco.app")}
+                        disabled={q.collectedSigs.includes(
+                          "owner@rinco.app",
+                        )}
+                        title="Sign with YubiKey"
+                      >
+                        Sign
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => reject(q.id, "owner@rinco.app")}
+                      >
+                        Reject
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>
-            )
+            );
           })}
-          {quorums.length === 0 && (
+          {sorted.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
-              No quorum requests. Create one to require multi-party authorization.
+              No quorum requests. Create one to require multi-party
+              authorization.
             </div>
           )}
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }
