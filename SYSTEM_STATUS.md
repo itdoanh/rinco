@@ -671,7 +671,20 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 31: +24 tests (pagination package)
 - Loop 32: +26 tests (id package)
 - Loop 33: +23 tests (apperrs package)
-- Total: **615+ unit tests added across 35+ modules/packages**
+- Loop 34: +22 tests (tracing package)
+- Loop 35: +16 tests (ratelimit package)
+- Loop 36: +54 tests (email-service render + middleware) + fix markdown link regex bug
+- Loop 37: +34 tests (notification-service preferences + middleware)
+- Loop 38: +17 tests (lead-service logger + middleware)
+- Loop 39: +20 tests (dynamic-model + landing middleware)
+- Loop 40: +19 tests (lead-scoring core)
+- Loop 41: +22 tests (ai-sre incident correlator)
+- Loop 42: +20 tests (ai-sre runbook writer)
+- Loop 43: +15 tests (rag-chatbot core + reranker)
+- Loop 44: +13 tests (stt-service core)
+- Loop 45: +15 tests (rag-chatbot ingestion)
+- Loop 46: +16 tests (rag-chatbot llm + stt preprocessor extra)
+- Total: **895+ unit tests added across 45+ modules/packages**
 
 ### Coverage Highlights
 
