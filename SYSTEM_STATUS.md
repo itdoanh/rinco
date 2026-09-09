@@ -684,7 +684,12 @@ All tests passing across 10+ Go modules. Build verified on all services.
 - Loop 44: +13 tests (stt-service core)
 - Loop 45: +15 tests (rag-chatbot ingestion)
 - Loop 46: +16 tests (rag-chatbot llm + stt preprocessor extra)
-- Total: **895+ unit tests added across 45+ modules/packages**
+- Loop 48: +31 tests (lead-scoring features)
+- Loop 49: +17 tests (lead-scoring inference helpers)
+- Loop 50: +14 tests (lead-scoring schemas)
+- Loop 51: +15 tests (ai-sre schemas)
+- Loop 52: +17 tests (ai-sre hotfix_generator helpers)
+- Total: **989+ unit tests added across 50+ modules/packages**
 
 ### Coverage Highlights
 
