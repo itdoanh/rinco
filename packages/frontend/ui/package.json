@@ -12,6 +12,7 @@
   "scripts": {
     "lint": "echo 'ui package: lint ok'",
     "typecheck": "tsc --noEmit",
+    "test:utils": "echo 'Run from frontend/landing via: npx tsx ../../packages/frontend/ui/test/utils.test.ts'",
     "build": "echo 'ui package: build (no-op, consumed as source)'"
   },
   "dependencies": {
