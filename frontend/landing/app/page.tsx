@@ -1,11 +1,11 @@
-import { Metadata } from "next";
+"use client";
+
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { StickyCTA } from "@/components/layout/StickyCTA";
 import { LeadModal } from "@/components/layout/LeadModal";
 import { BlockRenderer } from "@/components/blocks/BlockRenderer";
 import { openLeadModal } from "@/components/layout/LeadModal";
-import { useState } from "react";
 
 // Default blocks from chiase_cu content
 const defaultBlocks = [

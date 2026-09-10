@@ -113,4 +113,5 @@ export {
   TableRow,
   TableCell,
   TableCaption,
+  Table as DataTable,
 }

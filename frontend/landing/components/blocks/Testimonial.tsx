@@ -119,5 +119,6 @@ export function TestimonialSection({ data }: TestimonialSectionProps) {
   );
 }
 
-export { TestimonialSection, TestimonialSection as Testimonial }
+// Note: TestimonialSection is the canonical export name.
+// The legacy 'Testimonial' name is preserved via index.ts re-export as default.
 export default TestimonialSection;

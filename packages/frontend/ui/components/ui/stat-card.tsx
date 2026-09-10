@@ -85,4 +85,5 @@ export {
   CardTitle,
   CardDescription,
   CardContent,
+  CardComponent as StatCard,
 }

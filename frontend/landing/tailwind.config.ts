@@ -55,6 +55,12 @@ const config: Config = {
           DEFAULT: "#F5A623",
           light: "#FFA94D",
         },
+        amber: {
+          DEFAULT: "#F59E0B",
+          400: "#FBBF24",
+          500: "#F59E0B",
+          600: "#D97706",
+        },
         orange: {
           DEFAULT: "#FF6B00",
           dark: "#E65100",
