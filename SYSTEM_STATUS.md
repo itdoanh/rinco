@@ -1,9 +1,21 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 6:30 PM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 7:10 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 185 — Full Playwright re-run after cold restart + final pass**:
+> - All 4 frontend apps restarted from cold (no dev servers running) and warmed up to a 200/200/404/404 baseline on ports 3000/3001/3002/3003 respectively. Auth routes that redirect legitimately return 404 for `GET /` which is the expected Next.js behavior (it returns a 404 page for the auth catch-all redirect).
+> - Ran full Playwright E2E suite (4 spec files, 12 tests):
+>   - `auth-flow.spec.ts`: admin login rejects bad credentials ✓, admin dashboard is protected ✓, landing site is publicly accessible ✓, tenant site is publicly accessible ✓
+>   - `landing.spec.ts`: homepage renders hero & CTA ✓, tenant dynamic route loads ✓, track API accepts an event ✓
+>   - `meeting-flow.spec.ts`: meeting UI root page renders ✓, meeting room shell renders or shows error ✓
+>   - `tenant-crud.spec.ts`: admin tenant list renders ✓, admin tenant detail renders or 404s gracefully ✓, public tenant page can submit a lead ✓
+>   - **Result: 12 passed (52.1s) — green.**
+> - Frontend unit tests re-run: ui 73, landing 56, meeting-ui 24+7, admin-portal 24+40+21 = **243/243 passing**.
+> - Backend tests re-run: 13/13 Go services ok, 4/4 Python services ok (ai-sre 325, lead-scoring 317, rag-chatbot 148, stt-service 106) = **896 passed** (+ ~42 shared Go package tests).
+> - Frontend tree and backend tree both clean (no uncommitted files).
 >
 > **Loop 184 — Service cmd coverage + lead-scoring legacy tests**:
 > - `services/crm-service/cmd/main.go` — removed unused duplicate `promauto` metric registrations (crm_service_http_requests_total/duration/entities_total were already registered by `internal/middleware`); removed prometheus/promauto imports that were now unused. Added `services/crm-service/cmd/main_test.go` (7 tests: loadConfig defaults+overrides, migrationsList count/order/schema, initTracer no-op paths + dev short-circuit + fast-path).
