@@ -1,6 +1,6 @@
 'use client';
 
-import { use } from 'react';
+import { use, useEffect } from 'react';
 import { notFound } from 'next/navigation';
 import { BlockRenderer } from '@/components/blocks';
 import { useLandingStore, type BlockData } from '@/lib/store';
@@ -70,6 +70,3 @@ export default function TenantPage({ params }: TenantPageProps) {
     </main>
   );
 }
-
-// Need to import useEffect for the hook
-import { useEffect } from 'react';

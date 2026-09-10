@@ -13,8 +13,8 @@ import {
   Users,
   Settings,
   Maximize2,
+  Disc,
   Minimize2,
-  Record,
   MoreVertical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -145,7 +145,7 @@ export function ControlBar() {
               onClick={toggleRecording}
               className="rounded-full w-12 h-12"
             >
-              <Record className={cn("w-5 h-5", isRecording && "animate-pulse")} />
+              <Disc className={cn("w-5 h-5", isRecording && "animate-pulse")} />
             </Button>
 
             {/* Leave */}

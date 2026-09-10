@@ -1,9 +1,28 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 9:00 PM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 9:30 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 190 — full frontend restart + 3 critical bug fixes**:
+> - `frontend/meeting-ui/app/meeting/[room_id]/page.tsx`:
+>   - Added missing `"use client"` directive (was crashing because `useSearchParams` only works in Client Components).
+>   - Fixed `use()` import: was `import { use, useSearchParams } from "next/navigation"` — `use` doesn't exist there. Moved to `import { Suspense, use } from "react"`.
+> - `frontend/meeting-ui/components/controls/ControlBar.tsx`:
+>   - `Record` icon does NOT exist in `lucide-react` (it's `Disc` or `Circle`). Changed `import { Record }` → `import { Disc }`, and `<Record ... />` → `<Disc ... />`.
+> - `frontend/landing/app/[tenant]/page.tsx`:
+>   - Moved `import { useEffect } from 'react'` from the bottom of the file to the top imports (legal but unusual).
+> - Killed all running Next.js dev servers and stale `.next` caches, then started all 4 apps cleanly.
+> - Verified all 4 ports respond:
+>   - `http://localhost:3000/` (landing root): 200
+>   - `http://localhost:3000/apex-fintech` (landing tenant dynamic): 200
+>   - `http://localhost:3000/api/track` POST (tracking API): 200
+>   - `http://localhost:3001/login` (admin-portal login): 200
+>   - `http://localhost:3001/tenants` (admin-portal tenant list): 200
+>   - `http://localhost:3002/demo` (tenant-site demo): 200
+>   - `http://localhost:3003/` (meeting-ui root): 200
+>   - `http://localhost:3003/meeting/test-room?name=E2E+User` (meeting-ui room): 200
 >
 > **Loop 189 — tenant-site branding + schema tests**:
 > - `frontend/tenant-site/lib/branding.ts` — exported `hexToHsl` (previously private) so it can be unit-tested.

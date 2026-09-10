@@ -1,5 +1,7 @@
-import { use, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+"use client";
+
+import { Suspense, use } from "react";
+import { useSearchParams } from "next/navigation";
 import { VideoGrid } from "@/components/video/VideoGrid";
 import { ControlBar } from "@/components/controls/ControlBar";
 import { useWebRTC } from "@/hooks/useWebRTC";
