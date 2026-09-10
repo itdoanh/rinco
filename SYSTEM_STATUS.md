@@ -1,9 +1,17 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 7:35 PM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 8:05 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 187 — capifeedback edge cases + final all-green verification**:
+> - `packages/go/capifeedback/capifeedback_more_test.go` (8 new tests covering `parseDuration` edge cases: ms/h/-5s/0s/whitespace/invalid/default, `parseInt` edge cases including overflow >int64, `Publisher` nil-safety, `Event` zero value, `Event` non-empty value, `PublisherConfig` zero/negative timeout and zero MaxRetries, HTTP request construction).
+> - All shared Go packages retested: apperrs, auth, capi, capifeedback, db, id, logger, middleware, pagination, ratelimit, tenant, timex, tracing — **all 13 packages green**.
+> - All 13 backend services retested — **all green**.
+> - All 4 Python services retested — **all green**.
+> - All frontend unit tests re-run: 269/269.
+> - All 12 Playwright E2E tests **passing** (re-ran after the homepage retry-on-miss fix landed).
 >
 > **Loop 186 — cmd coverage sweep + latent nil-client bug fix + Playwright resilience**:
 > - `services/email-service/cmd/main.go` — fixed latent NPE in `tieredStore.EnsureBuckets`: previously would panic if called on a struct with `client == nil` (the `newTieredStore` helper returns nil when S3 is unconfigured, but `EnsureBuckets` is also reachable via the migration worker). Now early-returns when `t == nil || t.client == nil`. Added `services/email-service/cmd/tiered_test.go` (14 tests covering newTieredStore configs, MigrateOld nil/no-cold, tieredWorker context-cancel & no-cold paths, publishDLQ nil-conn safety, queueItem fields, EnsureBuckets nil-client guard with three scenarios, default fields, URL prefix stripping helper, Config tiered fields).
