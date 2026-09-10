@@ -32,8 +32,6 @@ import (
 	crmhandler "github.com/itdoanh/rinco/services/crm-service/internal/handler"
 	"github.com/itdoanh/rinco/services/crm-service/internal/middleware"
 	"github.com/itdoanh/rinco/services/crm-service/internal/platform"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 const (
@@ -61,22 +59,10 @@ type config struct {
 }
 
 // =============================================================================
-// Server metrics
+// Server metrics (crm_service_http_requests_total and friends are registered
+// in internal/middleware so the cmd package doesn't re-register them and
+// trigger a duplicate-registration panic at init time.)
 // =============================================================================
-
-var (
-	httpReqs = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "crm_service_http_requests_total", Help: "HTTP requests",
-	}, []string{"method", "route", "status"})
-	httpDur = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "crm_service_http_request_duration_seconds",
-		Help:    "HTTP request latency",
-		Buckets: prometheus.DefBuckets,
-	}, []string{"method", "route"})
-	crmEntities = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "crm_service_entities_total", Help: "Entity operations",
-	}, []string{"entity", "operation"})
-)
 
 // =============================================================================
 // main

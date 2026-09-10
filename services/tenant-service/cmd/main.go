@@ -1085,7 +1085,13 @@ func firstMap(m map[string]any) map[string]any {
 	if m == nil {
 		return map[string]any{}
 	}
-	return m
+	// Defensive copy so callers can mutate without side-effecting the original
+	// (and so a nil receiver becomes a non-nil empty map).
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // =============================================================================
