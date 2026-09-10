@@ -1,9 +1,15 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 8:40 PM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 9:00 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 189 — tenant-site branding + schema tests**:
+> - `frontend/tenant-site/lib/branding.ts` — exported `hexToHsl` (previously private) so it can be unit-tested.
+> - `frontend/tenant-site/lib/branding.test.ts` (14 tests: hexToHsl red/green/blue/white/black/#-prefix/format, getBrandingCSS undefined/empty/primary/accent/fontFamily/combined/order).
+> - `frontend/tenant-site/lib/schema.test.ts` (16 tests: leadSchema valid + Vietnamese error messages + edge cases like empty/non-string inputs).
+> - **Frontend total: 325/325 unit tests passing** (+30 tenant-site tests), 12/12 Playwright E2E green, all Go & Python tests still green.
 >
 > **Loop 188 — quorum helper extraction +11 unit tests + full-stack green**:
 > - `frontend/admin-portal/lib/quorum-helpers.ts` — extracted `formatRemaining` and `formatCountdown` from the Quorum page so they can be unit-tested without rendering React. Updated `frontend/admin-portal/app/(dashboard)/quorum/page.tsx` to import from the new module (kept legacy copies for backwards compatibility during transition).
