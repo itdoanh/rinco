@@ -196,6 +196,9 @@ func newTieredStore(cfg *platform.Config) *tieredStore {
 }
 
 func (t *tieredStore) EnsureBuckets(ctx context.Context) error {
+	if t == nil || t.client == nil {
+		return nil
+	}
 	for _, b := range []string{t.hot, t.cold} {
 		if b == "" {
 			continue

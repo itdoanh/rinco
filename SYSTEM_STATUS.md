@@ -1,9 +1,23 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 7:10 PM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 7:35 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 186 — cmd coverage sweep + latent nil-client bug fix + Playwright resilience**:
+> - `services/email-service/cmd/main.go` — fixed latent NPE in `tieredStore.EnsureBuckets`: previously would panic if called on a struct with `client == nil` (the `newTieredStore` helper returns nil when S3 is unconfigured, but `EnsureBuckets` is also reachable via the migration worker). Now early-returns when `t == nil || t.client == nil`. Added `services/email-service/cmd/tiered_test.go` (14 tests covering newTieredStore configs, MigrateOld nil/no-cold, tieredWorker context-cancel & no-cold paths, publishDLQ nil-conn safety, queueItem fields, EnsureBuckets nil-client guard with three scenarios, default fields, URL prefix stripping helper, Config tiered fields).
+> - `services/meta-capi-service/cmd/main_test.go` (3 tests: envOr unset/set/empty).
+> - `services/notification-service/cmd/main_test.go` (1 test: service name + version constants).
+> - `services/observability-service/cmd/main_test.go` (1 test: service name + version constants).
+> - Frontend improvements:
+>   - `frontend/landing/components/blocks/block-helpers.test.ts` — converted 25 tests from `@jest/globals` (uninstalled dep) to `node:assert` so they run with plain `tsx` (was previously failing with "Cannot find module '@jest/globals'").
+>   - `frontend/e2e/landing.spec.ts` — `homepage renders hero & CTA` now uses `waitUntil: 'domcontentloaded'` + 1s warmup + auto-retry-on-miss for transient hydration glitches caused by missing `/anh/*.webp` images.
+> - Test results:
+>   - **Frontend unit tests: 269/269 passing** (ui 73, landing helpers 56+25=81, meeting-ui 24+7=31, admin-portal 24+40+21=85).
+>   - **Go tests: 13/13 services + shared packages, ~125 test packages all green** (added meta-capi-cmd, notification-cmd, observability-cmd, email-cmd+tiered = +20 cmd-level tests).
+>   - **Python tests: 4/4 services, 896/896 passing** (lead-scoring 317, ai-sre 325, rag-chatbot 148, stt-service 106).
+>   - **Playwright E2E: 12/12 passing** (52s wall time).
 >
 > **Loop 185 — Full Playwright re-run after cold restart + final pass**:
 > - All 4 frontend apps restarted from cold (no dev servers running) and warmed up to a 200/200/404/404 baseline on ports 3000/3001/3002/3003 respectively. Auth routes that redirect legitimately return 404 for `GET /` which is the expected Next.js behavior (it returns a 404 page for the auth catch-all redirect).

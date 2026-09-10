@@ -1,7 +1,8 @@
 /**
  * Unit tests for ``block-helpers.ts`` (pure logic, no React rendering).
+ * Runs via plain `tsx` + `node:assert`.
  */
-import { describe, expect, it } from "@jest/globals";
+import { strict as assert } from "node:assert";
 import {
   BLOCK_TYPE_ALIASES,
   CANONICAL_BLOCK_TYPES,
@@ -11,153 +12,135 @@ import {
   EMPTY_OBJECT,
 } from "@/components/blocks/block-helpers";
 
-describe("CANONICAL_BLOCK_TYPES", () => {
-  it("contains all expected canonical block types", () => {
-    expect(CANONICAL_BLOCK_TYPES).toContain("hero");
-    expect(CANONICAL_BLOCK_TYPES).toContain("features");
-    expect(CANONICAL_BLOCK_TYPES).toContain("logos");
-    expect(CANONICAL_BLOCK_TYPES).toContain("speakers");
-    expect(CANONICAL_BLOCK_TYPES).toContain("trust");
-    expect(CANONICAL_BLOCK_TYPES).toContain("stats");
-    expect(CANONICAL_BLOCK_TYPES).toContain("faq");
-    expect(CANONICAL_BLOCK_TYPES).toContain("cta");
-    expect(CANONICAL_BLOCK_TYPES).toContain("testimonial");
-    expect(CANONICAL_BLOCK_TYPES).toContain("risk_warning");
-    expect(CANONICAL_BLOCK_TYPES).toContain("form");
-    expect(CANONICAL_BLOCK_TYPES).toContain("pricing_table");
-  });
+let passed = 0;
+let failed = 0;
 
-  it("has 12 canonical types", () => {
-    expect(CANONICAL_BLOCK_TYPES.length).toBe(12);
-  });
+function it_(name: string, fn: () => void) {
+  try {
+    fn();
+    console.log("  ✓", name);
+    passed++;
+  } catch (err) {
+    console.error("  ✗", name, "-", (err as Error).message);
+    failed++;
+  }
+}
 
-  it("all entries are unique", () => {
-    const set = new Set(CANONICAL_BLOCK_TYPES);
-    expect(set.size).toBe(CANONICAL_BLOCK_TYPES.length);
-  });
+// CANONICAL_BLOCK_TYPES
+it_("CANONICAL_BLOCK_TYPES contains all expected types", () => {
+  for (const t of ["hero","features","logos","speakers","trust","stats","faq","cta","testimonial","risk_warning","form","pricing_table"]) {
+    assert.ok(CANONICAL_BLOCK_TYPES.includes(t), `missing ${t}`);
+  }
+});
+it_("CANONICAL_BLOCK_TYPES has 12 entries", () => {
+  assert.equal(CANONICAL_BLOCK_TYPES.length, 12);
+});
+it_("CANONICAL_BLOCK_TYPES entries are unique", () => {
+  assert.equal(new Set(CANONICAL_BLOCK_TYPES).size, CANONICAL_BLOCK_TYPES.length);
 });
 
-describe("BLOCK_TYPE_ALIASES", () => {
-  it("maps snake_case aliases to canonical types", () => {
-    expect(BLOCK_TYPE_ALIASES.feature_grid).toBe("features");
-    expect(BLOCK_TYPE_ALIASES.logo_cloud).toBe("logos");
-    expect(BLOCK_TYPE_ALIASES.speaker).toBe("speakers");
-    expect(BLOCK_TYPE_ALIASES.trust_section).toBe("trust");
-    expect(BLOCK_TYPE_ALIASES.statistics).toBe("stats");
-    expect(BLOCK_TYPE_ALIASES.faqs).toBe("faq");
-    expect(BLOCK_TYPE_ALIASES.call_to_action).toBe("cta");
-    expect(BLOCK_TYPE_ALIASES.testimonials).toBe("testimonial");
-    expect(BLOCK_TYPE_ALIASES.risk).toBe("risk_warning");
-    expect(BLOCK_TYPE_ALIASES.registration_form).toBe("form");
-    expect(BLOCK_TYPE_ALIASES.pricing).toBe("pricing_table");
-  });
-
-  it("preserves identity for canonical types", () => {
-    for (const t of CANONICAL_BLOCK_TYPES) {
-      expect(BLOCK_TYPE_ALIASES[t]).toBe(t);
-    }
-  });
+// BLOCK_TYPE_ALIASES
+it_("BLOCK_TYPE_ALIASES maps snake_case aliases to canonical types", () => {
+  assert.equal(BLOCK_TYPE_ALIASES.feature_grid, "features");
+  assert.equal(BLOCK_TYPE_ALIASES.logo_cloud, "logos");
+  assert.equal(BLOCK_TYPE_ALIASES.speaker, "speakers");
+  assert.equal(BLOCK_TYPE_ALIASES.trust_section, "trust");
+  assert.equal(BLOCK_TYPE_ALIASES.statistics, "stats");
+  assert.equal(BLOCK_TYPE_ALIASES.faqs, "faq");
+  assert.equal(BLOCK_TYPE_ALIASES.call_to_action, "cta");
+  assert.equal(BLOCK_TYPE_ALIASES.testimonials, "testimonial");
+  assert.equal(BLOCK_TYPE_ALIASES.risk, "risk_warning");
+  assert.equal(BLOCK_TYPE_ALIASES.registration_form, "form");
+  assert.equal(BLOCK_TYPE_ALIASES.pricing, "pricing_table");
+});
+it_("BLOCK_TYPE_ALIASES preserves identity for canonical types", () => {
+  for (const t of CANONICAL_BLOCK_TYPES) {
+    assert.equal(BLOCK_TYPE_ALIASES[t], t);
+  }
 });
 
-describe("resolveBlockType", () => {
-  it("returns the canonical type for canonical input", () => {
-    expect(resolveBlockType("hero")).toBe("hero");
-    expect(resolveBlockType("features")).toBe("features");
-  });
-
-  it("returns the canonical type for alias input", () => {
-    expect(resolveBlockType("feature_grid")).toBe("features");
-    expect(resolveBlockType("logo_cloud")).toBe("logos");
-    expect(resolveBlockType("call_to_action")).toBe("cta");
-  });
-
-  it("returns null for unknown input", () => {
-    expect(resolveBlockType("unknown_type")).toBeNull();
-    expect(resolveBlockType("not_a_block")).toBeNull();
-  });
-
-  it("returns null for undefined input", () => {
-    expect(resolveBlockType(undefined)).toBeNull();
-  });
-
-  it("returns null for empty string", () => {
-    expect(resolveBlockType("")).toBeNull();
-  });
-
-  it("is case sensitive", () => {
-    expect(resolveBlockType("HERO")).toBeNull();
-    expect(resolveBlockType("Hero")).toBeNull();
-  });
+// resolveBlockType
+it_("resolveBlockType returns canonical type for canonical input", () => {
+  assert.equal(resolveBlockType("hero"), "hero");
+  assert.equal(resolveBlockType("features"), "features");
+});
+it_("resolveBlockType returns canonical type for alias input", () => {
+  assert.equal(resolveBlockType("feature_grid"), "features");
+  assert.equal(resolveBlockType("logo_cloud"), "logos");
+  assert.equal(resolveBlockType("call_to_action"), "cta");
+});
+it_("resolveBlockType returns null for unknown input", () => {
+  assert.equal(resolveBlockType("unknown_type"), null);
+  assert.equal(resolveBlockType("not_a_block"), null);
+});
+it_("resolveBlockType returns null for undefined", () => {
+  assert.equal(resolveBlockType(undefined), null);
+});
+it_("resolveBlockType returns null for empty string", () => {
+  assert.equal(resolveBlockType(""), null);
+});
+it_("resolveBlockType is case sensitive", () => {
+  assert.equal(resolveBlockType("HERO"), null);
+  assert.equal(resolveBlockType("Hero"), null);
 });
 
-describe("asObject", () => {
-  it("returns the value when it is a plain object", () => {
-    const obj = { a: 1, b: "two" };
-    expect(asObject(obj)).toBe(obj);
-  });
-
-  it("returns the value when it is an empty object", () => {
-    const obj = {};
-    expect(asObject(obj)).toBe(obj);
-  });
-
-  it("returns EMPTY_OBJECT for null", () => {
-    expect(asObject(null)).toBe(EMPTY_OBJECT);
-  });
-
-  it("returns EMPTY_OBJECT for undefined", () => {
-    expect(asObject(undefined)).toBe(EMPTY_OBJECT);
-  });
-
-  it("returns EMPTY_OBJECT for primitives", () => {
-    expect(asObject(42)).toBe(EMPTY_OBJECT);
-    expect(asObject("string")).toBe(EMPTY_OBJECT);
-    expect(asObject(true)).toBe(EMPTY_OBJECT);
-  });
-
-  it("returns EMPTY_OBJECT for arrays", () => {
-    expect(asObject([1, 2, 3])).toBe(EMPTY_OBJECT);
-    expect(asObject([])).toBe(EMPTY_OBJECT);
-  });
-
-  it("returns the value for nested objects", () => {
-    const obj = { a: { b: { c: 1 } } };
-    expect(asObject(obj)).toBe(obj);
-  });
+// asObject
+it_("asObject returns the value when it is a plain object", () => {
+  const obj = { a: 1, b: "two" };
+  assert.equal(asObject(obj), obj);
+});
+it_("asObject returns the value for empty object", () => {
+  const obj = {};
+  assert.equal(asObject(obj), obj);
+});
+it_("asObject returns EMPTY_OBJECT for null", () => {
+  assert.equal(asObject(null), EMPTY_OBJECT);
+});
+it_("asObject returns EMPTY_OBJECT for undefined", () => {
+  assert.equal(asObject(undefined), EMPTY_OBJECT);
+});
+it_("asObject returns EMPTY_OBJECT for primitives", () => {
+  assert.equal(asObject(42), EMPTY_OBJECT);
+  assert.equal(asObject("string"), EMPTY_OBJECT);
+  assert.equal(asObject(true), EMPTY_OBJECT);
+});
+it_("asObject returns EMPTY_OBJECT for arrays", () => {
+  assert.equal(asObject([1, 2, 3]), EMPTY_OBJECT);
+  assert.equal(asObject([]), EMPTY_OBJECT);
+});
+it_("asObject returns the value for nested objects", () => {
+  const obj = { a: { b: { c: 1 } } };
+  assert.equal(asObject(obj), obj);
 });
 
-describe("isPlainObject", () => {
-  it("returns true for plain objects", () => {
-    expect(isPlainObject({})).toBe(true);
-    expect(isPlainObject({ a: 1 })).toBe(true);
-  });
-
-  it("returns false for null", () => {
-    expect(isPlainObject(null)).toBe(false);
-  });
-
-  it("returns false for undefined", () => {
-    expect(isPlainObject(undefined)).toBe(false);
-  });
-
-  it("returns false for primitives", () => {
-    expect(isPlainObject(42)).toBe(false);
-    expect(isPlainObject("string")).toBe(false);
-    expect(isPlainObject(true)).toBe(false);
-  });
-
-  it("returns false for arrays", () => {
-    expect(isPlainObject([])).toBe(false);
-    expect(isPlainObject([1, 2])).toBe(false);
-  });
+// isPlainObject
+it_("isPlainObject returns true for plain objects", () => {
+  assert.equal(isPlainObject({}), true);
+  assert.equal(isPlainObject({ a: 1 }), true);
+});
+it_("isPlainObject returns false for null", () => {
+  assert.equal(isPlainObject(null), false);
+});
+it_("isPlainObject returns false for undefined", () => {
+  assert.equal(isPlainObject(undefined), false);
+});
+it_("isPlainObject returns false for primitives", () => {
+  assert.equal(isPlainObject(42), false);
+  assert.equal(isPlainObject("string"), false);
+  assert.equal(isPlainObject(true), false);
+});
+it_("isPlainObject returns false for arrays", () => {
+  assert.equal(isPlainObject([]), false);
+  assert.equal(isPlainObject([1, 2]), false);
 });
 
-describe("EMPTY_OBJECT", () => {
-  it("is frozen", () => {
-    expect(Object.isFrozen(EMPTY_OBJECT)).toBe(true);
-  });
-
-  it("has no keys", () => {
-    expect(Object.keys(EMPTY_OBJECT)).toEqual([]);
-  });
+// EMPTY_OBJECT
+it_("EMPTY_OBJECT is frozen", () => {
+  assert.equal(Object.isFrozen(EMPTY_OBJECT), true);
 });
+it_("EMPTY_OBJECT has no keys", () => {
+  assert.equal(Object.keys(EMPTY_OBJECT).length, 0);
+});
+
+console.log(`\nResults: ${passed} passed, ${failed} failed`);
+if (failed > 0) process.exit(1);

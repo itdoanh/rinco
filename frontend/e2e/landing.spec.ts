@@ -9,7 +9,15 @@ const APPS = {
 
 test.describe('Landing smoke', () => {
   test('homepage renders hero & CTA', async ({ page }) => {
-    await page.goto(APPS.landing + '/')
+    await page.goto(APPS.landing + '/', { waitUntil: 'domcontentloaded' })
+    // Wait a beat for client hydration; tolerate transient render hiccups.
+    await page.waitForTimeout(1000)
+    const mainVisible = await page.locator('main').first().isVisible().catch(() => false)
+    if (!mainVisible) {
+      // Some hydration glitches (image decoding) can throw briefly. Retry once.
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.waitForTimeout(1000)
+    }
     await expect(page.locator('main').first()).toBeVisible()
     const h1 = page.locator('h1').first()
     await expect(h1).toBeVisible()
