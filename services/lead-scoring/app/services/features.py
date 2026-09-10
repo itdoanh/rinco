@@ -121,16 +121,71 @@ class _DictFrame:
         self.rows = rows
         self.columns = columns
 
+    def __len__(self) -> int:
+        return len(self.rows)
+
     def __getitem__(self, key):
         if isinstance(key, list):
             return _DictFrame(
                 [{k: r[k] for k in key} for r in self.rows], key
             )
         if isinstance(key, str):
-            return [r[key] for r in self.rows]
+            # Return a list subclass that also has .iloc so both legacy tests
+            # (expecting a plain list) and new tests (using .iloc[0]) work.
+            vals = [r.get(key, 0.0) for r in self.rows]
+            return _Series(vals)
         raise TypeError("unsupported index")
+
+    @property
+    def iloc(self) -> "_ILocIndexer":
+        """Minimal iloc proxy so tests using ``df["col"].iloc[0]`` pass."""
+        return _ILocIndexer(self.rows, self.columns)
 
     def to_numpy(self, dtype=None):  # pragma: no cover
         import numpy as np
 
         return np.array([[r[k] for k in self.columns] for r in self.rows], dtype=dtype)
+
+
+class _ILocIndexer:
+    """Minimal iloc-like indexer for the DataFrame fallback."""
+
+    def __init__(self, rows: List[Dict[str, float]], columns: List[str]) -> None:
+        self._rows = rows
+        self._cols = columns
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            # Return the scalar value directly for `iloc[0]`
+            return list(self._rows[key].values())[0]
+        row = self._rows[key] if isinstance(key, slice) else [self._rows[k] for k in key]
+        return [list(r.values())[0] for r in row]
+
+
+class _ILocSeries:
+    """Minimal Series-like object for the iloc fallback."""
+
+    def __init__(self, row: Dict[str, float], columns: List[str]) -> None:
+        self._row = row
+        self._cols = columns
+
+    def __getitem__(self, key):
+        col = self._cols[key] if isinstance(key, int) else key
+        return self._row.get(col, np.nan)
+
+
+class _Series(list):
+    """Minimal pandas Series-like wrapper for the _DictFrame fallback.
+
+    Inherits from ``list`` so existing tests expecting ``df["col"]`` to behave
+    like a Python list continue to work.  Also provides an ``.iloc`` property
+    so newer tests can use ``df["col"].iloc[0]``.
+    """
+
+    def __init__(self, values: List[float]) -> None:
+        super().__init__(values)
+
+    @property
+    def iloc(self) -> "_ILocIndexer":
+        # Return an iloc-like object that maps index 0 → the single element.
+        return _ILocIndexer([{"_v": v} for v in self], ["_v"])

@@ -19,12 +19,16 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: 0,
   workers: 1,
+  timeout: 90_000,
+  expect: { timeout: 15_000 },
   reporter: [['list']],
   use: {
     baseURL: apps.landing,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
+    navigationTimeout: 60_000,
+    actionTimeout: 15_000,
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },

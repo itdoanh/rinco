@@ -16,7 +16,8 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./*"],
-      "@rinco/ui": ["../../packages/frontend/ui"]
+      "@rinco/ui": ["../../packages/frontend/ui"],
+      "@/components/ui/*": ["../../packages/frontend/ui/components/ui/*"]
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],

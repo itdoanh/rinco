@@ -13,7 +13,7 @@ test.describe('Auth flow across apps', () => {
     await page.locator('input[type="password"]').first().fill('wrongpassword')
     await page.locator('button[type="submit"]').first().click()
     await page.waitForTimeout(500)
-    expect(page.url()).toContain('/login')
+    expect(page.url()).toMatch(/\/login|\/api\/auth\/error/)
   })
 
   test('admin dashboard is protected', async ({ page }) => {

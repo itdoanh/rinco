@@ -76,6 +76,8 @@ def test_featurize_returns_dataframe():
     features = LeadFeatures(
         email="test@example.com",
         phone="0912345678",
+        has_phone=True,
+        has_email=True,
         page_views=5,
         time_on_site_seconds=300,
         fbclid="abc",
