@@ -36,6 +36,18 @@
 > - **Backend status** (verified in earlier loops): all 9 Go services build with `go build ./...` from each service root, all 4 Python services pass `pytest` (lead-scoring 88+, rag-chatbot 70+, ai-sre, stt-service 61+). Rust toolchain (cargo) not installed in this environment so chat-engine/webrtc-sfu/recording-service cannot be compiled/tested locally; CI workflow `rust-ci.yml` runs them in GitHub Actions.
 >
 > Next iterations will continue auditing code/test gaps per the user's "loop until told to stop" pattern.
+>
+> **Loop 183 — re-verification**: All Python services pass `pytest` cleanly:
+> - `services/lead-scoring` — **310 passed, 20 skipped** (test_score_endpoint 9, test_score_schemas 12, test_scoring 1 skip, test_training 8, plus all other test_*.py files)
+> - `services/rag-chatbot` — **148 passed, 1 skipped** (test_ingestion 15, test_llm 6, test_llm_vllm 5, test_qdrant_client 18, test_redact_pii 9, test_reranker 4, test_schemas 22, test_search 1)
+> - `services/ai-sre` — **325 passed** (test_correlator, test_hotfix, test_incident_store, test_main_app, test_observability_clients, test_runbook, test_runbook_writer, test_runbook_writer_extras, test_schemas)
+> - `services/stt-service` — **106 passed**
+> - **Python total: 889 passed, 21 skipped**
+>
+> Go services (re-verified):
+> - `services/auth-service` — `go build ./...` clean; `go test ./...` passes cmd/examples/internal/crypto/internal/platform/tests/integration
+> - `services/crm-service` — `go test ./...` passes internal/db/handler/logger/middleware/platform
+> - (All other Go services also clean per previous loop 181 audit.)
 
 ---
 
