@@ -1,9 +1,15 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-10 (Thursday, 8:05 PM UTC+7)
+> **Generated**: 2026-09-10 (Thursday, 8:40 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 188 — quorum helper extraction +11 unit tests + full-stack green**:
+> - `frontend/admin-portal/lib/quorum-helpers.ts` — extracted `formatRemaining` and `formatCountdown` from the Quorum page so they can be unit-tested without rendering React. Updated `frontend/admin-portal/app/(dashboard)/quorum/page.tsx` to import from the new module (kept legacy copies for backwards compatibility during transition).
+> - `frontend/admin-portal/lib/quorum-helpers.test.ts` (11 tests: formatRemaining positive/negative/zero/partial-second-rounding, formatCountdown 0/negative/under-a-minute/zero-pad/minute-boundary/multi-minute/big-value).
+> - Verified admin-portal /quorum page still returns 200.
+> - **Frontend total: 295/295 unit tests passing** (+11 quorum helpers), 12/12 Playwright E2E green.
 >
 > **Loop 187 — capifeedback edge cases + final all-green verification**:
 > - `packages/go/capifeedback/capifeedback_more_test.go` (8 new tests covering `parseDuration` edge cases: ms/h/-5s/0s/whitespace/invalid/default, `parseInt` edge cases including overflow >int64, `Publisher` nil-safety, `Event` zero value, `Event` non-empty value, `PublisherConfig` zero/negative timeout and zero MaxRetries, HTTP request construction).

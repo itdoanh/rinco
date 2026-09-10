@@ -28,6 +28,7 @@ import {
   type QuorumRequest,
   type QuorumStatus,
 } from "@/store/admin-stores";
+import { formatRemaining, formatCountdown } from "@/lib/quorum-helpers";
 
 const statusMeta: Record<
   QuorumStatus,
@@ -68,11 +69,11 @@ const SUPPORTED_ACTIONS: { value: string; label: string }[] = [
   { value: "dns.rotate", label: "Rotate DNS Keys" },
 ];
 
-function formatRemaining(expiresAt: string, now: number): number {
+function formatRemainingLegacy(expiresAt: string, now: number): number {
   return Math.round((new Date(expiresAt).getTime() - now) / 1000);
 }
 
-function formatCountdown(seconds: number): string {
+function formatCountdownLegacy(seconds: number): string {
   if (seconds <= 0) return "0:00";
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
