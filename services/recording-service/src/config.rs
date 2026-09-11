@@ -31,7 +31,7 @@ impl Config {
             std::env::var(key).unwrap_or_else(|_| default.to_string())
         }
         Ok(Self {
-            http_addr: env("RECORDING_HTTP_ADDR", "0.0.0.0:8085"),
+            http_addr: env("RECORDING_HTTP_ADDR", "0.0.0.0:8096"),
             database_url: env(
                 "RECORDING_DATABASE_URL",
                 "postgres://rinco:rinco@postgres:5432/rinco_recordings",

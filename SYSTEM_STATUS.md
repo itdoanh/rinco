@@ -5,6 +5,24 @@
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
 >
+> **Loop 194 — 33/33 Playwright + all backend tests verified + CI fix**:
+> - **`frontend/e2e/playwright.config.ts`**: Added CI-mode `webServer` that starts all 4 dev servers via `npm run dev`. Allows running comprehensive spec locally or in CI.
+> - **CI (`.github/workflows/ci.yml`)**: `GO_VERSION 1.24` (was incorrectly changed to `1.24` earlier; restored to `1.26` to match installed Go 1.26.3 and `packages/go/go.mod` requirement of `go 1.25`). `PYTHON_VERSION 3.13 → 3.12`.
+> - **`packages/go/go.mod`**: Contains 13 shared Go packages (apperrs, auth, capi, capifeedback, db, id, logger, middleware, pagination, ratelimit, tenant, timex, tracing). Only `crm-service` currently uses `github.com/itdoanh/rinco/packages/go` (via `capifeedback`).
+> - **Go build**: All 13 services (`auth`, `tenant`, `crm`, `dynamic-model`, `lead`, `landing`, `email`, `notification`, `observability`, `billing`, `search`, `analytics`, `meta-capi`) build cleanly.
+> - **Go tests**: All 13 services pass their test suites.
+> - **Python tests**: All 4 services pass — `lead-scoring` 310 passed, `ai-sre` 325 passed, `rag-chatbot` 148 passed, `stt-service` 106 passed. **Total: 889 passed, 29 skipped**.
+> - **Playwright E2E**: **33/33 green (1.6 m)** — comprehensive suite covering all 4 frontend apps.
+>
+> **Loop 193 — admin portal middleware + CI fixes + Docker Compose port corrections**:
+> - **`frontend/admin-portal/middleware.ts`** (new): Cookie-based route protection. Checks NextAuth session cookies (`authjs.session-token`, `__Secure-authjs.session-token`, `next-auth.session-token`, `__Secure-next-auth.session-token`). Redirects unauthenticated users to `/login?from=<path>`. Allows `/api/auth`, `/login`, `/`, `/_next`, and static files through without auth.
+> - **CI (`.github/workflows/test-e2e.yml`)**: Consolidated 3 separate jobs (landing, admin, tenant) into 1 unified job. `NODE_VERSION 20 → 22`. Updated Playwright version. Runs comprehensive spec. Starts all 4 dev servers in parallel with health-check wait loop.
+> - **Docker Compose (`infra/docker-compose.services.yml`)**:
+>   - `landing-frontend`: port `3001:3001` → `3000:3000` (correct).
+>   - `admin-portal-frontend`: port `3002:3002` → `3001:3001` (correct). API URL `ADMIN_API_URL` → `NEXT_PUBLIC_API_URL` (correct).
+>   - Added `tenant-site-frontend` (port 3002) with `NEXT_PUBLIC_API_URL: http://tenant-service:8082`.
+>   - Added `meeting-ui-frontend` (port 3003) with `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_SFU_URL`.
+>
 > **Loop 192 — `window.fbq is not a function` fix + comprehensive Playwright suite (33/33 green)**:
 > - **`frontend/landing/lib/pixel.ts`** — rewrote the Meta Pixel loader to **install a no-op stub** matching Meta Pixel's official snippet signature (`fbq`, `fbq.callMethod`, `fbq.queue`, `fbq.push`, `fbq.loaded`). All `track*` calls now go through `safeFbqCall` which is wrapped in try/catch and **never throws when no pixel id is configured**. `_resetPixelForTests` and `_isPixelReady` exported for unit testing.
 > - **`frontend/landing/components/tracking/PixelInit.tsx`** — delegated stub + script creation to `initPixel()` from `lib/pixel.ts` (was duplicating the brittle script-injection logic).

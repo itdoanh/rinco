@@ -170,7 +170,7 @@ type config struct {
 func loadConfig() *config {
 	return &config{
 		Env:         platform.Getenv("ENV", "development"),
-		HTTPAddr:    platform.Getenv("LEAD_HTTP_ADDR", ":8083"),
+		HTTPAddr:    platform.Getenv("LEAD_HTTP_ADDR", ":8085"),
 		DatabaseURL: os.Getenv("LEAD_DATABASE_URL"),
 		ValkeyAddr:  platform.Getenv("LEAD_VALKEY_URL", "localhost:6379"),
 		ValkeyPwd:   platform.Getenv("LEAD_VALKEY_PASSWORD", "rinco_dev_password"),

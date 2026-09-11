@@ -104,7 +104,6 @@ services:
       INGESTION_HMAC_SECRET: ${INGESTION_HMAC_SECRET:-dev_secret_change_me}
     ports:
       - "8086:8086"
-      - "8090:8090"
     depends_on:
       postgres:
         condition: service_healthy
@@ -192,7 +191,7 @@ services:
       MEILISEARCH_HOST: http://meilisearch:7700
       MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-masterKey}
     ports:
-      - "8098:8098"
+      - "8094:8094"
     depends_on:
       postgres:
         condition: service_healthy
@@ -251,8 +250,10 @@ services:
       SCYLLA_HOST: scylla
       VALKEY_URL: redis://valkey:6379
       RUST_LOG: info
+      CHAT_HTTP_ADDR: 0.0.0.0:8101
+      CHAT_WS_ADDR: 0.0.0.0:8101
     ports:
-      - "8094:8094"
+      - "8101:8101"
     depends_on:
       scylla:
         condition: service_started

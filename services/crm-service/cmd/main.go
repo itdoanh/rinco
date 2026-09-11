@@ -141,7 +141,7 @@ func main() {
 func loadConfig() *config {
 	return &config{
 		Env:            platform.Getenv("ENV", "development"),
-		HTTPAddr:       platform.Getenv("CRM_HTTP_ADDR", ":8082"),
+		HTTPAddr:       platform.Getenv("CRM_HTTP_ADDR", ":8083"),
 		DatabaseURL:    os.Getenv("CRM_DATABASE_URL"),
 		ValkeyAddr:     platform.Getenv("CRM_VALKEY_URL", "localhost:6379"),
 		ValkeyPassword: platform.Getenv("CRM_VALKEY_PASSWORD", "rinco_dev_password"),

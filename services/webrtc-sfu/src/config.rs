@@ -47,7 +47,7 @@ impl Config {
         let _ = std::env::var("SFU_ICE_SERVERS").ok();
         Ok(Self {
             http_addr: std::env::var("SFU_HTTP_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:8084".to_string()),
+                .unwrap_or_else(|_| "0.0.0.0:8095".to_string()),
             public_ip: std::env::var("SFU_PUBLIC_IP").ok(),
             ice_servers: vec![IceServer {
                 urls: vec!["stun:stun.l.google.com:19302".into()],

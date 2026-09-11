@@ -56,15 +56,15 @@ TENANT_HTTP_ADDR=:8082
 TENANT_DATABASE_URL=postgres://postgres:password@localhost:5432/tenant
 
 # Lead Service
-LEAD_HTTP_ADDR=:8083
+LEAD_HTTP_ADDR=:8085
 LEAD_DATABASE_URL=postgres://postgres:password@localhost:5432/lead
 
 # CRM Service
-CRM_HTTP_ADDR=:8084
+CRM_HTTP_ADDR=:8083
 CRM_DATABASE_URL=postgres://postgres:password@localhost:5432/crm
 
 # Landing Service
-LANDING_HTTP_ADDR=:8085
+LANDING_HTTP_ADDR=:8086
 LANDING_DATABASE_URL=postgres://postgres:password@localhost:5432/landing
 
 # Frontend
@@ -102,19 +102,31 @@ $COMPOSE_CMD -f infra/docker-compose.services.yml exec -T postgres psql -U postg
 echo "🚀 Starting all services..."
 $COMPOSE_CMD -f infra/docker-compose.services.yml up -d
 
-# Start frontend dev servers
+# Start all 4 frontend dev servers
 echo "🎨 Starting frontend development servers..."
 
 # Start landing
 cd frontend/landing
-npm run dev &
+npm run dev -p 3000 &
 LANDING_PID=$!
 cd ../..
 
 # Start admin portal
 cd frontend/admin-portal
-npm run dev &
+npm run dev -p 3001 &
 ADMIN_PID=$!
+cd ../..
+
+# Start tenant-site
+cd frontend/tenant-site
+npm run dev -p 3002 &
+TENANT_PID=$!
+cd ../..
+
+# Start meeting-ui
+cd frontend/meeting-ui
+npm run dev -p 3003 &
+MEETING_PID=$!
 cd ../..
 
 echo ""
@@ -123,11 +135,13 @@ echo ""
 echo "Services:"
 echo "  - Landing Page:  http://localhost:3000"
 echo "  - Admin Portal:  http://localhost:3001"
+echo "  - Tenant Site:   http://localhost:3002"
+echo "  - Meeting UI:    http://localhost:3003"
 echo "  - Auth Service:  http://localhost:8081"
 echo "  - Postgres:      localhost:5432"
-echo "  - Redis:         localhost:6379"
+echo "  - Valkey:        localhost:6379"
 echo ""
 echo "Press Ctrl+C to stop all services."
 
 # Wait for all background processes
-wait
+wait $LANDING_PID $ADMIN_PID $TENANT_PID $MEETING_PID 2>/dev/null || true

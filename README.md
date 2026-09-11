@@ -2,7 +2,7 @@
 
 > **Multi-tenant SaaS Platform** — Polyglot microservices với Zero-Trust Security, AI Integration, và real-time collaboration.
 
-[![Go](https://img.shields.io/badge/Go-1.23-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.24-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![Rust](https://img.shields.io/badge/Rust-1.81-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
@@ -39,11 +39,11 @@ Nền tảng phù hợp với **~10K–1M MAU**, scale theo chiều ngang nhờ 
 ### Languages
 | Layer | Language | Phiên bản |
 |-------|----------|-----------|
-| Backend (Core APIs) | Go | 1.23+ |
+| Backend (Core APIs) | Go | 1.24+ |
 | Backend (Real-time / Media) | Rust | 1.81+ |
 | Backend (AI / ML) | Python | 3.12+ |
 | Frontend | TypeScript | 5.6+ |
-| Runtime (JS) | Bun / Node.js | 1.x / 20+ |
+| Runtime (JS) | Bun / Node.js | 1.x / 22+ |
 
 ### Frameworks
 - **Go**: Echo v4, pgx/v5, paseto, zap, OpenTelemetry SDK
@@ -128,7 +128,7 @@ Nền tảng phù hợp với **~10K–1M MAU**, scale theo chiều ngang nhờ 
 | Tool | Phiên bản | Mục đích |
 |------|-----------|----------|
 | Docker + Compose | 24+ / v2 | Local infrastructure |
-| Go | 1.23+ | Backend Go services |
+| Go | 1.24+ | Backend Go services |
 | Rust | 1.81+ | Rust real-time services |
 | Python | 3.12+ | AI services |
 | Node.js | 20+ | Frontend tooling |
@@ -194,9 +194,9 @@ make deploy
 
 | Service | Port | Database | Mô tả | README |
 |---------|------|----------|-------|--------|
-| **lead-scoring** | 8090 | PostgreSQL | XGBoost lead scoring | [link](services/lead-scoring/README.md) |
+| **lead-scoring** | 8092 | PostgreSQL | XGBoost lead scoring | [link](services/lead-scoring/README.md) |
 | **rag-chatbot** | 8091 | Qdrant + vLLM | RAG pipeline, embeddings, retrieval | [link](services/rag-chatbot/README.md) |
-| **ai-sre** | 8092 | ClickHouse + vLLM | Incident correlator + auto-hotfix | [link](services/ai-sre/README.md) |
+| **ai-sre** | 8090 | ClickHouse + vLLM | Incident correlator + auto-hotfix | [link](services/ai-sre/README.md) |
 | **stt-service** | 8093 | - | Whisper transcription + diarization | [link](services/stt-service/README.md) |
 
 ### Rust Services (3)

@@ -59,8 +59,8 @@ impl Config {
     pub fn from_env() -> Result<Self, crate::error::ChatError> {
         let _ = dotenv_lite::load();
         Ok(Self {
-            http_addr: env_or("CHAT_HTTP_ADDR", "0.0.0.0:8080"),
-            ws_addr: env_or("CHAT_WS_ADDR", "0.0.0.0:8081"),
+            http_addr: env_or("CHAT_HTTP_ADDR", "0.0.0.0:8094"),
+            ws_addr: env_or("CHAT_WS_ADDR", "0.0.0.0:8094"),
             scylla_url: env_or(
                 "CHAT_SCYLLA_URL",
                 "scylla-node1,scylla-node2,scylla-node3",
