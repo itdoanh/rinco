@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Inter, Nunito } from "next/font/google";
 import { cn } from "@/lib/utils";
 import "./globals.css";
@@ -47,7 +48,9 @@ export default function RootLayout({
         "font-sans antialiased"
       )}>
         <Providers>
-          <UTMCapture />
+          <Suspense fallback={null}>
+            <UTMCapture />
+          </Suspense>
           {children}
           <Tracker />
         </Providers>

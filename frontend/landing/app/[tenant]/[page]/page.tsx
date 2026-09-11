@@ -1,11 +1,9 @@
 'use client';
 
-import { use } from 'react';
-import { notFound } from 'next/navigation';
+import { use, useEffect } from 'react';
 import { BlockRenderer } from '@/components/blocks';
-import { useLandingStore, type BlockData } from '@/lib/store';
+import { useLandingStore } from '@/lib/store';
 import { Skeleton } from '@rinco/ui'
-import { useEffect } from 'react';
 
 interface PageProps {
   params: Promise<{
@@ -66,8 +64,8 @@ export default function DynamicPage({ params }: PageProps) {
     <main className="min-h-screen">
       <BlockRenderer
         blocks={pageData.blocks}
-        tenantId={pageData.tenant_id}
-        pageId={pageData.id}
+        tenantSlug={pageData.tenant_id}
+        pageSlug={pageData.slug}
       />
     </main>
   );

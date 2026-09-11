@@ -1,9 +1,8 @@
 'use client';
 
 import { use, useEffect } from 'react';
-import { notFound } from 'next/navigation';
 import { BlockRenderer } from '@/components/blocks';
-import { useLandingStore, type BlockData } from '@/lib/store';
+import { useLandingStore } from '@/lib/store';
 import { Skeleton } from '@rinco/ui'
 
 interface TenantPageProps {
@@ -64,8 +63,8 @@ export default function TenantPage({ params }: TenantPageProps) {
     <main className="min-h-screen">
       <BlockRenderer
         blocks={pageData.blocks}
-        tenantId={pageData.tenant_id}
-        pageId={pageData.id}
+        tenantSlug={pageData.tenant_id}
+        pageSlug={pageData.slug}
       />
     </main>
   );

@@ -37,7 +37,6 @@ export async function GET(
     console.error('Page fetch error:', error);
 
     // Return demo data for development
-    const { tenant } = await params;
     return NextResponse.json({
       id: `page-default-${tenant}`,
       slug: 'default',
