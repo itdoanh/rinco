@@ -359,10 +359,10 @@ services:
     container_name: rinco-landing-frontend
     restart: unless-stopped
     environment:
-      LANDING_API_URL: http://landing-service:8086
+      NEXT_PUBLIC_API_URL: http://landing-service:8086
       NEXT_PUBLIC_FB_PIXEL_ID: ${NEXT_PUBLIC_FB_PIXEL_ID:-}
     ports:
-      - "3001:3001"
+      - "3000:3000"
     depends_on:
       - landing-service
     networks:
@@ -373,9 +373,36 @@ services:
     container_name: rinco-admin-portal
     restart: unless-stopped
     environment:
-      ADMIN_API_URL: http://auth-service:8081
+      NEXT_PUBLIC_API_URL: http://auth-service:8081
+    ports:
+      - "3001:3001"
+    depends_on:
+      - auth-service
+    networks:
+      - rinco-net
+
+  tenant-site-frontend:
+    build: ./frontend/tenant-site
+    container_name: rinco-tenant-site-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://tenant-service:8082
     ports:
       - "3002:3002"
+    depends_on:
+      - tenant-service
+    networks:
+      - rinco-net
+
+  meeting-ui-frontend:
+    build: ./frontend/meeting-ui
+    container_name: rinco-meeting-ui-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_URL: http://auth-service:8081
+      NEXT_PUBLIC_SFU_URL: http://webrtc-sfu:8095
+    ports:
+      - "3003:3003"
     depends_on:
       - auth-service
     networks:

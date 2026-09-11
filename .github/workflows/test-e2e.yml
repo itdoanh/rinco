@@ -6,27 +6,13 @@ on:
   workflow_dispatch:
 
 env:
-  NODE_VERSION: '20'
-  PLAYWRIGHT_VERSION: '1.48.0'
+  NODE_VERSION: '22'
 
 jobs:
-  e2e-landing:
-    name: E2E Landing Page
+  e2e-all-apps:
+    name: E2E All Apps
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    services:
-      landing:
-        image: node:20-alpine
-        ports:
-          - 3000:3000
-        env:
-          NEXT_PUBLIC_API_URL: http://localhost:8080
-        options: >-
-          --health-cmd "curl -f http://localhost:3000"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -35,130 +21,62 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/landing/package-lock.json
 
-      - name: Install dependencies
-        run: |
-          cd frontend/landing
-          npm ci
+      # Install all apps' dependencies in parallel.
+      - name: Install landing deps
+        run: cd frontend/landing && npm ci
 
+      - name: Install admin-portal deps
+        run: cd frontend/admin-portal && npm ci
+
+      - name: Install tenant-site deps
+        run: cd frontend/tenant-site && npm ci
+
+      - name: Install meeting-ui deps
+        run: cd frontend/meeting-ui && npm ci
+
+      # Install Playwright once (shared).
       - name: Install Playwright
-        run: |
-          npx playwright install --with-deps chromium
+        run: npx playwright install --with-deps chromium
 
-      - name: Build application
+      # Start all 4 dev servers in background.
+      - name: Start dev servers
         run: |
-          cd frontend/landing
-          npm run build
+          cd frontend/landing && npm run dev -p 3000 &
+          cd frontend/admin-portal && npm run dev -p 3001 &
+          cd frontend/tenant-site && npm run dev -p 3002 &
+          cd frontend/meeting-ui && npm run dev -p 3003 &
+          echo "Waiting for servers to start..."
+          for port in 3000 3001 3002 3003; do
+            for i in $(seq 1 30); do
+              if curl -sf http://localhost:$port > /dev/null 2>&1; then
+                echo "Port $port is up"
+                break
+              fi
+              sleep 2
+            done
+          done
 
-      - name: Start server
-        run: |
-          cd frontend/landing
-          npm run start &
-          sleep 5
+      - name: Wait for servers
+        run: sleep 10
 
       - name: Run E2E tests
         run: |
-          cd frontend/landing
-          npx playwright test e2e/landing.spec.ts --reporter=list
+          cd frontend
+          npx playwright test e2e/comprehensive.spec.ts --reporter=list --workers=1
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-landing
-          path: frontend/landing/playwright-report/
-          retention-days: 7
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 14
 
       - name: Upload test screenshots
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-screenshots-landing
-          path: frontend/landing/test-results/
-          retention-days: 7
-
-  e2e-admin:
-    name: E2E Admin Portal
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/admin-portal/package-lock.json
-
-      - name: Install dependencies
-        run: |
-          cd frontend/admin-portal
-          npm ci
-
-      - name: Install Playwright
-        run: |
-          npx playwright install --with-deps chromium
-
-      - name: Build application
-        run: |
-          cd frontend/admin-portal
-          npm run build
-
-      - name: Run E2E tests
-        run: |
-          cd frontend/admin-portal
-          npx playwright test e2e/auth.spec.ts e2e/tenant.spec.ts --reporter=list
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-admin
-          path: frontend/admin-portal/playwright-report/
-          retention-days: 7
-
-  e2e-tenant:
-    name: E2E Tenant Site
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/tenant-site/package-lock.json
-
-      - name: Install dependencies
-        run: |
-          cd frontend/tenant-site
-          npm ci
-
-      - name: Install Playwright
-        run: |
-          npx playwright install --with-deps chromium
-
-      - name: Build application
-        run: |
-          cd frontend/tenant-site
-          npm run build
-
-      - name: Run E2E tests
-        run: |
-          cd frontend/tenant-site
-          npx playwright test --reporter=list
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-tenant
-          path: frontend/tenant-site/playwright-report/
-          retention-days: 7
+          name: playwright-screenshots
+          path: frontend/test-results/
+          retention-days: 14

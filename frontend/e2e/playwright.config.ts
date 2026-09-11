@@ -33,4 +33,14 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
   ],
+
+  // Start all 4 dev servers automatically in CI mode.
+  // In local dev, set CI=true to also use this, or start servers manually.
+  webServer: process.env.CI ? {
+    command: 'bash -c "npm run dev -- -p 3000 & npm run dev -- -p 3001 & npm run dev -- -p 3002 & npm run dev -- -p 3003 & wait"',
+    port: 3000,
+    timeout: 180_000,
+    reuseExistingServer: true,
+    url: 'http://localhost:3000',
+  } : undefined,
 })
