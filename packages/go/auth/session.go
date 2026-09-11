@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -163,7 +164,10 @@ func (s *RedisSessionStore) userKey(userID string) string {
 // ===== In-memory store (test/dev) =====
 
 // MemorySessionStore in-memory store dùng cho test/dev.
+//
+// An toàn cho concurrent use: truy cập map được bảo vệ bởi RWMutex.
 type MemorySessionStore struct {
+	mu    sync.RWMutex
 	store map[string]SessionData
 }
 
@@ -177,12 +181,16 @@ func (s *MemorySessionStore) Create(_ context.Context, data SessionData, _ time.
 		data.CreatedAt = time.Now()
 	}
 	data.LastSeenAt = time.Now()
+	s.mu.Lock()
 	s.store[data.ID] = data
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *MemorySessionStore) Get(_ context.Context, id string) (*SessionData, error) {
+	s.mu.RLock()
 	d, ok := s.store[id]
+	s.mu.RUnlock()
 	if !ok {
 		return nil, ErrSessionNotFound
 	}
@@ -190,6 +198,8 @@ func (s *MemorySessionStore) Get(_ context.Context, id string) (*SessionData, er
 }
 
 func (s *MemorySessionStore) Touch(_ context.Context, id string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	d, ok := s.store[id]
 	if !ok {
 		return ErrSessionNotFound
@@ -200,11 +210,15 @@ func (s *MemorySessionStore) Touch(_ context.Context, id string, _ time.Duration
 }
 
 func (s *MemorySessionStore) Delete(_ context.Context, id string) error {
+	s.mu.Lock()
 	delete(s.store, id)
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *MemorySessionStore) DeleteByUser(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for id, d := range s.store {
 		if d.UserID == userID {
 			delete(s.store, id)
@@ -214,6 +228,8 @@ func (s *MemorySessionStore) DeleteByUser(_ context.Context, userID string) erro
 }
 
 func (s *MemorySessionStore) ListByUser(_ context.Context, userID string) ([]SessionData, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	out := make([]SessionData, 0)
 	for _, d := range s.store {
 		if d.UserID == userID {

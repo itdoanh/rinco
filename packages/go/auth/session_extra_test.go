@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -180,6 +181,32 @@ func TestExtra_MemorySessionStore_Concurrent(t *testing.T) {
 	if len(s.store) == 0 {
 		t.Error("expected at least one session after concurrent creates")
 	}
+}
+
+// TestExtra_MemorySessionStore_ConcurrentStress verifies the in-memory store is
+// safe under concurrent read/write/touch/delete from multiple goroutines.
+// Run with `go test -race` (requires CGO) on Linux/macOS to detect data races.
+func TestExtra_MemorySessionStore_ConcurrentStress(t *testing.T) {
+	s := NewMemorySessionStore()
+	ctx := context.Background()
+	const goroutines = 50
+	const opsPerGoroutine = 100
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < opsPerGoroutine; i++ {
+				id := fmt.Sprintf("sess-g%d-i%d", g, i)
+				_ = s.Create(ctx, SessionData{ID: id, UserID: "u1"}, 0)
+				_, _ = s.Get(ctx, id)
+				_ = s.Touch(ctx, id, 0)
+				_ = s.Delete(ctx, id)
+				_, _ = s.ListByUser(ctx, "u1")
+			}
+		}(g)
+	}
+	wg.Wait()
 }
 
 // =============================================================================
