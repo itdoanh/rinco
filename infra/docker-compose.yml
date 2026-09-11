@@ -59,7 +59,7 @@ services:
 
   # PgBouncer - transaction pooling
   pgbouncer:
-    image: bitnami/pgbouncer:1.23.1
+    image: pgbouncer/pgbouncer:latest
     container_name: rinco-pgbouncer
     <<: *restart
     depends_on:
@@ -399,7 +399,7 @@ services:
 
   # Bucket auto-create
   minio-init:
-    image: minio/mc:RELEASE.2024-07-16T21-53-15Z
+    image: minio/mc:latest
     container_name: rinco-minio-init
     depends_on:
       minio:
@@ -452,7 +452,7 @@ services:
       - rinco-network
 
   nats-init:
-    image: natsio/nats-box:0.18.5
+    image: nats:2.10.17-alpine
     container_name: rinco-nats-init
     depends_on:
       nats:
