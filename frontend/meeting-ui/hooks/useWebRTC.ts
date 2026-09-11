@@ -5,7 +5,8 @@ import { useMeetingStore, type Participant } from "@/lib/store";
 import { getUserMedia, createPeerConnection, addTracksToConnection } from "@/lib/webrtc";
 import { SignalingClient, type SignalingMessage } from "@/lib/signaling";
 
-const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:8081";
+// chat-engine WebSocket API (port 8101) for meeting signaling.
+const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:8101";
 
 interface UseWebRTCOptions {
   roomId: string;

@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { useLandingStore } from '@/lib/store';
 
-const LANDING_SERVICE_URL = process.env.LANDING_SERVICE_URL || 'http://localhost:8080';
+const LANDING_SERVICE_URL = process.env.LANDING_SERVICE_URL || 'http://localhost:8086';
 
 export async function GET(
   request: NextRequest,

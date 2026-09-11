@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { useLandingStore } from '@/lib/store';
 
-const LANDING_SERVICE_URL = process.env.LANDING_SERVICE_URL || 'http://localhost:8080';
+const LANDING_SERVICE_URL = process.env.LANDING_SERVICE_URL || 'http://localhost:8086';
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenant: string; page: string }> }
 ) {
+  const { tenant, page } = await params;
   try {
-    const { tenant, page } = await params;
-
     // Try to fetch from landing service
     const response = await fetch(
       `${LANDING_SERVICE_URL}/api/pages/${tenant}/${page}`,
@@ -17,16 +15,13 @@ export async function GET(
         headers: {
           'X-Forwarded-For': request.headers.get('x-forwarded-for') || '',
         },
-        next: { revalidate: 60 }, // Cache for 60 seconds
+        next: { revalidate: 60 },
       }
     );
 
     if (!response.ok) {
       if (response.status === 404) {
-        return NextResponse.json(
-          { error: 'Page not found' },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: 'Page not found' }, { status: 404 });
       }
       throw new Error('Failed to fetch page');
     }
@@ -37,10 +32,9 @@ export async function GET(
     console.error('Page fetch error:', error);
 
     // Return demo data for development
-    const { tenant, page: pageSlug } = await params;
     return NextResponse.json({
-      id: `page-${pageSlug}`,
-      slug: pageSlug,
+      id: `page-${page}`,
+      slug: page,
       tenant_id: tenant,
       title: 'Trang Demo',
       meta_description: 'Trang demo cho mục đích phát triển',
