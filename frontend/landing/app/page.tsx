@@ -193,10 +193,16 @@ export default function LandingPage() {
       {/* Sticky CTA */}
       <StickyCTA onCtaClick={handleCtaClick} />
 
-      {/* Lead Modal */}
+      {/* Lead Modal — accepts any CTA trigger */}
       <LeadModal
+        trigger="button"
         formName="modal-form"
         ctaLabel="modal"
+      />
+      <LeadModal
+        trigger="sticky"
+        formName="sticky-form"
+        ctaLabel="sticky"
       />
     </main>
   );

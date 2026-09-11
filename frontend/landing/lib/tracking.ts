@@ -38,11 +38,14 @@ export async function trackEvent(eventData: TrackEvent): Promise<void> {
     },
   };
 
+  // Fire-and-forget tracking. We never want tracking network failures
+  // to surface to the user or spam the console when the analytics backend
+  // isn't reachable (e.g. local dev without services up).
   try {
-    // Send to our tracking API
-    await api.trackEvent(event);
-  } catch (error) {
-    console.error("Tracking error:", error);
+    // Best-effort POST — never throw, never log if backend is down.
+    void api.trackEvent(event).catch(() => {});
+  } catch {
+    // Swallow — tracking must be non-blocking.
   }
 }
 
