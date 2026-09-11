@@ -1,9 +1,20 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-11 (Friday, 1:10 PM UTC+7)
+> **Generated**: 2026-09-11 (Friday, 2:40 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
+>
+> **Loop 195 — Frontend-to-backend port references + landing API route bugs + 33/33 Playwright**:
+> - All frontend API routes pointed to wrong ports (8080). Fixed to match service defaults:
+>   - `frontend/landing/app/api/pages/[tenant]/route.ts`: `localhost:8080` → `localhost:8086`. Removed unused `useLandingStore` import.
+>   - `frontend/landing/app/api/pages/[tenant]/[page]/route.ts`: `localhost:8080` → `localhost:8086`. Removed unused import. Fixed catch block referencing out-of-scope `pageSlug` variable.
+>   - `frontend/landing/app/api/track/route.ts`: `localhost:8080` → `localhost:8086`. Fixed endpoint `/api/v1/track/events` → `/api/v1/track/event` (matching landing-service route). Made fire-and-forget.
+>   - `frontend/landing/app/api/leads/route.ts`: `localhost:8080` → `localhost:8085` (lead-service).
+>   - `frontend/landing/app/api/capi/route.ts`: `localhost:8080` → `localhost:8086` (landing-service).
+>   - `frontend/tenant-site/app/api/leads/route.ts`: `localhost:8080` → `localhost:8085` (lead-service).
+>   - `frontend/meeting-ui/hooks/useWebRTC.ts`: `ws://localhost:8081` (auth) → `ws://localhost:8101` (chat-engine for WebSocket signaling).
+> - Playwright: **33/33 green (1.9 m)**.
 >
 > **Loop 194 — 33/33 Playwright + all backend tests verified + CI fix**:
 > - **`frontend/e2e/playwright.config.ts`**: Added CI-mode `webServer` that starts all 4 dev servers via `npm run dev`. Allows running comprehensive spec locally or in CI.
