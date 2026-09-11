@@ -1,0 +1,171 @@
+version: '3.9'
+
+# ============================================================
+# RINCO Core Infrastructure - Simplified for Local Dev
+# ============================================================
+
+services:
+  # ============================================================
+  # 1. POSTGRESQL 16 — Core Database
+  # ============================================================
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: rinco-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rinco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rinco_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-rinco}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rinco} -d ${POSTGRES_DB:-rinco}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 2. VALKEY (Redis) — Cache, Sessions, Rate Limit
+  # ============================================================
+  valkey:
+    image: valkey/valkey:7.2.5-alpine
+    container_name: rinco-valkey
+    restart: unless-stopped
+    command: valkey-server --requirepass ${VALKEY_PASSWORD:-rinco_dev_password}
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:-rinco_dev_password}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 3. NATS — Event Bus
+  # ============================================================
+  nats:
+    image: nats:2.10.17-alpine
+    container_name: rinco-nats
+    restart: unless-stopped
+    command: ["--config", "/etc/nats/nats.conf"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 4. MINIO — S3-compatible object storage
+  # ============================================================
+  minio:
+    image: minio/minio:latest
+    container_name: rinco-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-rinco}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-rinco_dev_password}
+    command: server /data --console-address=:9001
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 5. PROMETHEUS — Metrics
+  # ============================================================
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: rinco-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus_data:/prometheus
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 6. GRAFANA — Dashboards
+  # ============================================================
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: rinco-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 7. LOKI — Logs
+  # ============================================================
+  loki:
+    image: grafana/loki:2.9.4
+    container_name: rinco-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - rinco-network
+
+  # ============================================================
+  # 8. MAILHOG — Email Testing
+  # ============================================================
+  mailhog:
+    image: mailhog/mailhog:v1.0.1
+    container_name: rinco-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - rinco-network
+
+volumes:
+  postgres_data:
+  valkey_data:
+  nats_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:
+
+networks:
+  rinco-network:
+    driver: bridge
