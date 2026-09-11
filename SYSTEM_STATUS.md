@@ -1,6 +1,6 @@
 # RINCO System Status — Deep Audit Report
 
-> **Generated**: 2026-09-11 (Friday, 12:55 PM UTC+7)
+> **Generated**: 2026-09-11 (Friday, 1:10 PM UTC+7)
 > **Scope**: 100% — every doc, every file, every line of code reviewed
 > **Method**: Looped through all 18 docs → cataloged all 140 Go + 86 Python + 65 Rust + 180 TS/TSX files → compared against docs → discovered gaps, errors, inconsistencies
 > **Previous report**: [BUILD_REPORT.md](./BUILD_REPORT.md) — superseded by this comprehensive doc
@@ -33,6 +33,14 @@
 >
 > **Loop 191 — `window.fbq is not a function` fix + comprehensive Playwright suite (33/33 green)**:
 > - Original report of the bug applied; consolidated here as Loop 192.
+>
+> **Loop 192 contd — Suspense boundary + TypeScript cleanup + 33/33 Playwright**:
+> - `frontend/landing/app/layout.tsx`: wrap `<UTMCapture>` in `<Suspense>` to fix Next.js 15 `useSearchParams` rendering error.
+> - `frontend/landing/app/[tenant]/page.tsx` + `[tenant]/[page]/page.tsx`: BlockRenderer props `tenantId+pageId` → `tenantSlug+pageSlug`. Remove unused imports.
+> - `frontend/landing/app/api/pages/[tenant]/route.ts`: remove duplicate `await params` in catch block.
+> - `e2e/comprehensive.spec.ts`: retry-on-miss on hero CTA modal test for hydration resilience.
+> - **Comprehensive Playwright: 33/33 green (1.5 m)**.
+>
 
 >
 > **Loop 190 — full frontend restart + 3 critical bug fixes**:
