@@ -21,6 +21,7 @@ from app.api import (
     hotfix_router,
     runbook_router,
     chat_router,
+    aiops_router,
 )
 
 configure_logging()
@@ -61,6 +62,7 @@ app.include_router(incidents_router)
 app.include_router(hotfix_router)
 app.include_router(runbook_router)
 app.include_router(chat_router)
+app.include_router(aiops_router)
 
 
 @app.get("/health")

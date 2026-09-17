@@ -17,12 +17,13 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        protected_namespaces=(),
     )
 
     service_name: str = "lead-scoring"
     version: str = "2.0.0"
     env: str = Field(default="development")
-    http_addr: str = ":8092"
+    http_addr: str = ":8091"
     log_level: str = "INFO"
 
     # Model

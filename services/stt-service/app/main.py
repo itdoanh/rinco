@@ -9,7 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from app import __version__
-from app.api import align_router, language_router, transcribe_router
+from app.api import (
+    align_router,
+    language_router,
+    transcribe_router,
+    diarize_router,
+    samples_router,
+)
 from app.core import METRICS, configure_logging, get_logger
 
 configure_logging()
@@ -59,6 +65,8 @@ def create_app() -> FastAPI:
     application.include_router(transcribe_router)
     application.include_router(language_router)
     application.include_router(align_router)
+    application.include_router(diarize_router)
+    application.include_router(samples_router)
 
     # Health & metrics
     @application.get("/v1/health", tags=["health"])

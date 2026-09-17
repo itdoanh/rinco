@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import chat_router, collections_router, ingest_router, search_router
+from app.api import chat_router, collections_router, ingest_router, search_router, kb_router
 from app.core import METRICS, configure_logging, get_logger
 from app.services.embeddings import load_embedder
 from app.services.qdrant_client import get_client
@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(ingest_router)
     app.include_router(collections_router)
     app.include_router(search_router)
+    app.include_router(kb_router)
 
     @app.get("/")
     async def root():

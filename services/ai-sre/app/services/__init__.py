@@ -8,6 +8,8 @@ from . import jaeger_client
 from . import loki_client
 from . import prometheus_client
 from . import runbook_writer
+from . import anomaly_detector
+from . import performance_predictor
 
 __all__ = [
     "loki_client",
@@ -17,4 +19,6 @@ __all__ = [
     "hotfix_generator",
     "github_client",
     "runbook_writer",
+    "anomaly_detector",
+    "performance_predictor",
 ]

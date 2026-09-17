@@ -14,10 +14,10 @@ logger = get_logger(__name__)
 
 _pyannote_available = False
 try:
-    from pyannote.audio import Pipeline
+    from pyannote.audio import Pipeline  # noqa: F401
 
     _pyannote_available = True
-except ImportError:
+except Exception:  # noqa: BLE001 - pyannote imports pull torch/torchvision and may break
     Pipeline = None  # type: ignore[assignment, misc]
 
 

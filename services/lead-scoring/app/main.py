@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from app.api.scoring import router as scoring_router
 from app.api.training import router as training_router
 from app.api.explain import router as explain_router
+from app.api.extras import router as extras_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.tracing import configure_tracing, instrument_fastapi
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(scoring_router)
     app.include_router(training_router)
     app.include_router(explain_router)
+    app.include_router(extras_router)
 
     @app.get("/")
     async def root():

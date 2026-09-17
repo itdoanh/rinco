@@ -1,0 +1,143 @@
+groups:
+- name: rinco.ai
+  rules:
+  # ===== AI SRE =====
+  - alert: AISRE_RCA_Latency_High
+    expr: |
+      histogram_quantile(0.95, sum(rate(ai_sre_analysis_latency_seconds_bucket[5m])) by (le))
+      > 3
+    for: 5m
+    labels:
+      severity: P2
+      team: sre
+      service: ai-sre
+    annotations:
+      summary: "AI SRE RCA p95 > 3s (target < 3s)"
+      runbook: "https://wiki.rinco.app/runbooks/ai-sre-rca-latency"
+
+  - alert: AISRE_Hotfix_PR_Burst
+    expr: |
+      sum(increase(ai_sre_hotfix_created_total[1h])) by (tenant_id) > 5
+    for: 0m
+    labels:
+      severity: P1
+      service: ai-sre
+    annotations:
+      summary: "AI SRE created > 5 hotfix PRs in the last hour for {{ $labels.tenant_id }}"
+      description: "Possible runaway auto-PR loop — investigate."
+
+  - alert: AISRE_AnalysisErrorSpike
+    expr: |
+      sum(rate(ai_sre_analysis_requests_total{result="failed"}[5m]))
+      /
+      sum(rate(ai_sre_analysis_requests_total[5m])) > 0.2
+    for: 3m
+    labels:
+      severity: P1
+      service: ai-sre
+    annotations:
+      summary: "AI SRE analysis failure rate > 20%"
+
+  - alert: AISRE_ActiveAnomalies_High
+    expr: rinco_ai_sre_active_anomalies > 8
+    for: 5m
+    labels:
+      severity: P2
+      service: ai-sre
+    annotations:
+      summary: "More than 8 active anomalies detected by the AI SRE streaming detector"
+
+  # ===== Lead scoring =====
+  - alert: LeadScoring_Inference_Latency
+    expr: |
+      histogram_quantile(0.95, sum(rate(lead_scoring_inference_duration_seconds_bucket[5m])) by (le, model_version))
+      > 0.5
+    for: 5m
+    labels:
+      severity: P2
+      service: lead-scoring
+    annotations:
+      summary: "Lead scoring inference p95 > 500ms (model {{ $labels.model_version }})"
+
+  - alert: LeadScoring_ModelLoad_Failure
+    expr: |
+      rate(lead_scoring_errors_total{error_type="model_load"}[5m]) > 0
+    for: 2m
+    labels:
+      severity: P1
+      service: lead-scoring
+    annotations:
+      summary: "Lead scoring model-load failures > 0"
+
+  - alert: LeadScoring_Score_Regression
+    expr: |
+      avg_over_time(lead_scoring_ensemble_score[1h])
+      < 0.25
+    for: 30m
+    labels:
+      severity: P2
+      service: lead-scoring
+    annotations:
+      summary: "Mean lead score dropped below 25 (potential data drift or pipeline break)"
+
+  # ===== RAG chatbot =====
+  - alert: RAGChat_LatencyP99_High
+    expr: |
+      histogram_quantile(0.99, sum(rate(rag_chat_latency_seconds_bucket[5m])) by (le)) > 5
+    for: 5m
+    labels:
+      severity: P2
+      service: rag-chatbot
+    annotations:
+      summary: "RAG chat p99 latency > 5s"
+
+  - alert: RAGChat_HighFailureRate
+    expr: |
+      sum(rate(rag_chat_requests_total{result="failed"}[5m]))
+      /
+      sum(rate(rag_chat_requests_total[5m])) > 0.15
+    for: 5m
+    labels:
+      severity: P1
+      service: rag-chatbot
+    annotations:
+      summary: "RAG chat failure rate > 15%"
+
+  - alert: RAGChat_EmbedderMissing
+    expr: rag_chat_requests_total == 0
+    for: 10m
+    labels:
+      severity: P3
+      service: rag-chatbot
+    annotations:
+      summary: "RAG chat has processed 0 requests in the last 10m (embedder may be down)"
+
+  # ===== STT =====
+  - alert: STT_TranscriptionLatency_High
+    expr: |
+      histogram_quantile(0.95, sum(rate(transcribe_latency_seconds_bucket[5m])) by (le, language)) > 30
+    for: 5m
+    labels:
+      severity: P2
+      service: stt
+    annotations:
+      summary: "STT p95 transcription latency > 30s for {{ $labels.language }}"
+
+  - alert: STT_Error_Burst
+    expr: |
+      sum(rate(transcribe_errors_total[5m])) > 0.5
+    for: 5m
+    labels:
+      severity: P1
+      service: stt
+    annotations:
+      summary: "STT error rate > 0.5/s"
+
+  - alert: STT_NoRequestsIn10m
+    expr: rate(transcribe_requests_total[10m]) == 0
+    for: 30m
+    labels:
+      severity: P3
+      service: stt
+    annotations:
+      summary: "STT service has not received any transcription requests in 30m"

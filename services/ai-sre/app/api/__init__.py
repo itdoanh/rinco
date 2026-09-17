@@ -3,6 +3,7 @@ from app.api.incidents import router as incidents_router
 from app.api.hotfix import router as hotfix_router
 from app.api.runbook import router as runbook_router
 from app.api.chat import router as chat_router
+from app.api.aiops import router as aiops_router
 
 __all__ = [
     "analyze_router",
@@ -10,4 +11,5 @@ __all__ = [
     "hotfix_router",
     "runbook_router",
     "chat_router",
+    "aiops_router",
 ]

@@ -222,28 +222,28 @@ scrape_configs:
   # ============================================================
   # Python services
   # ============================================================
-  - job_name: 'rinco-lead-scoring'
-    metrics_path: /metrics
-    static_configs:
-      - targets: ['lead-scoring:8092']
-        labels: { language: python, tier: ai }
-
   - job_name: 'rinco-ai-sre'
     metrics_path: /metrics
     static_configs:
       - targets: ['ai-sre:8090']
         labels: { language: python, tier: ai }
 
+  - job_name: 'rinco-lead-scoring'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['lead-scoring:8091']
+        labels: { language: python, tier: ai }
+
   - job_name: 'rinco-rag-chatbot'
     metrics_path: /metrics
     static_configs:
-      - targets: ['rag-chatbot:8091']
+      - targets: ['rag-chatbot:8092']
         labels: { language: python, tier: ai }
 
   - job_name: 'rinco-stt-service'
     metrics_path: /metrics
     static_configs:
-      - targets: ['stt-service:8093']
+      - targets: ['stt-service:8094']
         labels: { language: python, tier: ai }
 
 # ============================================================
