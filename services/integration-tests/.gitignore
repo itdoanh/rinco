@@ -7,3 +7,6 @@ cov
 *.cover
 .idea/
 *.test
+
+# This package needs go.sum tracked (don't apply the root .gitignore rule).
+!go.sum
