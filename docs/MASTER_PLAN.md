@@ -87,7 +87,7 @@ Hệ thống RINCO đã có:
 
 ## 3. Chuẩn hoà cross-cutting (cả 3 workstreams)
 
-- **Port table** (canonical):
+- **Port table** (canonical — Loop WS-A reconciled):
   | service | port |
   |---|---|
   | auth-service | 8081 |
@@ -98,17 +98,18 @@ Hệ thống RINCO đã có:
   | landing-service | 8086 |
   | email-service | 8087 |
   | notification-service | 8088 |
-  | billing-service | 8089 |
-  | observability-service | 8090 |
-  | search-service | 8091 |
-  | ai-sre | 8092 |
-  | stt-service | 8093 |
-  | rag-chatbot | 8094 |
+  | billing-service | 8095 |
+  | observability-service | 8096 |
+  | search-service | 8097 |
+  | meta-capi-service | 8098 |
+  | analytics-service | 8099 |
+  | ai-sre | 8090 |
+  | lead-scoring | 8091 |
+  | rag-chatbot | 8092 |
+  | recording-service | 8093 |
+  | stt-service | 8094 |
   | chat-engine | 8101 |
   | webrtc-sfu | 8102 |
-  | recording-service | 8103 |
-  | meta-capi-service | 8104 |
-  | analytics-service | 8105 |
   | landing frontend | 3000 |
   | admin-portal | 3001 |
   | tenant-site | 3002 |

@@ -126,7 +126,7 @@ func main() {
 	})
 
 	// Graceful shutdown
-	port := envOr("PORT", "8089")
+	port := envOr("PORT", "8095")
 	go func() {
 		log.Info("starting billing-service", "port", port)
 		if err := e.Start(":" + port); err != nil && err != http.ErrServerClosed {

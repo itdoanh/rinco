@@ -85,7 +85,7 @@ func main() {
 	v1.GET("/suggest", srv.Suggest)
 	v1.GET("/facets/:entity_type", srv.Facets)
 
-	port := envOr("PORT", "8087")
+	port := envOr("PORT", "8097")
 	srv2 := &http.Server{Addr: ":" + port, Handler: e}
 	go func() {
 		logger.Info("search-service starting", "port", port)

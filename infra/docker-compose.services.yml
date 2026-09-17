@@ -261,16 +261,18 @@ services:
     build: ./services/observability-service
     container_name: rinco-observability-service
     <<: *restart
-    environment: *go-env
+    environment:
+      <<: *go-env
+      OBSERVABILITY_HTTP_ADDR: ":8096"
     ports:
-      - "8089:8089"
+      - "8096:8096"
     depends_on:
       - auth-service
       - crm-service
       prometheus:
         condition: service_started
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8089/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8096/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -293,12 +295,12 @@ services:
       STRIPE_PRICE_BUSINESS: ${STRIPE_PRICE_BUSINESS:-}
       STRIPE_PRICE_ENTERPRISE: ${STRIPE_PRICE_ENTERPRISE:-}
     ports:
-      - "8097:8097"
+      - "8095:8095"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8097/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8095/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -317,14 +319,14 @@ services:
       MEILISEARCH_HOST: http://meilisearch:7700
       MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-masterKey}
     ports:
-      - "8094:8094"
+      - "8097:8097"
     depends_on:
       postgres:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8094/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8097/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -368,12 +370,12 @@ services:
       <<: *go-env
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
     ports:
-      - "8100:8100"
+      - "8098:8098"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8100/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8098/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -427,9 +429,9 @@ services:
       TURN_HOST: turn.rinco.app
       TURN_SECRET: ${TURN_SECRET:-dev_turn_secret}
     ports:
-      - "8095:8095"
+      - "8102:8102"
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8095/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8102/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -452,12 +454,12 @@ services:
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-rinco}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-rinco_dev_password}
     ports:
-      - "8096:8096"
+      - "8093:8093"
     depends_on:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8096/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8093/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -559,9 +561,9 @@ services:
       WHISPER_DEVICE: cuda
       WHISPER_COMPUTE: float16
     ports:
-      - "8093:8093"
+      - "8094:8094"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8093/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8094/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -655,7 +657,7 @@ services:
     <<: *restart
     environment:
       NEXT_PUBLIC_API_URL: http://auth-service:8081
-      NEXT_PUBLIC_SFU_URL: http://webrtc-sfu:8095
+      NEXT_PUBLIC_SFU_URL: http://webrtc-sfu:8102
     ports:
       - "3003:3003"
     depends_on:

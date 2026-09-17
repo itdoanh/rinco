@@ -130,7 +130,7 @@ func main() {
 	admin.POST("/capi/setup", server.SetupCAPI)
 
 	// Graceful shutdown
-	port := envOr("PORT", "8093")
+	port := envOr("PORT", "8098")
 	go func() {
 		log.Info("starting meta-capi-service", "port", port)
 		if err := e.Start(":" + port); err != nil && err != http.ErrServerClosed {

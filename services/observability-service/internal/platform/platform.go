@@ -65,7 +65,7 @@ type Config struct {
 func LoadConfig() *Config {
 	return &Config{
 		Env:             Getenv("ENV", "development"),
-		HTTPAddr:        Getenv("OBSERVABILITY_HTTP_ADDR", ":8089"),
+		HTTPAddr:        Getenv("OBSERVABILITY_HTTP_ADDR", ":8096"),
 		DatabaseURL:     os.Getenv("OBSERVABILITY_DATABASE_URL"),
 		ClickHouseURL:   Getenv("OBSERVABILITY_CLICKHOUSE_URL", "http://localhost:8123"),
 		PrometheusURL:   Getenv("OBSERVABILITY_PROMETHEUS_URL", "http://localhost:9090"),

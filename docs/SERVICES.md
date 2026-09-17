@@ -6,7 +6,7 @@ Tổng hợp tất cả 17 microservices + 4 frontend apps trong RINCO Platform.
 
 ---
 
-## Go (9 services)
+## Go (13 services)
 
 | # | Service | HTTP Port | gRPC Port | Database | README |
 |---|---------|-----------|-----------|----------|--------|
@@ -18,7 +18,11 @@ Tổng hợp tất cả 17 microservices + 4 frontend apps trong RINCO Platform.
 | 6 | [landing-service](services/landing-service/README.md) | 8086 | 9086 | MongoDB + ScyllaDB | Block renderer + tiered S3 + FB CAPI |
 | 7 | [email-service](services/email-service/README.md) | 8087 | 9087 | PostgreSQL | Multi-driver SMTP, templates, tracking |
 | 8 | [notification-service](services/notification-service/README.md) | 8088 | 9088 | PostgreSQL | Push / Email / SMS multi-channel + preferences |
-| 9 | [observability-service](services/observability-service/README.md) | 8089 | 9089 | ClickHouse | Logs/metrics/traces aggregator + alerts + audit |
+| 9 | [billing-service](services/billing-service/README.md) | 8095 | - | PostgreSQL | Stripe subscriptions, invoices, usage metering |
+| 10 | [observability-service](services/observability-service/README.md) | 8096 | - | ClickHouse | Logs/metrics/traces aggregator + alerts + audit |
+| 11 | [search-service](services/search-service/README.md) | 8097 | - | Meilisearch | Universal search + facets + suggestions |
+| 12 | [meta-capi-service](services/meta-capi-service/README.md) | 8098 | - | PostgreSQL | Facebook Conversions API gateway + HMAC verify |
+| 13 | [analytics-service](services/analytics-service/README.md) | 8099 | - | ClickHouse | Dashboards, funnels, cohorts, reports |
 
 **Tech**: Go 1.23, Echo v4, pgx/v5, zap, OpenTelemetry, Prometheus client.
 
@@ -28,10 +32,10 @@ Tổng hợp tất cả 17 microservices + 4 frontend apps trong RINCO Platform.
 
 | # | Service | HTTP Port | Database | README |
 |---|---------|-----------|----------|--------|
-| 1 | [lead-scoring](services/lead-scoring/README.md) | 8090 | PostgreSQL | XGBoost lead scoring với feature engineering + drift detection |
-| 2 | [rag-chatbot](services/rag-chatbot/README.md) | 8091 | Qdrant + vLLM | RAG pipeline: ingest → embed → retrieve → generate |
-| 3 | [ai-sre](services/ai-sre/README.md) | 8092 | ClickHouse + vLLM | Incident correlator + runbook + auto-hotfix generator |
-| 4 | [stt-service](services/stt-service/README.md) | 8093 | - | Whisper transcription + diarization + alignment |
+| 1 | [ai-sre](services/ai-sre/README.md) | 8090 | ClickHouse + vLLM | Incident correlator + runbook + auto-hotfix generator |
+| 2 | [lead-scoring](services/lead-scoring/README.md) | 8091 | PostgreSQL | XGBoost lead scoring với feature engineering + drift detection |
+| 3 | [rag-chatbot](services/rag-chatbot/README.md) | 8092 | Qdrant + vLLM | RAG pipeline: ingest → embed → retrieve → generate |
+| 4 | [stt-service](services/stt-service/README.md) | 8094 | - | Whisper transcription + diarization + alignment |
 
 **Tech**: Python 3.12, FastAPI, SQLAlchemy, Celery, vLLM, Whisper, LangChain, scikit-learn, XGBoost.
 
@@ -41,9 +45,9 @@ Tổng hợp tất cả 17 microservices + 4 frontend apps trong RINCO Platform.
 
 | # | Service | HTTP Port | Database | README |
 |---|---------|-----------|----------|--------|
-| 1 | [chat-engine](services/chat-engine/README.md) | 8094 | ScyllaDB + Valkey | E2EE messenger (Signal Protocol), presence, devices |
-| 2 | [webrtc-sfu](services/webrtc-sfu/README.md) | 8095 | ScyllaDB + MinIO | Selective Forwarding Unit (AV1/VP9 SVC), bandwidth adaptation |
-| 3 | [recording-service](services/recording-service/README.md) | 8096 | MinIO | GPU NVENC recording, tiered SSD/HDD storage |
+| 1 | [recording-service](services/recording-service/README.md) | 8093 | MinIO | GPU NVENC recording, tiered SSD/HDD storage |
+| 2 | [chat-engine](services/chat-engine/README.md) | 8101 | ScyllaDB + Valkey | E2EE messenger (Signal Protocol), presence, devices |
+| 3 | [webrtc-sfu](services/webrtc-sfu/README.md) | 8102 | ScyllaDB + MinIO | Selective Forwarding Unit (AV1/VP9 SVC), bandwidth adaptation |
 
 **Tech**: Rust 1.81, axum, tokio, scylla-rust-driver, libwebrtc, NVENC bindings, Signal Protocol.
 
@@ -98,8 +102,7 @@ Tổng hợp tất cả 17 microservices + 4 frontend apps trong RINCO Platform.
 
 ## Tổng quan
 
-- **Tổng services**: 16 backend + 1 frontend-with-backend (meeting-ui) = **17**
-- **Frontend apps riêng biệt**: 4
+- **Tổng services**: 17 backend (13 Go + 4 Python + 3 Rust) + 4 frontend = **21 containers**
 - **Ngôn ngữ backend**: Go, Python, Rust
 - **Polyglot persistence**: 9 databases (PostgreSQL × 6 schemas, ScyllaDB, MongoDB, ClickHouse, Valkey, MinIO, Qdrant, Meilisearch, NATS)
 - **Shared packages**: `packages/go/` (Go libs), `packages/frontend/ui/` (React component library)

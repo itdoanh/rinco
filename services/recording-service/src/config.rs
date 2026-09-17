@@ -31,7 +31,7 @@ impl Config {
             std::env::var(key).unwrap_or_else(|_| default.to_string())
         }
         Ok(Self {
-            http_addr: env("RECORDING_HTTP_ADDR", "0.0.0.0:8096"),
+            http_addr: env("RECORDING_HTTP_ADDR", "0.0.0.0:8093"),
             database_url: env(
                 "RECORDING_DATABASE_URL",
                 "postgres://rinco:rinco@postgres:5432/rinco_recordings",
@@ -48,7 +48,7 @@ impl Config {
             gpu_available: std::env::var("RECORDING_GPU_AVAILABLE")
                 .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
                 .unwrap_or(false),
-            stt_rpc_url: env("RECORDING_STT_RPC_URL", "http://stt-service:8086"),
+            stt_rpc_url: env("RECORDING_STT_RPC_URL", "http://stt-service:8094"),
             otlp_endpoint: env("RECORDING_OTLP_ENDPOINT", "http://otel-collector:4317"),
             hot_tier_days: 30,
             cold_tier_days: 365,
