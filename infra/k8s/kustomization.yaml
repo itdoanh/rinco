@@ -1,0 +1,57 @@
+# ============================================================
+# Kustomization — RINCO K8s manifests
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rinco
+
+resources:
+  - base/namespace.yaml
+  - base/secrets.yaml
+  - base/configmap.yaml
+  - base/rbac.yaml
+  - base/networkpolicies.yaml
+  - base/hpa-pdb.yaml
+  - base/ingress.yaml
+  - base/cluster-issuer.yaml
+  - databases/postgres.yaml
+  - databases/scylla.yaml
+  - databases/valkey.yaml
+  - databases/mongodb.yaml
+  - databases/minio.yaml
+  - databases/clickhouse.yaml
+  - databases/qdrant.yaml
+  - messaging/nats.yaml
+  - services/auth-service.yaml
+  - services/crm-service.yaml
+  - services/tenant-service.yaml
+  - services/landing-service.yaml
+  - services/meta-capi-service.yaml
+  - services/lead-service.yaml
+  - services/chat-engine.yaml
+  - services/webrtc-sfu.yaml
+  - services/dynamic-model-service.yaml
+  - services/email-service.yaml
+  - services/notification-service.yaml
+  - services/search-service.yaml
+  - services/analytics-service.yaml
+  - services/billing-service.yaml
+  - services/observability-service.yaml
+  - services/recording-service.yaml
+  - ai/lead-scoring.yaml
+  - ai/rag-chatbot.yaml
+  - ai/ai-sre.yaml
+  - ai/stt-service.yaml
+  - observability/prometheus.yaml
+  - observability/grafana.yaml
+  - observability/loki.yaml
+  - observability/otel-collector.yaml
+  - frontend/admin-portal.yaml
+  - frontend/landing.yaml
+  - frontend/tenant-site.yaml
+  - frontend/meeting-ui.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: rinco
+  app.kubernetes.io/managed-by: kustomize

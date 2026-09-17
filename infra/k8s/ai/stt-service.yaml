@@ -1,0 +1,81 @@
+# ============================================================
+# stt-service — Python, Whisper.cpp (GPU)
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stt-service
+  namespace: rinco
+  labels:
+    app: stt-service
+    tier: ai
+    language: python
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stt-service
+  template:
+    metadata:
+      labels:
+        app: stt-service
+        tier: ai
+        language: python
+    spec:
+      serviceAccountName: rinco-default
+      nodeSelector:
+        accelerator: nvidia
+      containers:
+        - name: stt-service
+          image: rinco/stt-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8100
+              name: http
+            - containerPort: 9109
+              name: metrics
+          env:
+            - name: STT_HTTP_ADDR
+              value: ":8100"
+            - name: WHISPER_MODEL
+              value: large-v3
+            - name: WHISPER_DEVICE
+              value: cuda
+            - name: WHISPER_COMPUTE
+              value: float16
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-stt-service"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+              nvidia.com/gpu: "1"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+              nvidia.com/gpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            initialDelaySeconds: 120
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stt-service
+  namespace: rinco
+spec:
+  selector:
+    app: stt-service
+  ports:
+    - port: 8100
+      targetPort: 8100
+      name: http
+  type: ClusterIP

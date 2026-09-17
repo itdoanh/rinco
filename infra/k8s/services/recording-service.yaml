@@ -1,0 +1,100 @@
+# ============================================================
+# recording-service — Rust/C++, GPU composite recording
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recording-service
+  namespace: rinco
+  labels:
+    app: recording-service
+    tier: worker
+    language: rust
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: recording-service
+  template:
+    metadata:
+      labels:
+        app: recording-service
+        tier: worker
+        language: rust
+    spec:
+      serviceAccountName: rinco-default
+      nodeSelector:
+        accelerator: nvidia
+      containers:
+        - name: recording-service
+          image: rinco/recording-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8096
+              name: http
+            - containerPort: 9105
+              name: metrics
+          env:
+            - name: RECORDING_HTTP_ADDR
+              value: ":8096"
+            - name: S3_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: minio-host
+            - name: S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secrets
+                  key: root-user
+                  optional: true
+            - name: S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secrets
+                  key: root-password
+                  optional: true
+            - name: S3_BUCKET
+              value: recordings
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-recording-service"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1"
+              nvidia.com/gpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "4"
+              nvidia.com/gpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8096
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8096
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recording-service
+  namespace: rinco
+spec:
+  selector:
+    app: recording-service
+  ports:
+    - port: 8096
+      targetPort: 8096
+      name: http
+  type: ClusterIP

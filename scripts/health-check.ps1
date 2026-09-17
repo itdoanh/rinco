@@ -1,47 +1,65 @@
 #!/usr/bin/env pwsh
-# Health check tất cả services
+# ============================================================
+# RINCO — Health check all services (PowerShell)
+# ============================================================
+# Returns aggregate healthy/unhealthy counts and exit code 1 if any DOWN.
+# ============================================================
+
 $ErrorActionPreference = 'Continue'
 
 $services = @(
-    @{ Name = 'auth-service'; URL = 'http://localhost:8081/health' },
-    @{ Name = 'tenant-service'; URL = 'http://localhost:8082/health' },
-    @{ Name = 'crm-service'; URL = 'http://localhost:8083/health' },
-    @{ Name = 'dynamic-model-service'; URL = 'http://localhost:8084/health' },
-    @{ Name = 'lead-service'; URL = 'http://localhost:8085/health' },
-    @{ Name = 'landing-service'; URL = 'http://localhost:8086/health' },
-    @{ Name = 'email-service'; URL = 'http://localhost:8087/health' },
-    @{ Name = 'notification-service'; URL = 'http://localhost:8088/health' },
-    @{ Name = 'observability-service'; URL = 'http://localhost:8089/health' },
-    @{ Name = 'ai-sre'; URL = 'http://localhost:8090/health' },
-    @{ Name = 'rag-chatbot'; URL = 'http://localhost:8091/health' },
-    @{ Name = 'lead-scoring'; URL = 'http://localhost:8092/health' },
-    @{ Name = 'stt-service'; URL = 'http://localhost:8093/health' },
-    @{ Name = 'chat-engine'; URL = 'http://localhost:8094/health' },
-    @{ Name = 'webrtc-sfu'; URL = 'http://localhost:8095/health' },
-    @{ Name = 'recording-service'; URL = 'http://localhost:8096/health' }
+    @{ name = "auth-service";          port = 8080; path = "/health" }
+    @{ name = "crm-service";           port = 8081; path = "/health" }
+    @{ name = "tenant-service";        port = 8082; path = "/health" }
+    @{ name = "landing-service";       port = 8083; path = "/health" }
+    @{ name = "meta-capi-service";     port = 8084; path = "/health" }
+    @{ name = "lead-service";          port = 8085; path = "/health" }
+    @{ name = "chat-engine";           port = 8086; path = "/health" }
+    @{ name = "webrtc-sfu";            port = 8087; path = "/health" }
+    @{ name = "notification-service";  port = 8088; path = "/health" }
+    @{ name = "email-service";         port = 8089; path = "/health" }
+    @{ name = "search-service";        port = 8090; path = "/health" }
+    @{ name = "dynamic-model-service"; port = 8091; path = "/health" }
+    @{ name = "billing-service";       port = 8092; path = "/health" }
+    @{ name = "observability-service"; port = 8093; path = "/health" }
+    @{ name = "lead-scoring";          port = 8094; path = "/health" }
+    @{ name = "rag-chatbot";           port = 8095; path = "/health" }
+    @{ name = "ai-sre";                port = 8096; path = "/health" }
+    @{ name = "stt-service";           port = 8097; path = "/health" }
+    @{ name = "admin-portal";          port = 3001; path = "/"        }
+    @{ name = "landing";               port = 3002; path = "/"        }
+    @{ name = "meeting-ui";            port = 3003; path = "/"        }
+    @{ name = "tenant-site";           port = 3004; path = "/"        }
 )
 
-Write-Host "`n=== RINCO Service Health Check ===" -ForegroundColor Cyan
 $healthy = 0
 $unhealthy = 0
+$results = @()
 
 foreach ($svc in $services) {
+    $url = "http://localhost:$($svc.port)$($svc.path)"
     try {
-        $response = Invoke-WebRequest -Uri $svc.URL -Method GET -TimeoutSec 5 -UseBasicParsing
-        if ($response.StatusCode -eq 200) {
-            Write-Host "  ✓ $($svc.Name): HEALTHY" -ForegroundColor Green
+        $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        if ($response.StatusCode -ge 200 -and $response.StatusCode -lt 500) {
+            Write-Host "  [OK]   $($svc.name) :$($svc.port)" -ForegroundColor Green
+            $results += [pscustomobject]@{ Name = $svc.name; Port = $svc.port; Status = "OK"; Code = $response.StatusCode }
             $healthy++
         } else {
-            Write-Host "  ✗ $($svc.Name): HTTP $($response.StatusCode)" -ForegroundColor Red
+            Write-Host "  [WARN] $($svc.name) :$($svc.port) -> HTTP $($response.StatusCode)" -ForegroundColor Yellow
+            $results += [pscustomobject]@{ Name = $svc.name; Port = $svc.port; Status = "WARN"; Code = $response.StatusCode }
             $unhealthy++
         }
     } catch {
-        Write-Host "  ✗ $($svc.Name): DOWN" -ForegroundColor Red
+        Write-Host "  [DOWN] $($svc.name) :$($svc.port)" -ForegroundColor Red
+        $results += [pscustomobject]@{ Name = $svc.name; Port = $svc.port; Status = "DOWN"; Code = "n/a" }
         $unhealthy++
     }
 }
 
-Write-Host "`n=== Summary ===" -ForegroundColor Cyan
-Write-Host "  Healthy: $healthy" -ForegroundColor Green
-Write-Host "  Unhealthy: $unhealthy" -ForegroundColor Red
 Write-Host ""
+Write-Host "===== Health Summary =====" -ForegroundColor Cyan
+Write-Host "Healthy:   $healthy" -ForegroundColor Green
+Write-Host "Unhealthy: $unhealthy" -ForegroundColor Red
+Write-Host "Total:     $($services.Count)"
+
+if ($unhealthy -gt 0) { exit 1 } else { exit 0 }

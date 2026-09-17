@@ -1,0 +1,114 @@
+# ============================================================
+# lead-scoring — Python, XGBoost/LightGBM scoring
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lead-scoring
+  namespace: rinco
+  labels:
+    app: lead-scoring
+    tier: ai
+    language: python
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: lead-scoring
+  template:
+    metadata:
+      labels:
+        app: lead-scoring
+        tier: ai
+        language: python
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: lead-scoring
+          image: rinco/lead-scoring:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8097
+              name: http
+            - containerPort: 9106
+              name: metrics
+          env:
+            - name: LEAD_SCORING_HOST
+              value: "0.0.0.0"
+            - name: LEAD_SCORING_PORT
+              value: "8097"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: DB_NAME
+              value: rinco
+            - name: DB_USER
+              value: rinco
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-lead-scoring"
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8097
+            initialDelaySeconds: 60
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8097
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lead-scoring
+  namespace: rinco
+spec:
+  selector:
+    app: lead-scoring
+  ports:
+    - port: 8097
+      targetPort: 8097
+      name: http
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: lead-scoring-hpa
+  namespace: rinco
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: lead-scoring
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

@@ -1,0 +1,88 @@
+# ============================================================
+# email-service — Go, SMTP relay, MailHog in dev
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: email-service
+  namespace: rinco
+  labels:
+    app: email-service
+    tier: edge
+    language: go
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: email-service
+  template:
+    metadata:
+      labels:
+        app: email-service
+        tier: edge
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: email-service
+          image: rinco/email-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8090
+              name: http
+            - containerPort: 9099
+              name: metrics
+          env:
+            - name: EMAIL_HTTP_ADDR
+              value: ":8090"
+            - name: SMTP_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: smtp-host
+                  optional: true
+            - name: SMTP_PORT
+              value: "587"
+            - name: SMTP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: smtp-user
+                  optional: true
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: notification-secrets
+                  key: smtp-password
+                  optional: true
+            - name: EMAIL_FROM
+              value: noreply@rinco.vn
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-email-service"
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "250m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8090
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: email-service
+  namespace: rinco
+spec:
+  selector:
+    app: email-service
+  ports:
+    - port: 8090
+      targetPort: 8090
+      name: http
+  type: ClusterIP

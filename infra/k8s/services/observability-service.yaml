@@ -1,0 +1,86 @@
+# ============================================================
+# observability-service — Go, OTEL collector wrapper / Sentry hook
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observability-service
+  namespace: rinco
+  labels:
+    app: observability-service
+    tier: ops
+    language: go
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: observability-service
+  template:
+    metadata:
+      labels:
+        app: observability-service
+        tier: ops
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: observability-service
+          image: rinco/observability-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8095
+              name: http
+            - containerPort: 9104
+              name: metrics
+          env:
+            - name: OBSERVABILITY_HTTP_ADDR
+              value: ":8095"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: DB_NAME
+              value: rinco
+            - name: DB_USER
+              value: rinco
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: NATS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: nats-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-observability-service"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8095
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: observability-service
+  namespace: rinco
+spec:
+  selector:
+    app: observability-service
+  ports:
+    - port: 8095
+      targetPort: 8095
+      name: http
+  type: ClusterIP

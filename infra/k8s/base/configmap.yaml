@@ -1,0 +1,82 @@
+# ============================================================
+# ConfigMaps — RINCO (non-sensitive configuration)
+# ============================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rinco-config
+  namespace: rinco
+data:
+  # Cluster-wide settings
+  cluster-name: "rinco-prod"
+  region: "ap-southeast-1"
+  default-tenant-tier: "starter"
+
+  # Tracing / observability
+  otel-exporter-otlp-endpoint: "http://otel-collector.observability.svc.cluster.local:4317"
+  otel-service-name-prefix: "rinco"
+
+  # Service discovery (FQDNs in-cluster)
+  postgres-host: "postgres.databases.svc.cluster.local"
+  postgres-port: "5432"
+  valkey-host: "valkey.databases.svc.cluster.local"
+  valkey-port: "6379"
+  nats-host: "nats.messaging.svc.cluster.local"
+  nats-port: "4222"
+  scylla-host: "scylla.databases.svc.cluster.local"
+  scylla-port: "9042"
+  mongodb-host: "mongodb.databases.svc.cluster.local"
+  mongodb-port: "27017"
+  minio-host: "minio.databases.svc.cluster.local"
+  minio-port: "9000"
+  clickhouse-host: "clickhouse.databases.svc.cluster.local"
+  clickhouse-port: "8123"
+
+  # Public ingress
+  api-domain: "api.rinco.vn"
+  admin-domain: "admin.rinco.vn"
+  landing-domain: "landing.rinco.vn"
+  tenant-domain: "tenants.rinco.vn"
+  meeting-domain: "meeting.rinco.vn"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init-scripts
+  namespace: rinco
+data:
+  00-extensions.sql: |
+    CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+    CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+    CREATE EXTENSION IF NOT EXISTS "ltree";
+    CREATE EXTENSION IF NOT EXISTS "pgvector";
+    CREATE EXTENSION IF NOT EXISTS "pg_stat_statements";
+    CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+
+  01-rls-setup.sql: |
+    -- Row-Level Security policies for multi-tenant isolation
+    ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY tenant_isolation ON public.leads
+      USING (tenant_id = current_setting('app.current_tenant_id')::text);
+
+  02-tenant-id-functions.sql: |
+    -- Function used by middleware to SET LOCAL tenant_id
+    CREATE OR REPLACE FUNCTION public.set_tenant_id(t text)
+    RETURNS void LANGUAGE sql AS $$
+      SELECT set_config('app.current_tenant_id', t, true)
+    $$;
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: rinco
+data:
+  # Snippet injected to nginx ingress for security headers
+  server-snippet: |
+    more_set_headers "X-Frame-Options: DENY";
+    more_set_headers "X-Content-Type-Options: nosniff";
+    more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+    more_set_headers "Permissions-Policy: camera=(), microphone=(self)";
+    client_max_body_size 50m;

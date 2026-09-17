@@ -1,0 +1,102 @@
+# ============================================================
+# dynamic-model-service — Go, Meta-Schema engine
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dynamic-model-service
+  namespace: rinco
+  labels:
+    app: dynamic-model-service
+    tier: core
+    language: go
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dynamic-model-service
+  template:
+    metadata:
+      labels:
+        app: dynamic-model-service
+        tier: core
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: dynamic-model-service
+          image: rinco/dynamic-model-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8089
+              name: http
+            - containerPort: 9098
+              name: metrics
+          env:
+            - name: DYNAMIC_MODEL_HTTP_ADDR
+              value: ":8089"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: DB_NAME
+              value: rinco
+            - name: DB_USER
+              value: rinco
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: MONGODB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: mongodb-host
+            - name: NATS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: nats-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-dynamic-model-service"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8089
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8089
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dynamic-model-service
+  namespace: rinco
+spec:
+  selector:
+    app: dynamic-model-service
+  ports:
+    - port: 8089
+      targetPort: 8089
+      name: http
+  type: ClusterIP

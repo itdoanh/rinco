@@ -1,0 +1,81 @@
+# ============================================================
+# analytics-service — Go, ClickHouse OLAP queries
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-service
+  namespace: rinco
+  labels:
+    app: analytics-service
+    tier: analytics
+    language: go
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: analytics-service
+  template:
+    metadata:
+      labels:
+        app: analytics-service
+        tier: analytics
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: analytics-service
+          image: rinco/analytics-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8093
+              name: http
+            - containerPort: 9102
+              name: metrics
+          env:
+            - name: ANALYTICS_HTTP_ADDR
+              value: ":8093"
+            - name: CLICKHOUSE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: clickhouse-host
+            - name: CLICKHOUSE_DATABASE
+              value: rinco_analytics
+            - name: CLICKHOUSE_USER
+              value: rinco
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-analytics-service"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "2Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8093
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics-service
+  namespace: rinco
+spec:
+  selector:
+    app: analytics-service
+  ports:
+    - port: 8093
+      targetPort: 8093
+      name: http
+  type: ClusterIP

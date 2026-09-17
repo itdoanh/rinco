@@ -1,0 +1,99 @@
+# ============================================================
+# rag-chatbot — Python, vLLM / RAG
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-chatbot
+  namespace: rinco
+  labels:
+    app: rag-chatbot
+    tier: ai
+    language: python
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-chatbot
+  template:
+    metadata:
+      labels:
+        app: rag-chatbot
+        tier: ai
+        language: python
+    spec:
+      serviceAccountName: rinco-default
+      nodeSelector:
+        accelerator: nvidia
+      containers:
+        - name: rag-chatbot
+          image: rinco/rag-chatbot:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8098
+              name: http
+            - containerPort: 9107
+              name: metrics
+          env:
+            - name: RAG_HTTP_ADDR
+              value: ":8098"
+            - name: VLLM_URL
+              value: "http://vllm.rinco.svc.cluster.local:8000/v1"
+            - name: QDRANT_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: minio-host
+            - name: QDRANT_PORT
+              value: "6333"
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secrets
+                  key: openai-api-key
+                  optional: true
+            - name: HUGGINGFACE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ai-secrets
+                  key: huggingface-token
+                  optional: true
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-rag-chatbot"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "1"
+            limits:
+              memory: "4Gi"
+              cpu: "2"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8098
+            initialDelaySeconds: 60
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-chatbot
+  namespace: rinco
+spec:
+  selector:
+    app: rag-chatbot
+  ports:
+    - port: 8098
+      targetPort: 8098
+      name: http
+  type: ClusterIP

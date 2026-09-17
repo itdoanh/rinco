@@ -1,0 +1,117 @@
+# ============================================================
+# ScyllaDB 6.x — chat & events (shard-per-core)
+# ============================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scylla-data
+  namespace: databases
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: scylla
+  namespace: databases
+  labels:
+    app: scylla
+    tier: data
+spec:
+  serviceName: scylla
+  replicas: 3
+  selector:
+    matchLabels:
+      app: scylla
+  template:
+    metadata:
+      labels:
+        app: scylla
+        tier: data
+    spec:
+      containers:
+        - name: scylla
+          image: scylladb/scylla:6.2.0
+          ports:
+            - containerPort: 9042
+              name: cql
+            - containerPort: 7000
+              name: intra
+            - containerPort: 7001
+              name: tls
+            - containerPort: 9180
+              name: metrics
+          env:
+            - name: SCYLLA_CLUSTER_NAME
+              value: rinco-cluster
+            - name: SCYLLA_DC
+              value: dc1
+            - name: SCYLLA_RACK
+              value: rack1
+            - name: SCYLLA_SEEDS
+              value: scylla-0.scylla.databases.svc.cluster.local
+            - name: SCYLLA_AUTO_BOOTSTRAP
+              value: "true"
+          resources:
+            requests:
+              memory: "4Gi"
+              cpu: "2"
+            limits:
+              memory: "8Gi"
+              cpu: "4"
+          livenessProbe:
+            tcpSocket:
+              port: 9042
+            initialDelaySeconds: 120
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["cqlsh", "-e", "describe cluster"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/scylla/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 200Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scylla
+  namespace: databases
+spec:
+  selector:
+    app: scylla
+  ports:
+    - port: 9042
+      targetPort: 9042
+      name: cql
+    - port: 9180
+      targetPort: 9180
+      name: metrics
+  clusterIP: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scylla-headless
+  namespace: databases
+spec:
+  selector:
+    app: scylla
+  ports:
+    - port: 9042
+      name: cql
+  clusterIP: None

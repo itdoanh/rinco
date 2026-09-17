@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rinco
+  labels:
+    name: rinco
+    tier: production
+    purpose: multi-tenant-crm-platform
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: rinco-quota
+  namespace: rinco
+spec:
+  hard:
+    requests.cpu: "200"
+    requests.memory: 400Gi
+    limits.cpu: "400"
+    limits.memory: 800Gi
+    persistentvolumeclaims: "50"
+    services: "100"
+    secrets: "100"
+    configmaps: "100"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: rinco-default-limits
+  namespace: rinco
+spec:
+  limits:
+    - default:
+        cpu: "1"
+        memory: 1Gi
+      defaultRequest:
+        cpu: "100m"
+        memory: 128Mi
+      type: Container

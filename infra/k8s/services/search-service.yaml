@@ -1,0 +1,79 @@
+# ============================================================
+# search-service — Go, Meilisearch client
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-service
+  namespace: rinco
+  labels:
+    app: search-service
+    tier: core
+    language: go
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: search-service
+  template:
+    metadata:
+      labels:
+        app: search-service
+        tier: core
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: search-service
+          image: rinco/search-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8092
+              name: http
+            - containerPort: 9101
+              name: metrics
+          env:
+            - name: SEARCH_HTTP_ADDR
+              value: ":8092"
+            - name: MEILISEARCH_HOST
+              value: http://meilisearch.databases.svc.cluster.local:7700
+            - name: MEILISEARCH_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-search-service"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8092
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-service
+  namespace: rinco
+spec:
+  selector:
+    app: search-service
+  ports:
+    - port: 8092
+      targetPort: 8092
+      name: http
+  type: ClusterIP

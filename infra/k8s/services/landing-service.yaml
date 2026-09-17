@@ -1,0 +1,144 @@
+# ============================================================
+# landing-service — Go, ingest API + HMAC verify + CAPI forwarder
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landing-service
+  namespace: rinco
+  labels:
+    app: landing-service
+    tier: edge
+    language: go
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: landing-service
+  template:
+    metadata:
+      labels:
+        app: landing-service
+        tier: edge
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: landing-service
+          image: rinco/landing-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8083
+              name: http
+            - containerPort: 9093
+              name: metrics
+          env:
+            - name: LANDING_HTTP_ADDR
+              value: ":8083"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: rinco
+            - name: DB_USER
+              value: rinco
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: SCYLLA_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: scylla-host
+            - name: SCYLLA_PORT
+              value: "9042"
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: NATS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: nats-host
+            - name: INGESTION_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: meta-capi-secrets
+                  key: hmac-secret
+                  optional: true
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-landing-service"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: otel-exporter-otlp-endpoint
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+            limits:
+              memory: "512Mi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8083
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landing-service
+  namespace: rinco
+spec:
+  selector:
+    app: landing-service
+  ports:
+    - port: 8083
+      targetPort: 8083
+      name: http
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: landing-service-hpa
+  namespace: rinco
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: landing-service
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Pods
+      pods:
+        metric:
+          name: rinco_http_requests_per_second
+        target:
+          type: AverageValue
+          averageValue: "1000"

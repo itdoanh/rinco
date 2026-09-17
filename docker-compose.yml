@@ -1,0 +1,578 @@
+# ============================================================
+# RINCO — Unified local development stack
+# ============================================================
+# All infrastructure (databases, observability, services, frontends)
+# in a single file. Profiles:
+#   default  -> infra only
+#   services -> infra + all microservices
+#   frontends-> infra + all Next.js apps
+#   full     -> everything
+# ============================================================
+
+version: '3.9'
+
+x-common-env: &common-env
+  TZ: Asia/Ho_Chi_Minh
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  # ============================================================
+  # INFRASTRUCTURE — Databases / Cache / Messaging / Storage
+  # ============================================================
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: rinco-postgres
+    <<: *restart
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-rinco}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-rinco}
+      <<: *common-env
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rinco}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rinco-net
+
+  valkey:
+    image: valkey/valkey:7-alpine
+    container_name: rinco-valkey
+    <<: *restart
+    command: valkey-server --appendonly yes --requirepass ${VALKEY_PASSWORD:-changeme}
+    ports:
+      - "6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD:-changeme}", "--no-auth-warning", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - rinco-net
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: rinco-nats
+    <<: *restart
+    command: ["--jetstream", "--store_dir=/data", "--cluster_name=rinco"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    networks:
+      - rinco-net
+
+  mongodb:
+    image: mongo:7
+    container_name: rinco-mongo
+    <<: *restart
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-rinco}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-changeme}
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - rinco-net
+
+  scylla:
+    image: scylladb/scylla:5.4
+    container_name: rinco-scylla
+    <<: *restart
+    command: --developer-mode 1 --overprovisioned 1
+    ports:
+      - "9042:9042"
+    volumes:
+      - scylla_data:/var/lib/scylla
+    networks:
+      - rinco-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: rinco-minio
+    <<: *restart
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-changeme}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # OBSERVABILITY — Prometheus / Grafana / Loki / Promtail
+  # ============================================================
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: rinco-prometheus
+    <<: *restart
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - rinco-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: rinco-grafana
+    <<: *restart
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-changeme}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - rinco-net
+
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: rinco-loki
+    <<: *restart
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./infra/loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+    ports:
+      - "3100:3100"
+    networks:
+      - rinco-net
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: rinco-promtail
+    <<: *restart
+    volumes:
+      - /var/log:/var/log:ro
+      - ./infra/loki/promtail-config.yml:/etc/promtail/config.yml:ro
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # EMAIL TESTING — MailHog
+  # ============================================================
+
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: rinco-mailhog
+    <<: *restart
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # MICROSERVICES
+  # ============================================================
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+    container_name: rinco-auth
+    <<: *restart
+    environment:
+      AUTH_HTTP_ADDR: ":8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-rinco}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      DB_NAME: ${POSTGRES_DB:-rinco}
+      VALKEY_HOST: valkey
+      NATS_HOST: nats
+      PASETO_KEY: ${AUTH_PASETO_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - valkey
+      - nats
+    networks:
+      - rinco-net
+
+  crm-service:
+    build:
+      context: ./services/crm-service
+    container_name: rinco-crm
+    <<: *restart
+    environment:
+      CRM_HTTP_ADDR: ":8081"
+      DB_HOST: postgres
+      DB_USER: ${POSTGRES_USER:-rinco}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      DB_NAME: ${POSTGRES_DB:-rinco}
+      VALKEY_HOST: valkey
+      NATS_HOST: nats
+    ports:
+      - "8081:8081"
+    depends_on:
+      - postgres
+      - nats
+    networks:
+      - rinco-net
+
+  tenant-service:
+    build:
+      context: ./services/tenant-service
+    container_name: rinco-tenant
+    <<: *restart
+    environment:
+      TENANT_HTTP_ADDR: ":8082"
+      DB_HOST: postgres
+      DB_USER: ${POSTGRES_USER:-rinco}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      DB_NAME: ${POSTGRES_DB:-rinco}
+    ports:
+      - "8082:8082"
+    depends_on:
+      - postgres
+    networks:
+      - rinco-net
+
+  landing-service:
+    build:
+      context: ./services/landing-service
+    container_name: rinco-landing-svc
+    <<: *restart
+    environment:
+      LANDING_HTTP_ADDR: ":8083"
+      DB_HOST: postgres
+      DB_USER: ${POSTGRES_USER:-rinco}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      DB_NAME: ${POSTGRES_DB:-rinco}
+      VALKEY_HOST: valkey
+      NATS_HOST: nats
+    ports:
+      - "8083:8083"
+    depends_on:
+      - postgres
+      - nats
+    networks:
+      - rinco-net
+
+  meta-capi-service:
+    build:
+      context: ./services/meta-capi-service
+    container_name: rinco-meta-capi
+    <<: *restart
+    environment:
+      META_CAPI_HTTP_ADDR: ":8084"
+      DB_HOST: postgres
+      NATS_HOST: nats
+      META_APP_SECRET: ${META_APP_SECRET:-change-me}
+    ports:
+      - "8084:8084"
+    depends_on:
+      - nats
+    networks:
+      - rinco-net
+
+  lead-service:
+    build:
+      context: ./services/lead-service
+    container_name: rinco-lead
+    <<: *restart
+    environment:
+      LEAD_HTTP_ADDR: ":8085"
+      DB_HOST: postgres
+      MONGO_HOST: mongodb
+      NATS_HOST: nats
+    ports:
+      - "8085:8085"
+    depends_on:
+      - postgres
+      - mongodb
+      - nats
+    networks:
+      - rinco-net
+
+  chat-engine:
+    build:
+      context: ./services/chat-engine
+    container_name: rinco-chat
+    <<: *restart
+    environment:
+      SCYLLA_HOST: scylla
+      VALKEY_HOST: valkey
+      NATS_HOST: nats
+      RUST_LOG: info
+      CHAT_HTTP_ADDR: "0.0.0.0:8086"
+    ports:
+      - "8086:8086"
+    depends_on:
+      - scylla
+      - valkey
+      - nats
+    networks:
+      - rinco-net
+
+  webrtc-sfu:
+    build:
+      context: ./services/webrtc-sfu
+    container_name: rinco-sfu
+    <<: *restart
+    environment:
+      TURN_HOST: localhost
+      VALKEY_HOST: valkey
+    ports:
+      - "8087:8087"
+      - "10000-10100:10000-10100/udp"
+    depends_on:
+      - valkey
+    networks:
+      - rinco-net
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+    container_name: rinco-notification
+    <<: *restart
+    environment:
+      NOTIFICATION_HTTP_ADDR: ":8088"
+      DB_HOST: postgres
+      NATS_HOST: nats
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+    ports:
+      - "8088:8088"
+    depends_on:
+      - postgres
+      - nats
+      - mailhog
+    networks:
+      - rinco-net
+
+  email-service:
+    build:
+      context: ./services/email-service
+    container_name: rinco-email
+    <<: *restart
+    environment:
+      EMAIL_HTTP_ADDR: ":8089"
+      SMTP_HOST: mailhog
+      SMTP_PORT: "1025"
+      SMTP_FROM: noreply@rinco.local
+    ports:
+      - "8089:8089"
+    depends_on:
+      - mailhog
+    networks:
+      - rinco-net
+
+  search-service:
+    build:
+      context: ./services/search-service
+    container_name: rinco-search
+    <<: *restart
+    environment:
+      SEARCH_HTTP_ADDR: ":8090"
+      DB_HOST: postgres
+      MEILISEARCH_HOST: http://meilisearch:7700
+      MEILISEARCH_API_KEY: ${MEILI_MASTER_KEY:-changeme}
+    ports:
+      - "8090:8090"
+    networks:
+      - rinco-net
+
+  dynamic-model-service:
+    build:
+      context: ./services/dynamic-model-service
+    container_name: rinco-dynamic
+    <<: *restart
+    environment:
+      DYNAMIC_MODEL_HTTP_ADDR: ":8091"
+      DB_HOST: postgres
+      MONGO_HOST: mongodb
+    ports:
+      - "8091:8091"
+    depends_on:
+      - postgres
+    networks:
+      - rinco-net
+
+  billing-service:
+    build:
+      context: ./services/billing-service
+    container_name: rinco-billing
+    <<: *restart
+    environment:
+      BILLING_HTTP_ADDR: ":8092"
+      DB_HOST: postgres
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
+    ports:
+      - "8092:8092"
+    depends_on:
+      - postgres
+    networks:
+      - rinco-net
+
+  observability-service:
+    build:
+      context: ./services/observability-service
+    container_name: rinco-observability
+    <<: *restart
+    environment:
+      OBSERVABILITY_HTTP_ADDR: ":8093"
+      DB_HOST: postgres
+      NATS_HOST: nats
+    ports:
+      - "8093:8093"
+    depends_on:
+      - postgres
+      - nats
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # AI / PYTHON SERVICES
+  # ============================================================
+
+  lead-scoring:
+    build:
+      context: ./services/lead-scoring
+    container_name: rinco-lead-scoring
+    <<: *restart
+    environment:
+      LEAD_SCORING_HOST: "0.0.0.0"
+      LEAD_SCORING_PORT: "8094"
+      DB_HOST: postgres
+      VALKEY_HOST: valkey
+    ports:
+      - "8094:8094"
+    networks:
+      - rinco-net
+
+  rag-chatbot:
+    build:
+      context: ./services/rag-chatbot
+    container_name: rinco-rag-chatbot
+    <<: *restart
+    environment:
+      RAG_HTTP_ADDR: ":8095"
+      DB_HOST: postgres
+      VALKEY_HOST: valkey
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-sk-placeholder}
+    ports:
+      - "8095:8095"
+    networks:
+      - rinco-net
+
+  ai-sre:
+    build:
+      context: ./services/ai-sre
+    container_name: rinco-ai-sre
+    <<: *restart
+    environment:
+      AI_SRE_HTTP_ADDR: ":8096"
+      DB_HOST: postgres
+      NATS_HOST: nats
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    ports:
+      - "8096:8096"
+    networks:
+      - rinco-net
+
+  stt-service:
+    build:
+      context: ./services/stt-service
+    container_name: rinco-stt
+    <<: *restart
+    environment:
+      STT_HTTP_ADDR: ":8097"
+      WHISPER_MODEL: base
+      WHISPER_DEVICE: cpu
+    ports:
+      - "8097:8097"
+    networks:
+      - rinco-net
+
+  # ============================================================
+  # FRONTENDS — Next.js apps
+  # ============================================================
+
+  admin-portal:
+    build:
+      context: ./frontend/admin-portal
+    container_name: rinco-admin
+    <<: *restart
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-change-me}
+    ports:
+      - "3001:3000"
+    networks:
+      - rinco-net
+
+  landing:
+    build:
+      context: ./frontend/landing
+    container_name: rinco-landing-fe
+    <<: *restart
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8083
+      NEXT_PUBLIC_FB_PIXEL_ID: ${NEXT_PUBLIC_FB_PIXEL_ID:-}
+    ports:
+      - "3002:3000"
+    networks:
+      - rinco-net
+
+  meeting-ui:
+    build:
+      context: ./frontend/meeting-ui
+    container_name: rinco-meeting
+    <<: *restart
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      NEXT_PUBLIC_SFU_URL: ws://localhost:8087
+    ports:
+      - "3003:3000"
+    networks:
+      - rinco-net
+
+  tenant-site:
+    build:
+      context: ./frontend/tenant-site
+    container_name: rinco-tenant-fe
+    <<: *restart
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8082
+    ports:
+      - "3004:3000"
+    networks:
+      - rinco-net
+
+volumes:
+  postgres_data:
+  valkey_data:
+  nats_data:
+  mongo_data:
+  scylla_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  rinco-net:
+    driver: bridge
+    name: rinco-net

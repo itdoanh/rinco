@@ -1,0 +1,127 @@
+# ============================================================
+# crm-service — Go, Lead, Contact, Deal, Activity
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crm-service
+  namespace: rinco
+  labels:
+    app: crm-service
+    tier: core
+    language: go
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: crm-service
+  template:
+    metadata:
+      labels:
+        app: crm-service
+        tier: core
+        language: go
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: crm-service
+          image: rinco/crm-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+              name: http
+            - containerPort: 9091
+              name: metrics
+          env:
+            - name: CRM_HTTP_ADDR
+              value: ":8081"
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: postgres-host
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: rinco
+            - name: DB_USER
+              value: rinco
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+                  optional: true
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: NATS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: nats-host
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-crm-service"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: otel-exporter-otlp-endpoint
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: crm-service
+  namespace: rinco
+spec:
+  selector:
+    app: crm-service
+  ports:
+    - port: 8081
+      targetPort: 8081
+      name: http
+    - port: 9091
+      targetPort: 9091
+      name: metrics
+  type: ClusterIP
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: crm-service-hpa
+  namespace: rinco
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: crm-service
+  minReplicas: 3
+  maxReplicas: 30
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

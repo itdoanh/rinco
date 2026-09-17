@@ -1,0 +1,111 @@
+# ============================================================
+# webrtc-sfu — Rust, AV1/VP9 SVC, Zero-Transcoding
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webrtc-sfu
+  namespace: rinco
+  labels:
+    app: webrtc-sfu
+    tier: realtime
+    language: rust
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: webrtc-sfu
+  template:
+    metadata:
+      labels:
+        app: webrtc-sfu
+        tier: realtime
+        language: rust
+    spec:
+      serviceAccountName: rinco-default
+      containers:
+        - name: webrtc-sfu
+          image: rinco/webrtc-sfu:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8088
+              name: http
+            - containerPort: 10000
+              name: rtp-udp
+              protocol: UDP
+            - containerPort: 10001
+              name: rtcp-udp
+              protocol: UDP
+            - containerPort: 9097
+              name: metrics
+          env:
+            - name: TURN_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: meeting-domain
+            - name: TURN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secrets
+                  key: jwt-secret
+                  optional: true
+            - name: VALKEY_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rinco-config
+                  key: valkey-host
+            - name: RUST_LOG
+              value: info
+            - name: OTEL_SERVICE_NAME
+              value: "rinco-webrtc-sfu"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "1"
+            limits:
+              memory: "2Gi"
+              cpu: "4"
+          livenessProbe:
+            tcpSocket:
+              port: 8088
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 8088
+            initialDelaySeconds: 5
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webrtc-sfu
+  namespace: rinco
+  spec:
+  selector:
+    app: webrtc-sfu
+  ports:
+    - port: 8088
+      targetPort: 8088
+      name: http
+    - port: 10000
+      targetPort: 10000
+      name: rtp-udp
+      protocol: UDP
+    - port: 10001
+      targetPort: 10001
+      name: rtcp-udp
+      protocol: UDP
+  type: ClusterIP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: webrtc-sfu-pdb
+  namespace: rinco
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: webrtc-sfu

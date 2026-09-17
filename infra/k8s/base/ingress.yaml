@@ -1,0 +1,149 @@
+# ============================================================
+# NGINX Ingress — RINCO public-facing entrypoints
+# ============================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rinco-ingress
+  namespace: rinco
+  annotations:
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.rinco.vn
+        - admin.rinco.vn
+        - landing.rinco.vn
+        - tenants.rinco.vn
+        - meeting.rinco.vn
+      secretName: rinco-tls
+  rules:
+    - host: api.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  number: 8080
+    - host: admin.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: admin-portal
+                port:
+                  number: 3000
+    - host: landing.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: landing
+                port:
+                  number: 3000
+    - host: tenants.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: tenant-site
+                port:
+                  number: 3000
+    - host: meeting.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: meeting-ui
+                port:
+                  number: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rinco-ws-ingress
+  namespace: rinco
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "wsroute"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "3600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - meeting.rinco.vn
+      secretName: rinco-tls
+  rules:
+    - host: meeting.rinco.vn
+      http:
+        paths:
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: chat-engine
+                port:
+                  number: 8087
+          - path: /rtc
+            pathType: Prefix
+            backend:
+              service:
+                name: webrtc-sfu
+                port:
+                  number: 8088
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: observability-ingress
+  namespace: observability
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12"
+    nginx.ingress.kubernetes.io/basic-auth-secret: "rinco-admin"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - grafana.rinco.vn
+        - prometheus.rinco.vn
+      secretName: rinco-tls
+  rules:
+    - host: grafana.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 3000
+    - host: prometheus.rinco.vn
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
