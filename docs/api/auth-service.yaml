@@ -1,0 +1,728 @@
+openapi: 3.1.0
+info:
+  title: auth-service API
+  version: 1.1.0
+  description: |
+    Authentication & authorization service for RINCO Platform.
+
+    Provides PASETO v4 tokens, FIDO2/WebAuthn, OAuth2, session management,
+    RBAC, API keys, and quorum signing.
+
+    Source: `services/auth-service/` · Port: 8081 · ADR: [0002](../adr/0002-paseto-vs-jwt.md)
+  contact:
+    name: RINCO Platform Team
+    email: platform@rinco.vn
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8081
+    description: Local dev
+  - url: https://api.rinco.vn/v1
+    description: Production
+
+tags:
+  - name: auth
+    description: Login / logout / token refresh
+  - name: users
+    description: User CRUD
+  - name: fido2
+    description: WebAuthn / FIDO2 credential management
+  - name: oauth
+    description: OAuth2 flows
+  - name: api-keys
+    description: API key management (HMAC-signed)
+  - name: sessions
+    description: Active session management
+  - name: rbac
+    description: Role-based access control
+  - name: admin
+    description: Super-admin endpoints (quorum required)
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      tags: [auth]
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /v1/auth/login:
+    post:
+      summary: Login with email + password
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+              description: HttpOnly refresh token cookie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/auth/logout:
+    post:
+      summary: Logout (revoke session)
+      tags: [auth]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Logged out
+
+  /v1/auth/refresh:
+    post:
+      summary: Refresh access token
+      tags: [auth]
+      security: []
+      parameters:
+        - in: cookie
+          name: refresh_token
+          schema:
+            type: string
+          required: true
+      responses:
+        '200':
+          description: New tokens issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /v1/auth/webauthn/register/begin:
+    post:
+      summary: Begin FIDO2 registration (get challenge)
+      tags: [fido2]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnChallenge'
+
+  /v1/auth/webauthn/register/finish:
+    post:
+      summary: Complete FIDO2 registration (verify attestation)
+      tags: [fido2]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnRegistrationFinish'
+      responses:
+        '201':
+          description: Credential registered
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /v1/auth/webauthn/login/begin:
+    post:
+      summary: Begin FIDO2 assertion (login)
+      tags: [fido2]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Challenge issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebAuthnChallenge'
+
+  /v1/auth/webauthn/login/finish:
+    post:
+      summary: Complete FIDO2 login (verify assertion)
+      tags: [fido2]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebAuthnLoginFinish'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+
+  /v1/users:
+    get:
+      summary: List users in current tenant
+      tags: [users]
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+                  next_cursor:
+                    type: string
+                    nullable: true
+    post:
+      summary: Create user (invite)
+      tags: [users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User invited
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /v1/users/{user_id}:
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get user by ID
+      tags: [users]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update user
+      tags: [users]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+    delete:
+      summary: Soft-delete user
+      tags: [users]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+
+  /v1/api-keys:
+    get:
+      summary: List API keys for current tenant
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: API key list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/APIKey'
+    post:
+      summary: Create API key
+      tags: [api-keys]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAPIKeyRequest'
+      responses:
+        '201':
+          description: API key created (only chance to see secret)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/APIKeyWithSecret'
+
+  /v1/sessions:
+    get:
+      summary: List active sessions for current user
+      tags: [sessions]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Session'
+    delete:
+      summary: Revoke all other sessions
+      tags: [sessions]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Other sessions revoked
+
+  /v1/oauth/{provider}/authorize:
+    get:
+      summary: OAuth2 authorization redirect
+      tags: [oauth]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [google, microsoft, github]
+        - in: query
+          name: redirect_uri
+          required: true
+          schema:
+            type: string
+            format: uri
+      responses:
+        '302':
+          description: Redirect to provider
+
+  /v1/oauth/{provider}/callback:
+    get:
+      summary: OAuth2 callback
+      tags: [oauth]
+      security: []
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: code
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: state
+          required: true
+          schema:
+            type: string
+      responses:
+        '302':
+          description: Redirect to app with auth code
+
+  /v1/admin/quorum/request:
+    post:
+      summary: Initiate quorum-signed action (P0)
+      tags: [admin]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuorumRequestCreate'
+      responses:
+        '201':
+          description: Quorum request created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuorumRequest'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PASETO
+
+  parameters:
+    Limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      in: query
+      name: cursor
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid credentials
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        service:
+          type: string
+        version:
+          type: string
+        dependencies:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [ok, degraded, down]
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+
+    LoginResponse:
+      type: object
+      required: [access_token, expires_in, user]
+      properties:
+        access_token:
+          type: string
+          description: PASETO v4.public token
+        expires_in:
+          type: integer
+          description: Seconds until expiry
+        token_type:
+          type: string
+          enum: [Bearer]
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      required: [id, email, name, role, tenant_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [super_admin, tenant_admin, manager, team_lead, agent, viewer]
+        tenant_id:
+          type: string
+          format: uuid
+        crm_node_id:
+          type: string
+          format: uuid
+          nullable: true
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        fido2_enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateUserRequest:
+      type: object
+      required: [email, name, role]
+      properties:
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [tenant_admin, manager, team_lead, agent, viewer]
+        phone:
+          type: string
+          nullable: true
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        phone:
+          type: string
+
+    WebAuthnChallenge:
+      type: object
+      required: [challenge, rp_id, allow_credentials]
+      properties:
+        challenge:
+          type: string
+          format: byte
+        rp_id:
+          type: string
+        allow_credentials:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: byte
+              type:
+                type: string
+
+    WebAuthnRegistrationFinish:
+      type: object
+      required: [attestation, name]
+      properties:
+        attestation:
+          type: object
+          description: Attestation response from authenticator
+        name:
+          type: string
+          description: User-friendly name (e.g., "YubiKey 5C")
+
+    WebAuthnLoginFinish:
+      type: object
+      required: [assertion]
+      properties:
+        assertion:
+          type: object
+          description: Assertion response from authenticator
+
+    APIKey:
+      type: object
+      required: [id, prefix, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        prefix:
+          type: string
+          description: First 8 chars of key (for identification)
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    APIKeyWithSecret:
+      allOf:
+        - $ref: '#/components/schemas/APIKey'
+        - type: object
+          required: [secret]
+          properties:
+            secret:
+              type: string
+              description: Full key, shown only at creation
+
+    CreateAPIKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+
+    Session:
+      type: object
+      required: [id, device, ip, created_at, last_active_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        device:
+          type: string
+          description: User agent
+        ip:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_active_at:
+          type: string
+          format: date-time
+        current:
+          type: boolean
+
+    QuorumRequestCreate:
+      type: object
+      required: [action, payload]
+      properties:
+        action:
+          type: string
+          enum: [delete_tenant, rotate_master_keys, cross_tenant_access, domain_takeover]
+        payload:
+          type: object
+
+    QuorumRequest:
+      type: object
+      required: [id, action, state, expires_at, signatures]
+      properties:
+        id:
+          type: string
+        action:
+          type: string
+        state:
+          type: string
+          enum: [pending, partial, executed, expired, rejected]
+        signatures:
+          type: array
+          items:
+            type: object
+            properties:
+              admin_id:
+                type: string
+                format: uuid
+              yubikey_serial:
+                type: string
+              signed_at:
+                type: string
+                format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        executed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              examples: [RESOURCE_NOT_FOUND, VALIDATION_FAILED, UNAUTHORIZED]
+            message:
+              type: string
+            trace_id:
+              type: string

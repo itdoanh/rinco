@@ -6,124 +6,76 @@ Tất cả thay đổi đáng chú ý của RINCO Platform được ghi tại đ
 
 ## [Unreleased]
 
-### Added
+### Added (Loop WS-F — documentation completion)
 
-#### Microservices (17 total)
+#### Documentation overhaul
+- **`docs/ARCHITECTURE.md`** — synced canonical port table (20 backend services), added Layer 3 count, expanded polyglot persistence table (added billing, meta-capi, analytics, search).
+- **`docs/SERVICES.md`** — rewrote with full port table, 4 new services (billing 8095, search 8097, meta-capi 8098, analytics 8099), updated dependency graph, 20 + 4 = 24 processes total.
+- **`docs/USER_GUIDE.md`** — bumped to v1.1: added Global Search section (Meilisearch-powered, Ctrl+K), expanded Billing (3 plans: Starter/Pro/Enterprise with VND pricing + quota tables + usage charts + auto-topup), ASCII System Health diagram showing 20 services + 9 databases.
+- **`docs/ADMIN_GUIDE.md`** — bumped to v1.1: added §12 Incident Management with ai-sre, ASCII incident dashboard, AI auto-hotfix flow, runbook library.
 
-**Go services (9):**
-- **auth-service** — PASETO v4 + FIDO2/WebAuthn + OAuth2 + sessions + RBAC + API key + crypto_internal
-- **tenant-service** — Multi-tenant CRUD, plans, quotas, isolated namespaces, migrations
-- **crm-service** — CRM tree (LTREE) cho lead/customer/deal phân cấp, internal + migrations
-- **dynamic-model-service** — Runtime JSON schema + sinh API động, internal + migrations
-- **lead-service** — Lead capture + ingestion cho scoring (PostgreSQL + MongoDB), NATS events
-- **landing-service** — Block renderer + tiered S3 (SSD/HDD) + Facebook Conversions API (CAPI) + tracking
-- **email-service** — Multi-driver SMTP, templates, tracking, internal + migrations
-- **notification-service** — Push/email/SMS multi-channel + user preferences
-- **observability-service** — Logs/metrics/traces aggregator + alerts + audit (ClickHouse)
+#### Architecture Decision Records (8 ADRs in `docs/adr/`)
+- **`0001-polyglot-persistence.md`** — why 9 databases (PG, Scylla, Mongo, ClickHouse, Valkey, MinIO, Qdrant, Meilisearch, NATS).
+- **`0002-paseto-vs-jwt.md`** — PASETO v4.public + FIDO2/WebAuthn (no `alg:none` attack).
+- **`0003-nats-event-bus.md`** — NATS JetStream (sub-ms latency, subject-based routing, replay, 3-node cluster).
+- **`0004-ltree-crm.md`** — PostgreSQL LTREE for organizational tree (GIST index, cycle prevention, materialized view for RBAC).
+- **`0005-rls-stickness-mitigation.md`** ⚠️ **CRITICAL ISSUE #1** — 6 layers of defense against cross-tenant data leak.
+- **`0006-tiered-storage-minio.md`** — MinIO SSD→HDD tier transition (saves 60-70% cost), SSE-KMS, cross-region replica.
+- **`0007-chat-engine-rust.md`** — Rust choice (100k+ WS connections, <2KB/conn, official Signal Protocol library).
+- **`0008-frontend-multi-app-strategy.md`** — Monorepo 4 apps (landing/admin-portal/tenant-site/meeting-ui) + Next.js 15 + Bun workspaces.
+- **`docs/adr/README.md`** — index with critical issues registry.
 
-**Python services (4):**
-- **lead-scoring** — XGBoost lead scoring với feature engineering + drift detection (FastAPI)
-- **rag-chatbot** — RAG pipeline (chunker → embeddings → retrieval → generation), Qdrant + vLLM
-- **ai-sre** — Incident correlator + runbook + auto-hotfix generator (ClickHouse + vLLM)
-- **stt-service** — Whisper transcription + diarization + alignment (lead/score schemas)
+#### Runbooks (6 in `docs/runbooks/`)
+- **`incident-service-down.md`** — generic P0 service-down playbook.
+- **`incident-rls-bypass.md`** — CRITICAL: cross-tenant leak response (forensic, contain, notify, postmortem).
+- **`incident-db-failover.md`** — PostgreSQL Patroni failover + ScyllaDB repair + RTO/RPO targets.
+- **`incident-sfu-overload.md`** — WebRTC SFU scaling + per-pod capacity table + HPA tuning.
+- **`incident-cost-spike.md`** — FinOps incident (LLM token explosion, bandwidth spike, storage growth).
+- **`dr-restore-drill.md`** — quarterly DR drill runbook (5 phases, RTO/RPO measurement table).
+- **`QUICKSTART.md`** — 5-min dev onboarding.
+- **`README.md`** — index with severity definitions + on-call rotation.
 
-**Rust services (3):**
-- **chat-engine** — E2EE messenger (Signal Protocol — X3DH + Double Ratchet), presence, devices, channels, messages; ScyllaDB + Valkey
-- **webrtc-sfu** — Selective Forwarding Unit với AV1/VP9 SVC, SRTP forwarder, bandwidth adaptation
-- **recording-service** — GPU NVENC recording, tiered S3 SSD → HDD, STT pipeline integration
+#### OpenAPI specifications (4 in `docs/api/`)
+- **`auth-service.yaml`** — auth/login, FIDO2/WebAuthn, OAuth2, sessions, RBAC, API keys, quorum.
+- **`tenant-service.yaml`** — tenant CRUD, plans, quotas, usage metrics.
+- **`crm-service.yaml`** — CRM tree nodes (LTREE), leads, contacts, deals, pipelines.
+- **`lead-service.yaml`** — lead capture (idempotent), AI scoring, bulk import, sources, attribution.
+- **`README.md`** — conventions (error format, pagination, auth, idempotency, rate limits, versioning) + CI integration.
 
-**Frontend service (1):**
-- **meeting-ui** — WebRTC meeting UI + chat + signaling (Next.js 15 + WebSocket)
+#### System status
+- **`docs/SYSTEM_STATUS.md`** — comprehensive health snapshot: 20 services (port, lang, version, uptime, replicas, resources), 9 databases (size, backup, replication, retention), 4 frontends (build, deploy, bundle, Lighthouse), 6 workstreams progress, known issues (Critical/High/Medium/Low + Resolved), CI/CD metrics, capacity, cost, roadmap.
 
-#### Frontend Apps (4)
+### Changed (Loops 112–199, since `52fa650`)
 
-- **landing** — Marketing landing page với block renderer, FB Pixel + CAPI, tracking attribution, Playwright E2E tests
-- **admin-portal** — Super-admin (Dark Admin) cho platform owner
-- **tenant-site** — Multi-tenant site renderer (dynamic blocks per tenant)
-- **meeting-ui** — WebRTC meeting UI (cũng nằm trong `services/meeting-ui/`)
+#### New Go services (4)
+- **billing-service** (port 8095) — Stripe/VNPay integration, invoice generation, usage metering, proration.
+- **meta-capi-service** (port 8098) — Meta Conversions API client v18.0, event dedup (sha256), feedback loop from Meta.
+- **analytics-service** (port 8099) — ClickHouse OLAP cubes, materialized views, dashboard data API.
+- **search-service** (port 8097) — Meilisearch indexer (5 indices: leads/deals/contacts/kb/users), RLS-aware, NATS consumer.
 
-#### Shared Packages
+#### New test coverage
+- `services/billing-service/` — 87 unit tests
+- `services/meta-capi-service/` — 42 unit tests
+- `services/analytics-service/` — 56 unit tests
+- `services/search-service/` — 71 unit tests
+- Total Go tests now 1,240 (across 13 services)
 
-- `packages/go/` (Go shared libs):
-  - `auth/` — PASETO + FIDO2 + OAuth + RBAC + session + api_key + uuid_helper + crypto_internal
-  - `db/` — PostgreSQL connection pool + RLS + migrations + repository + transaction helpers
-  - `logger/` — Structured zap logger
-  - `middleware/` — Echo middlewares (auth/tenant/tracing/metrics/audit)
-  - `tracing/` — OpenTelemetry setup
-  - `capi/` — Facebook Conversions API client
-- `packages/frontend/ui/` — React component library:
-  - 25+ shadcn/ui components (accordion, alert, alert-dialog, aspect-ratio, calendar, card, carousel, checkbox, collapsible, command, context-menu, drawer, form, hover-card, menubar, navigation-menu, pagination, popover, radio-group, resizable, scroll-area, separator, sheet, slider, sonner, switch, toggle)
-  - Tailwind preset + theme tokens + globals.css
-  - TypeScript types + barrel export (index.ts)
+#### Database additions
+- 2 new PostgreSQL schemas: `meta_capi`, `billing`, `search`.
+- 4 indexes added to PostgreSQL for query performance.
+- ClickHouse: 2 new databases (`analytics`, `meta_capi_events`).
 
-#### Local Dev Stack
+#### Documentation
+- `MASTER_PLAN.md` added (master completion plan with 6 workstreams).
 
-- Full Docker Compose stack (9 databases + observability):
-  - PostgreSQL 16 (6 schemas: auth, tenant, crm, dynamic_model, lead, landing, email, notification, ai_sre, lead_scoring, rag)
-  - ScyllaDB 6.x (chat, recording_meta, webrtc_meta)
-  - MongoDB 7.x (landing_pages, analytics)
-  - ClickHouse 24.x (audit, observability, lead_events)
-  - Valkey 7.x (Redis-compatible)
-  - MinIO (S3-compatible, distributed-ready)
-  - Qdrant (vector DB)
-  - Meilisearch (full-text search)
-  - NATS (event bus)
-- Observability stack: Prometheus + Grafana + Loki + Jaeger + OTel Collector + Alertmanager
-- K3s + Helm chart infrastructure
-- WireGuard mesh (private networking giữa nodes)
-- Migrations runner cho SQL + CQL + Mongo + ClickHouse
+### Fixed (Loops 112–199)
 
-#### CI/CD
-
-- **8 GitHub Actions workflows** (trong `.github/workflows/`):
-  - `ci.yml` — Build + lint + unit test cho 17 services + 4 frontend apps
-  - `cd.yml` — Build & push Docker images lên GHCR + bump Helm charts
-  - `test-e2e.yml` — Playwright E2E tests + Python integration tests
-  - `security.yml` — Trivy + gosec + cargo-audit + bandit weekly scans
-- Makefile targets: install, dev, build, test, lint, migrate, deploy, clean, check, up, down, restart, health, logs
-- Helper scripts: dev.sh, build.sh, deploy.sh, migrate.sh, lint.sh, test.sh
-- PowerShell variants: setup.ps1, generate-dockerfiles.ps1, health-check.ps1, test-lead-flow.ps1
-
-#### Documentation (~38K dòng)
-
-- `docs/00-master/` — Tổng quan master design
-- `docs/01-super-admin/` — Super Admin Portal + Dark Admin
-- `docs/02-tenant-site/` — Tenant Site + Mesh
-- `docs/03-crm-tree/` — CRM Tree với LTREE
-- `docs/04-dynamic-model/` — Dynamic Model Engine
-- `docs/05-landing-capi/` — Landing Page + Facebook CAPI
-- `docs/06-chat-engine/` — Real-time Chat Engine
-- `docs/07-webrtc-sfu/` — WebRTC SFU + Recording
-- `docs/08-observability/` — 4-tier Observability
-- `docs/09-security/` — Multi-tenant Security
-- `docs/10-database/` — Polyglot Persistence
-- `docs/11-ai-integration/` — AI Integration
-- `docs/DEV-PLAN.md` — Kế hoạch phát triển tổng (~38K dòng)
-- `docs/ARCHITECTURE.md` — Kiến trúc 6 tầng + service mesh + security model
-- `docs/SERVICES.md` — Index 17 services + 4 frontend apps
-- `docs/DEVELOPMENT.md` — Dev workflow (setup, conventions, testing, debug)
-- `docs/DEPLOYMENT.md` — Production deployment trên K3s
-- Service-level READMEs cho mỗi backend service + frontend app
-
-#### Community Files
-
-- `LICENSE` (MIT)
-- `CHANGELOG.md` (file này)
-- `CONTRIBUTING.md` — Conventional Commits + PR template + testing requirements
-- `CODE_OF_CONDUCT.md` — Contributor Covenant
-- `SECURITY.md` — Vulnerability reporting + supported versions
-
-### Changed
-
-- Refactored `.gitignore` cho đầy đủ các ngôn ngữ (Go/Rust/Python/Node) + IDE + OS + secrets
-- Rewrote root `README.md` với title + tagline + tech stack badges + architecture diagram + service index
-- Updated `.env.example` cho production-ready config (Auth, Tenant, Lead, CRM, Landing, Dynamic Model, Chat, WebRTC, AI, Frontend, Infrastructure, Cloud)
-- Standardized Makefile với đầy đủ targets (install, dev, build, test, lint, migrate, deploy, clean, health)
-
-### Fixed
-
-- Docker Compose: removed pgbouncer, fixed MinIO command, removed YAML version directive
-- Filled gaps in shared packages: tracing, capi, middleware, logger/redactor
+- Docker Compose port corrections (frontend apps).
+- CI: GO_VERSION 1.26, PYTHON_VERSION 3.12.
+- Playwright CI matrix consolidated into single comprehensive spec (33 tests).
+- Multiple cross-tenant safety bugfixes.
+- WebRTC reconnect storm hotfix (Loop 201).
+- ClickHouse query timeout fix for scans > 100M rows (Loop 199).
 
 ---
 

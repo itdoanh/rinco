@@ -1,8 +1,10 @@
 # Admin Portal Guide (Super Admin)
 
-> **Phiên bản:** 1.0 · **Cập nhật:** Sep 2026
+> **Phiên bản:** 1.1 · **Cập nhật:** Sep 2026
 >
 > Hướng dẫn này dành cho **Super Admin** của nền tảng RINCO — những người có quyền cao nhất, quản lý toàn bộ hệ thống, tenants, và thực hiện các thao tác P0 (delete tenant, rotate keys).
+>
+> **Mới trong 1.1**: `billing-service` (plans, invoices, Stripe/VNPay), `meta-capi-service` (event dedup + feedback), `analytics-service` (OLAP cubes), `search-service` (Meilisearch), `ai-sre` (incident correlator tự động). 20 backend services + 4 frontend.
 
 ---
 
@@ -241,7 +243,7 @@ Mỗi flag có:
 
 Vào **System → Health**.
 
-> 📷 **Screenshot placeholder:** Grid 22 services + 9 databases với màu xanh/vàng/đỏ
+> 📷 **Screenshot placeholder:** Grid 20 services + 9 databases với màu xanh/vàng/đỏ
 
 ### 5.2. Trạng thái
 
@@ -506,6 +508,96 @@ Lấy cảm hứng từ sơ đồ phân cấp hình cây:
 | **P1 (High)** | 💬 Telegram `@rinco_sre` | < 1 giờ |
 | **P2 (Medium)** | 📧 support@rinco.vn | < 4 giờ |
 | **P3 (Low)** | 🎫 Ticket portal | < 24 giờ |
+
+---
+
+## 12. Incident Management với AI-SRE
+
+> 📷 **Screenshot placeholder:** Dashboard AI-SRE với timeline incidents + suggested remediation
+
+### 12.1. AI-SRE là gì?
+
+`ai-sre` (port **8090**) là Python service dùng LLM + ClickHouse để:
+
+1. **Correlate** log/metric/timeline anomalies với known incidents.
+2. **Suggest remediation** dựa trên runbook history.
+3. **Auto-generate** PR draft cho hotfix (qua `git-ops-bot`).
+
+### 12.2. Dashboard Incident
+
+Vào **System → Incidents**.
+
+```
+┌──────────────────── Active Incidents ─────────────────────┐
+│ #ID    Sev   Service           Started        ETA         │
+│ INC-42 P0    chat-engine       3 phút trước   25 phút     │
+│        ── Error rate spike 4× baseline ──                 │
+│        Suggestion: "Tăng ScyllaDB IO đang saturated"      │
+│        [View] [Acknowledge] [Run Runbook]                 │
+│                                                          │
+│ INC-41 P1    lead-scoring      17 phút trước  10 phút     │
+│        ── p95 latency tăng 12× ──                         │
+│        Suggestion: "Restart pod + clear model cache"      │
+│        [View] [Acknowledge] [Run Runbook]                 │
+└──────────────────────────────────────────────────────────┘
+```
+
+### 12.3. Quy trình xử lý
+
+1. **Detection** — Prometheus alert → NATS `alert.fired` → `ai-sre` consume.
+2. **Correlation** — query ClickHouse để tìm recent deploys / config changes.
+3. **Suggestion** — LLM sinh remediation step dựa trên runbook history + code context.
+4. **Acknowledge** — Admin click **Acknowledge**, ai-sre silence alert trong 15 phút.
+5. **Run runbook** — click **Run Runbook** để execute auto-remediation (vd: `kubectl rollout restart`).
+6. **Resolve** — sau khi metric về bình thường → auto-resolve + ghi postmortem.
+
+### 12.4. Auto-hotfix (Experimental)
+
+`ai-sre` có thể generate PR draft cho fix đơn giản (vd: bump timeout, scale HPA).
+
+**Bật:** Settings → AI-SRE → Auto-hotfix = ✅ On.
+
+**Quy trình:**
+1. `ai-sre` phát hiện root cause (vd: `lead-scoring` bị OOM khi batch > 5k records).
+2. Sinh PR draft → đẩy vào branch `ai-sre/INC-42-fix`.
+3. Slack notification tới on-call channel.
+4. Admin review + merge.
+
+### 12.5. Runbook Library
+
+Vào **System → Runbooks** để xem / edit các runbook tự động.
+
+Mỗi runbook gồm:
+- **Trigger condition** (PromQL / log query)
+- **Steps** (bash / kubectl / SQL)
+- **Expected outcome** (metric threshold)
+
+Ví dụ runbook `chat-engine-scylla-saturation`:
+
+```yaml
+trigger: |
+  scylla_io_queue_depth{instance=~".*scylla.*"} > 200
+  for 5m
+steps:
+  - name: "Scale ScyllaDB IO"
+    run: |
+      kubectl patch scyllacluster rinco-scylla \
+        --type merge -p \
+        '{"spec":{"exposeUref":null}}'
+  - name: "Restart chat-engine pods"
+    run: kubectl rollout restart deployment/chat-engine
+expected: |
+  scylla_io_queue_depth < 50
+  for 10m
+```
+
+### 12.6. Xem chi tiết
+
+- [docs/runbooks/incident-service-down.md](runbooks/incident-service-down.md) — Service down
+- [docs/runbooks/incident-rls-bypass.md](runbooks/incident-rls-bypass.md) — RLS bypass
+- [docs/runbooks/incident-db-failover.md](runbooks/incident-db-failover.md) — DB failover
+- [docs/runbooks/incident-sfu-overload.md](runbooks/incident-sfu-overload.md) — SFU overload
+- [docs/runbooks/incident-cost-spike.md](runbooks/incident-cost-spike.md) — Cost spike
 
 ---
 

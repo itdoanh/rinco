@@ -1,0 +1,659 @@
+openapi: 3.1.0
+info:
+  title: lead-service API
+  version: 1.1.0
+  description: |
+    Lead capture + ingestion service.
+
+    Receives leads from multiple sources (landing pages, manual entry,
+    import), normalizes, scores (async via lead-scoring service), and
+    forwards to CRM + analytics.
+
+    Source: `services/lead-service/` · Port: 8085
+  contact:
+    name: RINCO Platform Team
+    email: platform@rinco.vn
+
+servers:
+  - url: http://localhost:8085
+    description: Local dev
+  - url: https://api.rinco.vn/v1
+    description: Production
+
+tags:
+  - name: leads
+    description: Lead ingestion + retrieval
+  - name: scoring
+    description: Lead scoring (AI score, band, features)
+  - name: sources
+    description: Lead source configuration
+  - name: bulk
+    description: Bulk operations (CSV import, batch scoring)
+  - name: attribution
+    description: UTM + click attribution
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      tags: [leads]
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+
+  /v1/leads:
+    get:
+      summary: List leads (for current tenant)
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [new, contacted, converted, disqualified]
+        - in: query
+          name: source
+          schema:
+            type: string
+        - in: query
+          name: min_score
+          schema:
+            type: integer
+        - in: query
+          name: band
+          schema:
+            type: string
+            enum: [hot, warm, cold]
+        - in: query
+          name: owner_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: created_after
+          schema:
+            type: string
+            format: date-time
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Lead list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Lead'
+                  next_cursor:
+                    type: string
+                    nullable: true
+
+    post:
+      summary: Capture lead (idempotent via idempotency_key)
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            type: string
+          required: false
+          description: Dedupe key (use email+timestamp+source for landing)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaptureLeadRequest'
+      responses:
+        '201':
+          description: Lead captured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '200':
+          description: Duplicate (idempotency hit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          description: Bot detected
+
+  /v1/leads/{lead_id}:
+    parameters:
+      - in: path
+        name: lead_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get lead by ID
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Lead detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update lead (status, owner, custom fields)
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLeadRequest'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Soft-delete lead (GDPR right-to-erasure)
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+
+  /v1/leads/{lead_id}/score:
+    get:
+      summary: Get AI score for lead
+      tags: [scoring]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: lead_id
+          required: true
+          schema:
+          format: uuid
+      responses:
+        '200':
+          description: Score detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadScore'
+
+    post:
+      summary: Re-score lead manually (force refresh)
+      tags: [scoring]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: lead_id
+          required: true
+          schema:
+          format: uuid
+      responses:
+        '202':
+          description: Re-scoring job queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AsyncJob'
+
+  /v1/leads/bulk/import:
+    post:
+      summary: Bulk import from CSV/Excel (async)
+      tags: [bulk]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                column_mapping:
+                  type: object
+                  description: Maps CSV columns to lead fields
+                assign_strategy:
+                  type: string
+                  enum: [round-robin, least-busy, top-performer, manual]
+      responses:
+        '202':
+          description: Import job started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+
+  /v1/leads/bulk/import/{job_id}:
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get import job status
+      tags: [bulk]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+
+  /v1/leads/assign:
+    post:
+      summary: Bulk assign leads to user/team
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lead_ids, owner_id]
+              properties:
+                lead_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                owner_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Assigned
+
+  /v1/leads/sources:
+    get:
+      summary: List lead sources for tenant
+      tags: [sources]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Sources
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/LeadSource'
+    post:
+      summary: Create lead source (e.g., new landing page campaign)
+      tags: [sources]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLeadSourceRequest'
+      responses:
+        '201':
+          description: Source created
+
+  /v1/leads/attribution/{click_id}:
+    get:
+      summary: Get click attribution for fbclid/gclid
+      tags: [attribution]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: click_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Click detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClickAttribution'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PASETO
+
+  parameters:
+    Limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        default: 50
+        maximum: 200
+    Cursor:
+      in: query
+      name: cursor
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Lead not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Lead:
+      type: object
+      required: [id, tenant_id, name, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        source:
+          type: string
+        source_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [new, contacted, converted, disqualified]
+        owner_id:
+          type: string
+          format: uuid
+          nullable: true
+        custom_fields:
+          type: object
+        utm:
+          type: object
+          properties:
+            source:
+              type: string
+            medium:
+              type: string
+            campaign:
+              type: string
+            term:
+              type: string
+            content:
+              type: string
+        fbc:
+          type: string
+          nullable: true
+        fbp:
+          type: string
+          nullable: true
+        ip:
+          type: string
+          nullable: true
+        user_agent:
+          type: string
+          nullable: true
+        referer:
+          type: string
+          format: uri
+          nullable: true
+        landing_path:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          nullable: true
+        band:
+          type: string
+          enum: [hot, warm, cold]
+          nullable: true
+        bot_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CaptureLeadRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        source:
+          type: string
+          default: organic
+        source_id:
+          type: string
+          format: uuid
+        custom_fields:
+          type: object
+        utm:
+          type: object
+        fbc:
+          type: string
+        fbp:
+          type: string
+        consent:
+          type: object
+          description: GDPR consent tracking
+          properties:
+            marketing:
+              type: boolean
+            terms:
+              type: boolean
+        pow_proof:
+          type: string
+          description: Argon2 PoW proof (anti-bot)
+
+    UpdateLeadRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        status:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        custom_fields:
+          type: object
+
+    LeadScore:
+      type: object
+      required: [lead_id, score, band, model_version, computed_at]
+      properties:
+        lead_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        band:
+          type: string
+          enum: [hot, warm, cold]
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        features:
+          type: object
+          description: SHAP feature importance
+        model_version:
+          type: string
+        computed_at:
+          type: string
+          format: date-time
+
+    LeadSource:
+      type: object
+      required: [id, name, type]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum: [landing_page, facebook_ad, google_ad, manual, import, api]
+        campaign_id:
+          type: string
+          nullable: true
+        landing_page_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    CreateLeadSourceRequest:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        campaign_id:
+          type: string
+
+    ImportJob:
+      type: object
+      required: [id, status, total_rows]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        total_rows:
+          type: integer
+        processed_rows:
+          type: integer
+        failed_rows:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              row:
+                type: integer
+              error:
+                type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    ClickAttribution:
+      type: object
+      required: [click_id, captured_at]
+      properties:
+        click_id:
+          type: string
+        click_type:
+          type: string
+          enum: [fb, google, tiktok, organic]
+        landing_path:
+          type: string
+        utm:
+          type: object
+        captured_at:
+          type: string
+          format: date-time
+        matched_lead_id:
+          type: string
+          format: uuid
+          nullable: true
+
+    AsyncJob:
+      type: object
+      required: [job_id, status]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, completed, failed]
+        eta_seconds:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              examples: [VALIDATION_FAILED, BOT_DETECTED, DUPLICATE_LEAD]
+            message:
+              type: string
+            trace_id:
+              type: string

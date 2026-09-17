@@ -1,0 +1,510 @@
+openapi: 3.1.0
+info:
+  title: tenant-service API
+  version: 1.1.0
+  description: |
+    Multi-tenant management service for RINCO Platform.
+
+    Manages tenant lifecycle, plans, quotas, isolated namespaces,
+    and cross-tenant routing.
+
+    Source: `services/tenant-service/` · Port: 8082
+  contact:
+    name: RINCO Platform Team
+    email: platform@rinco.vn
+
+servers:
+  - url: http://localhost:8082
+    description: Local dev
+  - url: https://api.rinco.vn/v1
+    description: Production
+
+tags:
+  - name: tenants
+    description: Tenant CRUD + lifecycle
+  - name: plans
+    description: Subscription plans
+  - name: quotas
+    description: Per-tenant quota management
+  - name: namespaces
+    description: NATS / database namespace isolation
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      tags: [tenants]
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+
+  /v1/tenants:
+    get:
+      summary: List tenants (super-admin only)
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: plan
+          schema:
+            type: string
+            enum: [starter, pro, enterprise]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [active, suspended, pending]
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tenant'
+                  next_cursor:
+                    type: string
+                    nullable: true
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      summary: Create new tenant
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTenantRequest'
+      responses:
+        '201':
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Slug already exists
+
+  /v1/tenants/{tenant_id}:
+    parameters:
+      - in: path
+        name: tenant_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get tenant by ID
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Tenant detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      summary: Update tenant (name, plan, custom domain)
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTenantRequest'
+      responses:
+        '200':
+          description: Updated
+
+  /v1/tenants/{tenant_id}/suspend:
+    post:
+      summary: Suspend tenant (refuse all access)
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenant_id
+          required: true
+          schema:
+            type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 10
+      responses:
+        '200':
+          description: Suspended
+
+  /v1/tenants/{tenant_id}/restore:
+    post:
+      summary: Restore suspended tenant
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenant_id
+          required: true
+          schema:
+          format: uuid
+      responses:
+        '200':
+          description: Restored
+
+  /v1/tenants/by-slug/{slug}:
+    get:
+      summary: Get tenant by slug (for routing)
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: slug
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Tenant
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tenant'
+
+  /v1/tenants/{tenant_id}/quotas:
+    parameters:
+      - in: path
+        name: tenant_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get current quota usage
+      tags: [quotas]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Quota status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuotaStatus'
+    patch:
+      summary: Update quotas (super-admin only)
+      tags: [quotas]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQuotaRequest'
+      responses:
+        '200':
+          description: Updated
+
+  /v1/plans:
+    get:
+      summary: List available plans
+      tags: [plans]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Plan list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Plan'
+
+  /v1/tenants/{tenant_id}/usage:
+    get:
+      summary: Get usage metrics for billing
+      tags: [tenants]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: tenant_id
+          required: true
+          schema:
+          format: uuid
+        - in: query
+          name: period
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: month
+      responses:
+        '200':
+          description: Usage breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageReport'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PASETO
+
+  parameters:
+    Limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        default: 50
+    Cursor:
+      in: query
+      name: cursor
+      schema:
+        type: string
+
+  responses:
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+  schemas:
+    Tenant:
+      type: object
+      required: [id, slug, name, plan, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'
+        name:
+          type: string
+        plan:
+          type: string
+          enum: [starter, pro, enterprise]
+        status:
+          type: string
+          enum: [active, suspended, pending, deleted]
+        region:
+          type: string
+          enum: [ap-southeast-1, ap-southeast-2, eu-west-1, us-east-1]
+        custom_domain:
+          type: string
+          nullable: true
+        template:
+          type: string
+          enum: [fintech, real_estate, edu, retail, custom]
+        owner_email:
+          type: string
+          format: email
+        created_at:
+          type: string
+          format: date-time
+
+    CreateTenantRequest:
+      type: object
+      required: [slug, name, plan, template, owner_email]
+      properties:
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'
+        name:
+          type: string
+        plan:
+          type: string
+          enum: [starter, pro, enterprise]
+        region:
+          type: string
+        template:
+          type: string
+          enum: [fintech, real_estate, edu, retail, custom]
+        owner_email:
+          type: string
+          format: email
+        custom_domain:
+          type: string
+          nullable: true
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        plan:
+          type: string
+        custom_domain:
+          type: string
+
+    Plan:
+      type: object
+      required: [id, name, price_monthly, quotas]
+      properties:
+        id:
+          type: string
+          enum: [starter, pro, enterprise]
+        name:
+          type: string
+        price_monthly:
+          type: integer
+          description: VND
+        quotas:
+          type: object
+          properties:
+            leads_per_month:
+              type: integer
+            users:
+              type: integer
+            storage_gb:
+              type: integer
+            ai_calls_per_month:
+              type: integer
+
+    QuotaStatus:
+      type: object
+      required: [tenant_id, period, used, limit]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        period:
+          type: string
+        used:
+          type: object
+          properties:
+            leads:
+              type: integer
+            users:
+              type: integer
+            storage_gb:
+              type: number
+            ai_calls:
+              type: integer
+        limit:
+          type: object
+          properties:
+            leads:
+              type: integer
+            users:
+              type: integer
+            storage_gb:
+              type: integer
+            ai_calls:
+              type: integer
+        percent_used:
+          type: object
+          properties:
+            leads:
+              type: number
+            users:
+              type: number
+            storage_gb:
+              type: number
+            ai_calls:
+              type: number
+
+    UpdateQuotaRequest:
+      type: object
+      required: [leads_per_month, users, storage_gb, ai_calls_per_month]
+      properties:
+        leads_per_month:
+          type: integer
+        users:
+          type: integer
+        storage_gb:
+          type: integer
+        ai_calls_per_month:
+          type: integer
+
+    UsageReport:
+      type: object
+      required: [tenant_id, period, metrics]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        period:
+          type: string
+        metrics:
+          type: object
+          properties:
+            active_users:
+              type: integer
+            leads_created:
+              type: integer
+            deals_won:
+              type: integer
+            ai_scoring_calls:
+              type: integer
+            storage_used_gb:
+              type: number
+            bandwidth_gb:
+              type: number
+            chat_messages:
+              type: integer
+            meeting_minutes:
+              type: integer
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            trace_id:
+              type: string

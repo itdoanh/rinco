@@ -1,0 +1,736 @@
+openapi: 3.1.0
+info:
+  title: crm-service API
+  version: 1.1.0
+  description: |
+    CRM tree service — manages hierarchical organization with
+    PostgreSQL LTREE for lead/customer/deal phân cấp.
+
+    ADR: [0004](../adr/0004-ltree-crm.md)
+  contact:
+    name: RINCO Platform Team
+    email: platform@rinco.vn
+
+servers:
+  - url: http://localhost:8083
+    description: Local dev
+  - url: https://api.rinco.vn/v1
+    description: Production
+
+tags:
+  - name: nodes
+    description: CRM tree nodes (users, teams, departments)
+  - name: leads
+    description: Lead CRUD
+  - name: contacts
+    description: Contact records
+  - name: deals
+    description: Deal pipeline
+  - name: pipelines
+    description: Pipeline configuration (stages)
+  - name: tree
+    description: Tree query operations
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      tags: [nodes]
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+
+  /v1/crm/nodes:
+    get:
+      summary: List nodes in CRM tree
+      tags: [nodes]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [user, team, department]
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CRMNode'
+    post:
+      summary: Create CRM node
+      tags: [nodes]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeRequest'
+      responses:
+        '201':
+          description: Node created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRMNode'
+
+  /v1/crm/nodes/{node_id}:
+    parameters:
+      - in: path
+        name: node_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get CRM node
+      tags: [nodes]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Node detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CRMNode'
+    patch:
+      summary: Update CRM node (name, metadata, parent via separate endpoint)
+      tags: [nodes]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateNodeRequest'
+      responses:
+        '200':
+          description: Updated
+    delete:
+      summary: Soft-delete node
+      tags: [nodes]
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Deleted
+
+  /v1/crm/nodes/{node_id}/move:
+    post:
+      summary: Move node (and subtree) to new parent
+      tags: [nodes]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: node_id
+          required: true
+          schema:
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [new_parent_id]
+              properties:
+                new_parent_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Moved
+        '400':
+          description: Cycle detected
+
+  /v1/crm/nodes/{node_id}/subtree:
+    get:
+      summary: Get all descendants of node
+      tags: [tree]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: node_id
+          required: true
+          schema:
+          format: uuid
+        - in: query
+          name: max_depth
+          schema:
+            type: integer
+            default: 100
+        - in: query
+          name: type
+          schema:
+            type: string
+            enum: [user, team, department]
+      responses:
+        '200':
+          description: Subtree
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CRMNode'
+
+  /v1/crm/nodes/{node_id}/ancestors:
+    get:
+      summary: Get ancestor chain
+      tags: [tree]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: node_id
+          required: true
+          schema:
+          format: uuid
+      responses:
+        '200':
+          description: Ancestors (root to immediate parent)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CRMNode'
+
+  /v1/crm/leads:
+    get:
+      summary: List leads (RLS-filtered by tenant + RBAC subtree)
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: owner_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [new, contacting, qualified, negotiating, won, lost]
+        - in: query
+          name: band
+          schema:
+            type: string
+            enum: [hot, warm, cold]
+        - in: query
+          name: min_score
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 100
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Lead list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Lead'
+                  next_cursor:
+                    type: string
+    post:
+      summary: Create lead
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLeadRequest'
+      responses:
+        '201':
+          description: Lead created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+
+  /v1/crm/leads/{lead_id}:
+    parameters:
+      - in: path
+        name: lead_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get lead
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Lead detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+    patch:
+      summary: Update lead
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLeadRequest'
+      responses:
+        '200':
+          description: Updated
+
+  /v1/crm/leads/import:
+    post:
+      summary: Bulk import leads (Excel/CSV)
+      tags: [leads]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                column_mapping:
+                  type: object
+                  additionalProperties:
+                    type: string
+      responses:
+        '202':
+          description: Import job started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportJob'
+
+  /v1/crm/deals:
+    get:
+      summary: List deals
+      tags: [deals]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: stage
+          schema:
+            type: string
+        - in: query
+          name: owner_id
+          schema:
+            type: string
+            format: uuid
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Deal list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Deal'
+    post:
+      summary: Create deal
+      tags: [deals]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDealRequest'
+      responses:
+        '201':
+          description: Deal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deal'
+
+  /v1/crm/deals/{deal_id}/stage:
+    post:
+      summary: Move deal to new stage
+      tags: [deals]
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: deal_id
+          required: true
+          schema:
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stage]
+              properties:
+                stage:
+                  type: string
+                notes:
+                  type: string
+      responses:
+        '200':
+          description: Stage moved
+
+  /v1/crm/pipelines:
+    get:
+      summary: List pipelines (pipeline definitions)
+      tags: [pipelines]
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Pipelines
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pipeline'
+    post:
+      summary: Create pipeline
+      tags: [pipelines]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePipelineRequest'
+      responses:
+        '201':
+          description: Pipeline created
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: PASETO
+
+  parameters:
+    Limit:
+      in: query
+      name: limit
+      schema:
+        type: integer
+        default: 50
+
+  schemas:
+    CRMNode:
+      type: object
+      required: [id, tenant_id, path, ntype, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        path:
+          type: string
+          description: LTREE path (e.g., "r.a1.b2.c3")
+          example: r.a1.b2
+        ntype:
+          type: string
+          enum: [user, team, department]
+        name:
+          type: string
+        metadata:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        depth:
+          type: integer
+
+    CreateNodeRequest:
+      type: object
+      required: [name, ntype]
+      properties:
+        name:
+          type: string
+        ntype:
+          type: string
+          enum: [user, team, department]
+        parent_id:
+          type: string
+          format: uuid
+          nullable: true
+        user_id:
+          type: string
+          format: uuid
+          description: Required when ntype=user
+
+    UpdateNodeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        metadata:
+          type: object
+
+    Lead:
+      type: object
+      required: [id, tenant_id, name, status, score, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        source:
+          type: string
+          examples: [facebook, google, organic, import]
+        status:
+          type: string
+          enum: [new, contacting, qualified, negotiating, won, lost]
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        band:
+          type: string
+          enum: [hot, warm, cold]
+        owner_id:
+          type: string
+          format: uuid
+        custom_fields:
+          type: object
+        utm:
+          type: object
+          properties:
+            source:
+              type: string
+            medium:
+              type: string
+            campaign:
+              type: string
+        fbc:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateLeadRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+        source:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        custom_fields:
+          type: object
+
+    UpdateLeadRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
+        status:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        custom_fields:
+          type: object
+
+    ImportJob:
+      type: object
+      required: [id, status, total_rows]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        total_rows:
+          type: integer
+        processed_rows:
+          type: integer
+        failed_rows:
+          type: integer
+        errors:
+          type: array
+          items:
+            type: object
+
+    Deal:
+      type: object
+      required: [id, tenant_id, name, value, currency, stage, owner_id]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        value:
+          type: number
+        currency:
+          type: string
+          enum: [VND, USD, EUR]
+        stage:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        contact_id:
+          type: string
+          format: uuid
+          nullable: true
+        lead_id:
+          type: string
+          format: uuid
+          nullable: true
+        expected_close_date:
+          type: string
+          format: date
+        closed_at:
+          type: string
+          format: date-time
+          nullable: true
+        custom_fields:
+          type: object
+
+    CreateDealRequest:
+      type: object
+      required: [name, value, stage, owner_id]
+      properties:
+        name:
+          type: string
+        value:
+          type: number
+        currency:
+          type: string
+        stage:
+          type: string
+        owner_id:
+          type: string
+          format: uuid
+        contact_id:
+          type: string
+          format: uuid
+        lead_id:
+          type: string
+          format: uuid
+        expected_close_date:
+          type: string
+          format: date
+
+    Pipeline:
+      type: object
+      required: [id, name, stages]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        stages:
+          type: array
+          items:
+            type: object
+            required: [id, name, order]
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+              order:
+                type: integer
+              color:
+                type: string
+              probability:
+                type: number
+
+    CreatePipelineRequest:
+      type: object
+      required: [name, stages]
+      properties:
+        name:
+          type: string
+        stages:
+          type: array
+          items:
+            type: object
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            trace_id:
+              type: string
