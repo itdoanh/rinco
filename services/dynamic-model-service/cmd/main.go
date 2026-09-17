@@ -64,7 +64,7 @@ type config struct { Env, HTTPAddr, DatabaseURL, ValkeyURL string }
 func loadConfig() config {
 	return config{
 		Env:         platform.Getenv("ENV", "development"),
-		HTTPAddr:    platform.Getenv("DYNAMIC_MODEL_HTTP_ADDR", ":8092"),
+		HTTPAddr:    platform.Getenv("DYNAMIC_MODEL_HTTP_ADDR", ":8084"),
 		DatabaseURL: os.Getenv("DYNAMIC_MODEL_DATABASE_URL"),
 		ValkeyURL:   platform.Getenv("DYNAMIC_MODEL_VALKEY_URL", "localhost:6379"),
 	}
