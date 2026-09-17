@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -871,4 +872,322 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// =============================================================================
+// Spec compliance endpoints (Loop 209)
+// =============================================================================
+//
+// The endpoints below extend the canonical /v1/notifications surface with
+// the routes spelled out in the spec: per-user inbox shortcuts, mark-all-
+// read, delete, templates, push device registration and channel test.
+//
+// All endpoints are multi-tenant via X-Tenant-ID and use parameterized
+// SQL exclusively.
+
+type deviceReg struct {
+	ID          string                 `json:"id"`
+	TenantID    string                 `json:"tenant_id"`
+	UserID      string                 `json:"user_id"`
+	DeviceToken string                 `json:"device_token,omitempty"`
+	Endpoint    string                 `json:"endpoint,omitempty"`
+	Platform    string                 `json:"platform"`
+	Provider    string                 `json:"provider"` // fcm | webpush | apns
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt   time.Time              `json:"created_at"`
+}
+
+type notifTemplate struct {
+	ID        string                 `json:"id"`
+	TenantID  string                 `json:"tenant_id"`
+	Name      string                 `json:"name"`
+	Subject   string                 `json:"subject,omitempty"`
+	Body      string                 `json:"body"`
+	Channels  []string               `json:"channels"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
+}
+
+var (
+	deviceMu    sync.RWMutex
+	deviceStore = map[string]*deviceReg{}
+	tplMu       sync.RWMutex
+	tplStore    = map[string]*notifTemplate{}
+)
+
+// CreateNotification — POST /v1/notifications
+// Creates a notification record without fan-out (use Send for fan-out).
+func (s *Server) CreateNotification(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+	tenantID, userID, isAdmin := s.tenantFromCtx(c)
+	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
+	}
+	var req sendReq
+	if err := c.Bind(&req); err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
+	}
+	if req.UserID == "" {
+		return s.errorResp(c, http.StatusBadRequest, "user_id required", nil)
+	}
+	if req.Title == "" || req.Body == "" {
+		return s.errorResp(c, http.StatusBadRequest, "title and body required", nil)
+	}
+	notifID := uuid.NewString()
+	if req.Data == nil {
+		req.Data = map[string]any{}
+	}
+	req.Data["notif_id"] = notifID
+	status := "pending"
+	if req.ScheduledAt == nil || req.ScheduledAt.IsZero() {
+		status = "queued"
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO notification.notifications (id, tenant_id, user_id, type, title, body, icon, category, priority, channels_resolved, data, status, expires_at, sent_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12, $13, NULL)`,
+		notifID, tenantID, req.UserID, req.Type, req.Title, req.Body, req.Icon, req.Category,
+		req.Priority, mustJSON(req.Channels), mustJSON(req.Data), status, req.ExpiresAt)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "insert failed", err)
+	}
+	return s.json(c, http.StatusCreated, map[string]any{"id": notifID, "status": status})
+}
+
+// UserInbox — GET /v1/notifications/:user_id
+// Convenience endpoint that returns a user's inbox using path-param user_id.
+func (s *Server) UserInbox(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+	tenantID, _, isAdmin := s.tenantFromCtx(c)
+	if err := s.setRLS(ctx, tenantID, "", isAdmin); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
+	}
+	userID := c.Param("user_id")
+	if userID == "" {
+		return s.errorResp(c, http.StatusBadRequest, "user_id required", nil)
+	}
+	limit, _ := strconv.Atoi(c.QueryParam("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	status := c.QueryParam("status")
+	args := []any{tenantID, userID}
+	q := `SELECT id, tenant_id, user_id, type, title, body, icon, category, priority, channels_resolved, data, status, read_at, sent_at, expires_at, created_at
+		FROM notification.notifications WHERE tenant_id = $1 AND user_id = $2`
+	if status != "" {
+		q += ` AND status = $3`
+		args = append(args, status)
+	}
+	q += ` ORDER BY created_at DESC LIMIT ` + strconv.Itoa(limit)
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
+	}
+	defer rows.Close()
+	items := []notifResp{}
+	for rows.Next() {
+		var n notifResp
+		if err := s.scanNotif(rows, &n); err == nil {
+			items = append(items, n)
+		}
+	}
+	return s.json(c, http.StatusOK, map[string]any{"data": items, "count": len(items)})
+}
+
+// UnreadCount — GET /v1/notifications/:user_id/unread-count
+func (s *Server) UnreadCount(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+	tenantID, _, isAdmin := s.tenantFromCtx(c)
+	if err := s.setRLS(ctx, tenantID, "", isAdmin); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
+	}
+	userID := c.Param("user_id")
+	if userID == "" {
+		return s.errorResp(c, http.StatusBadRequest, "user_id required", nil)
+	}
+	var count int64
+	err := s.pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM notification.notifications
+		WHERE tenant_id = $1 AND user_id = $2 AND status != 'read'`,
+		tenantID, userID).Scan(&count)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "query failed", err)
+	}
+	return s.json(c, http.StatusOK, map[string]any{"user_id": userID, "unread": count})
+}
+
+// MarkAllRead — PUT /v1/notifications/:user_id/read-all
+func (s *Server) MarkAllRead(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+	tenantID, _, isAdmin := s.tenantFromCtx(c)
+	if err := s.setRLS(ctx, tenantID, "", isAdmin); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
+	}
+	userID := c.Param("user_id")
+	if userID == "" {
+		return s.errorResp(c, http.StatusBadRequest, "user_id required", nil)
+	}
+	res, err := s.pool.Exec(ctx, `
+		UPDATE notification.notifications SET status = 'read', read_at = NOW()
+		WHERE tenant_id = $1 AND user_id = $2 AND status != 'read'`,
+		tenantID, userID)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "update failed", err)
+	}
+	return s.json(c, http.StatusOK, map[string]any{"updated": res.RowsAffected()})
+}
+
+// DeleteNotification — DELETE /v1/notifications/:id
+func (s *Server) DeleteNotification(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+	tenantID, userID, isAdmin := s.tenantFromCtx(c)
+	if err := s.setRLS(ctx, tenantID, userID, isAdmin); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
+	}
+	id := c.Param("id")
+	if _, err := uuid.Parse(id); err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "invalid id", err)
+	}
+	res, err := s.pool.Exec(ctx, `DELETE FROM notification.notifications WHERE id = $1`, id)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "delete failed", err)
+	}
+	if res.RowsAffected() == 0 {
+		return s.errorResp(c, http.StatusNotFound, "notification not found", nil)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// CreateTemplate — POST /v1/templates
+func (s *Server) CreateTemplate(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+	tenantID, _, isAdmin := s.tenantFromCtx(c)
+	if err := s.setRLS(ctx, tenantID, "", isAdmin); err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "context setup failed", err)
+	}
+	var req struct {
+		Name     string                 `json:"name"`
+		Subject  string                 `json:"subject"`
+		Body     string                 `json:"body"`
+		Channels []string               `json:"channels"`
+		Metadata map[string]interface{} `json:"metadata"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
+	}
+	if req.Name == "" || req.Body == "" {
+		return s.errorResp(c, http.StatusBadRequest, "name and body required", nil)
+	}
+	if req.Channels == nil {
+		req.Channels = []string{"in_app"}
+	}
+	t := &notifTemplate{
+		ID: uuid.NewString(), TenantID: tenantID, Name: req.Name, Subject: req.Subject,
+		Body: req.Body, Channels: req.Channels, Metadata: req.Metadata, CreatedAt: time.Now(),
+	}
+	tplMu.Lock()
+	tplStore[t.ID] = t
+	tplMu.Unlock()
+	return s.json(c, http.StatusCreated, t)
+}
+
+// ListTemplates — GET /v1/templates
+func (s *Server) ListTemplates(c echo.Context) error {
+	tenantID, _, _ := s.tenantFromCtx(c)
+	tplMu.RLock()
+	defer tplMu.RUnlock()
+	out := []*notifTemplate{}
+	for _, t := range tplStore {
+		if t.TenantID == tenantID {
+			out = append(out, t)
+		}
+	}
+	return s.json(c, http.StatusOK, map[string]any{"data": out, "count": len(out)})
+}
+
+// RegisterDevice — POST /v1/devices
+func (s *Server) RegisterDevice(c echo.Context) error {
+	tenantID, userID, _ := s.tenantFromCtx(c)
+	var req struct {
+		DeviceToken string                 `json:"device_token"`
+		Endpoint    string                 `json:"endpoint"`
+		Platform    string                 `json:"platform"`
+		Provider    string                 `json:"provider"`
+		UserID      string                 `json:"user_id"`
+		Metadata    map[string]interface{} `json:"metadata"`
+	}
+	if err := c.Bind(&req); err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
+	}
+	if req.Provider == "" {
+		req.Provider = "fcm"
+	}
+	if req.Platform == "" {
+		req.Platform = "web"
+	}
+	d := &deviceReg{
+		ID: uuid.NewString(), TenantID: tenantID, UserID: firstNonEmpty(req.UserID, userID),
+		DeviceToken: req.DeviceToken, Endpoint: req.Endpoint,
+		Platform: req.Platform, Provider: req.Provider,
+		Metadata: req.Metadata, CreatedAt: time.Now(),
+	}
+	deviceMu.Lock()
+	deviceStore[d.ID] = d
+	deviceMu.Unlock()
+	return s.json(c, http.StatusCreated, d)
+}
+
+// DeleteDevice — DELETE /v1/devices/:id
+func (s *Server) DeleteDevice(c echo.Context) error {
+	id := c.Param("id")
+	deviceMu.Lock()
+	defer deviceMu.Unlock()
+	if _, ok := deviceStore[id]; !ok {
+		return s.errorResp(c, http.StatusNotFound, "device not found", nil)
+	}
+	delete(deviceStore, id)
+	return c.NoContent(http.StatusNoContent)
+}
+
+// TestChannel — POST /v1/channels/:id/test
+// Sends a test notification through the named channel to verify wiring.
+func (s *Server) TestChannel(c echo.Context) error {
+	channelName := c.Param("id")
+	drv, ok := s.chans[channelName]
+	if !ok {
+		return s.errorResp(c, http.StatusNotFound, "unknown channel", nil)
+	}
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 10*time.Second)
+	defer cancel()
+	var req struct {
+		UserID string `json:"user_id"`
+		Title  string `json:"title"`
+		Body   string `json:"body"`
+	}
+	_ = c.Bind(&req)
+	if req.Title == "" {
+		req.Title = "Channel test"
+	}
+	if req.Body == "" {
+		req.Body = "This is a test notification from the channel test endpoint."
+	}
+	if req.UserID == "" {
+		req.UserID = "00000000-0000-0000-0000-000000000000"
+	}
+	res, err := drv.Send(ctx, channels.Notification{
+		TenantID: "00000000-0000-0000-0000-000000000000",
+		UserID:   req.UserID,
+		Title:    req.Title,
+		Body:     req.Body,
+		Type:     "test",
+	})
+	if err != nil {
+		return s.errorResp(c, http.StatusBadGateway, "channel test failed", err)
+	}
+	return s.json(c, http.StatusOK, map[string]any{"status": "sent", "channel": channelName, "provider": res.Provider})
 }

@@ -148,6 +148,7 @@ func newEcho(cfg *platform.Config, pool *pgxpool.Pool, rdb *redis.Client, srv *h
 	v1.Use(mw.RateLimitMW(rdb, 200, time.Minute))
 
 	v1.POST("/email/send", srv.SendEmail)
+	v1.POST("/email/send/bulk", srv.BatchSend) // spec alias
 	v1.POST("/email/batch", srv.BatchSend)
 	v1.GET("/email/templates", srv.ListTemplates)
 	v1.POST("/email/templates", srv.CreateTemplate)
@@ -160,6 +161,8 @@ func newEcho(cfg *platform.Config, pool *pgxpool.Pool, rdb *redis.Client, srv *h
 	v1.GET("/email/logs/:id", srv.GetLog)
 	v1.GET("/email/stats", srv.Stats)
 	v1.POST("/email/webhooks/:provider", srv.Webhook)
+	v1.POST("/webhooks/inbound", srv.WebhookInbound) // spec alias
+	v1.POST("/unsubscribe/:token", srv.UnsubscribeByToken) // spec alias
 
 	// Public tracking endpoints (no tenant required)
 	e.GET("/e/:msg_id.gif", srv.TrackingPixel)

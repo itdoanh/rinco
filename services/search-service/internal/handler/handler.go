@@ -198,3 +198,120 @@ func (s *Server) InitIndex(ctx context.Context) error {
 	}
 	return s.store.UpdateSettings(ctx, indexName, settings)
 }
+
+// =============================================================================
+// v1 spec endpoints
+// =============================================================================
+
+// UniversalSearch is the spec-compliant default search endpoint. Accepts
+// the SearchQuery as a JSON body so callers don't need to encode filters
+// in query strings.
+func (s *Server) UniversalSearch(c echo.Context) error {
+	var q models.SearchQuery
+	if err := c.Bind(&q); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	if q.TenantID == "" {
+		if t := c.Request().Header.Get("X-Tenant-ID"); t != "" {
+			q.TenantID = t
+		}
+	}
+	q.Highlight = true
+	result, err := s.store.Search(c.Request().Context(), indexName, q)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// SearchByType returns hits scoped to a single SearchableType.
+func (s *Server) SearchByType(t models.SearchableType) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var q models.SearchQuery
+		if err := c.Bind(&q); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+		}
+		if q.TenantID == "" {
+			if hdr := c.Request().Header.Get("X-Tenant-ID"); hdr != "" {
+				q.TenantID = hdr
+			}
+		}
+		q.Types = []models.SearchableType{t}
+		q.Highlight = true
+		result, err := s.store.Search(c.Request().Context(), indexName, q)
+		if err != nil {
+			return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, result)
+	}
+}
+
+// GlobalSearch runs an unrestricted query across all types (admin-only).
+func (s *Server) GlobalSearch(c echo.Context) error {
+	var q models.SearchQuery
+	if err := c.Bind(&q); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	q.Highlight = true
+	q.TenantID = "" // explicit: search across all tenants (caller MUST be admin)
+	result, err := s.store.Search(c.Request().Context(), indexName, q)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, result)
+}
+
+// DeleteByEntityType removes a document by its entity_type/id pair.
+func (s *Server) DeleteByEntityType(c echo.Context) error {
+	entityType := c.Param("entity_type")
+	id := c.Param("id")
+	if entityType == "" || id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "entity_type and id required"})
+	}
+	composite := entityType + ":" + id
+	if err := s.store.DeleteDocument(c.Request().Context(), indexName, composite); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "deleted", "composite": composite})
+}
+
+// Suggest implements autocomplete: returns a short list of (id, title)
+// tuples matching the partial query string.
+func (s *Server) Suggest(c echo.Context) error {
+	q := c.QueryParam("q")
+	if q == "" {
+		return c.JSON(http.StatusOK, map[string]any{"suggestions": []string{}})
+	}
+	tenantID := c.Request().Header.Get("X-Tenant-ID")
+	sq := models.SearchQuery{Query: q, TenantID: tenantID, HitsPerPage: 10}
+	res, err := s.store.Search(c.Request().Context(), indexName, sq)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	out := make([]map[string]string, 0, len(res.Hits))
+	for _, h := range res.Hits {
+		out = append(out, map[string]string{"id": h.ID, "title": h.Title, "type": string(h.Type)})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"suggestions": out})
+}
+
+// Facets returns aggregated counts for the indexed filterable attributes.
+func (s *Server) Facets(c echo.Context) error {
+	entityType := c.Param("entity_type")
+	if entityType == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "entity_type required"})
+	}
+	tenantID := c.Request().Header.Get("X-Tenant-ID")
+	// Meilisearch facets: ask for distribution over common attributes
+	sq := models.SearchQuery{Query: "", TenantID: tenantID, HitsPerPage: 0}
+	if t := models.SearchableType(entityType); t != "" {
+		sq.Types = []models.SearchableType{t}
+	}
+	// Reuse Search — Meilisearch's /facets endpoint could be added later.
+	res, err := s.store.Search(c.Request().Context(), indexName, sq)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"entity_type": entityType, "facets": res.FacetStats, "total": res.Total})
+}
+

@@ -130,11 +130,22 @@ func newEcho(cfg *platform.Config, pool *pgxpool.Pool, rdb *redis.Client, srv *h
 	v1.Use(mw.AuthMW())
 	v1.Use(mw.RateLimitMW(rdb, 200, time.Minute))
 
+	v1.POST("/notifications", srv.CreateNotification)
 	v1.POST("/notifications/send", srv.Send)
 	v1.POST("/notifications/broadcast", srv.Broadcast)
+	v1.GET("/notifications/:user_id", srv.UserInbox) // spec endpoint
+	v1.GET("/notifications/:user_id/unread-count", srv.UnreadCount) // spec endpoint
 	v1.GET("/notifications", srv.List)
 	v1.GET("/notifications/:id", srv.Get)
-	v1.POST("/notifications/:id/read", srv.MarkRead)
+	v1.PUT("/notifications/:id/read", srv.MarkRead)
+	v1.POST("/notifications/:id/read", srv.MarkRead) // POST alias for backward compat
+	v1.PUT("/notifications/:user_id/read-all", srv.MarkAllRead) // spec endpoint
+	v1.DELETE("/notifications/:id", srv.DeleteNotification) // spec endpoint
+	v1.POST("/templates", srv.CreateTemplate) // spec endpoint
+	v1.GET("/templates", srv.ListTemplates) // spec endpoint
+	v1.POST("/devices", srv.RegisterDevice) // spec endpoint
+	v1.DELETE("/devices/:id", srv.DeleteDevice) // spec endpoint
+	v1.POST("/channels/:id/test", srv.TestChannel) // spec endpoint
 	v1.POST("/preferences/:user_id", srv.SetPreferences)
 	v1.GET("/preferences/:user_id", srv.GetPreferences)
 	v1.POST("/subscriptions/webpush", srv.RegisterWebPush)

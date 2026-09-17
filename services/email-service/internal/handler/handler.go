@@ -1119,6 +1119,57 @@ func (s *Server) Unsubscribe(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"status": "unsubscribed", "msg_id": msgID})
 }
 
+// UnsubscribeByToken accepts an opaque token (one-click unsubscribe link
+// generated when sending a message).  Used by the /v1/unsubscribe/:token
+// spec endpoint and is preferred over the legacy msg_id-based flow.
+func (s *Server) UnsubscribeByToken(c echo.Context) error {
+	token := c.Param("token")
+	if token == "" {
+		return s.errorResp(c, http.StatusBadRequest, "token required", nil)
+	}
+	// Tokens are opaque but we keep them aligned with msg_id for the
+	// current schema.  In production this should look up a dedicated
+	// unsubscribe_tokens table.
+	ctx := c.Request().Context()
+	_, err := s.pool.Exec(ctx, `UPDATE email.email_logs SET status = 'complained', complained_at = NOW(), updated_at = NOW() WHERE msg_id = $1`, token)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "unsubscribe failed", err)
+	}
+	return s.json(c, http.StatusOK, map[string]string{"status": "unsubscribed", "token": token})
+}
+
+// WebhookInbound receives generic inbound email webhooks (e.g. from a
+// forwarding service that captures replies).  Spec endpoint.
+func (s *Server) WebhookInbound(c echo.Context) error {
+	ctx := c.Request().Context()
+	tenantID, _, _ := s.tenantFromCtx(c)
+
+	var body struct {
+		From        string   `json:"from"`
+		To          []string `json:"to"`
+		Subject     string   `json:"subject"`
+		Body        string   `json:"body"`
+		MessageID   string   `json:"message_id"`
+		InReplyTo   string   `json:"in_reply_to"`
+		Attachments []map[string]any `json:"attachments,omitempty"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return s.errorResp(c, http.StatusBadRequest, "invalid request", err)
+	}
+	if body.MessageID == "" {
+		body.MessageID = uuid.NewString()
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO email.email_inbound (tenant_id, message_id, in_reply_to, from_addr, to_addrs, subject, body)
+		VALUES (NULLIF($1,'')::uuid, $2, $3, $4, $5::jsonb, $6, $7)
+		ON CONFLICT (message_id) DO NOTHING`,
+		tenantID, body.MessageID, body.InReplyTo, body.From, mustJSON(body.To), body.Subject, body.Body)
+	if err != nil {
+		return s.errorResp(c, http.StatusInternalServerError, "insert failed", err)
+	}
+	return s.json(c, http.StatusAccepted, map[string]string{"message_id": body.MessageID, "status": "stored"})
+}
+
 // =============================================================================
 // Connect-RPC adapter
 // =============================================================================

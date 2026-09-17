@@ -88,3 +88,72 @@ type CohortRow struct {
 	Size          int       `json:"size"`
 	RetentionByDay map[int]float64 `json:"retention_by_day"` // day N -> retention rate
 }
+
+// RealtimeStats captures in-flight live metrics for a tenant.
+type RealtimeStats struct {
+	TenantID   string    `json:"tenant_id"`
+	Visitors   int64     `json:"visitors"`
+	PageViews  int64     `json:"page_views"`
+	Events     int64     `json:"events"`
+	WindowFrom time.Time `json:"window_from"`
+	WindowTo   time.Time `json:"window_to"`
+}
+
+// LeadReport summarises lead lifecycle metrics.
+type LeadReport struct {
+	TenantID      string       `json:"tenant_id"`
+	TotalLeads    int64        `json:"total_leads"`
+	NewLeads      int64        `json:"new_leads"`
+	Qualified     int64        `json:"qualified"`
+	Converted     int64        `json:"converted"`
+	ConversionPct float64      `json:"conversion_pct"`
+	BySource      []SourceStat `json:"by_source"`
+}
+
+// StageStat captures deals grouped by pipeline stage.
+type StageStat struct {
+	Stage string  `json:"stage"`
+	Count int64   `json:"count"`
+	Value float64 `json:"value"`
+}
+
+// DealReport is the deal pipeline rollup.
+type DealReport struct {
+	TenantID   string      `json:"tenant_id"`
+	Open       int64       `json:"open"`
+	Won        int64       `json:"won"`
+	Lost       int64       `json:"lost"`
+	TotalValue float64     `json:"total_value"`
+	ByStage    []StageStat `json:"by_stage"`
+}
+
+// UserActivity captures one active user's metrics.
+type UserActivity struct {
+	UserID    string `json:"user_id"`
+	Name      string `json:"name,omitempty"`
+	Events    int64  `json:"events"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// UserActivityReport groups per-user engagement metrics.
+type UserActivityReport struct {
+	TenantID    string        `json:"tenant_id"`
+	ActiveUsers int64         `json:"active_users"`
+	TopUsers    []UserActivity `json:"top_users"`
+}
+
+// RevenueByMonth captures monthly revenue.
+type RevenueByMonth struct {
+	Month   string  `json:"month"`
+	Revenue float64 `json:"revenue"`
+	Deals   int64   `json:"deals"`
+}
+
+// RevenueReport groups revenue by period.
+type RevenueReport struct {
+	TenantID string           `json:"tenant_id"`
+	Total    float64          `json:"total"`
+	MRR      float64          `json:"mrr"`
+	ARR      float64          `json:"arr"`
+	ByMonth  []RevenueByMonth `json:"by_month"`
+}

@@ -64,7 +64,7 @@ type config struct { Env, HTTPAddr, DatabaseURL, ValkeyURL string }
 func loadConfig() config {
 	return config{
 		Env:         platform.Getenv("ENV", "development"),
-		HTTPAddr:    platform.Getenv("DYNAMIC_MODEL_HTTP_ADDR", ":8084"),
+		HTTPAddr:    platform.Getenv("DYNAMIC_MODEL_HTTP_ADDR", ":8092"),
 		DatabaseURL: os.Getenv("DYNAMIC_MODEL_DATABASE_URL"),
 		ValkeyURL:   platform.Getenv("DYNAMIC_MODEL_VALKEY_URL", "localhost:6379"),
 	}
@@ -103,6 +103,25 @@ func newEcho(db *sql.DB, srv *handler.Server) *echo.Echo {
 	v1.GET("/:id/export", srv.ExportCSV)
 	v1.GET("/:id/ui-schema", srv.GenerateUISchema)
 	v1.GET("/:id/json-schema", srv.GenerateJSONSchema)
+
+	// v1 entity/record endpoints (spec-compliant) — mirror to entity-shaped URLs
+	v1.POST("/entities", srv.CreateEntityFromV1)
+	v1.GET("/entities", srv.ListEntitiesV1)
+	v1.GET("/entities/:id", srv.GetEntityV1)
+	v1.PUT("/entities/:id", srv.UpdateEntityV1)
+	v1.DELETE("/entities/:id", srv.DeleteEntityV1)
+	v1.POST("/entities/:id/records", srv.CreateRecordFromV1)
+	v1.GET("/entities/:id/records", srv.ListRecordsFromV1)
+	v1.GET("/entities/:id/records/:record_id", srv.GetRecordFromV1)
+	v1.PUT("/entities/:id/records/:record_id", srv.UpdateRecordFromV1)
+	v1.DELETE("/entities/:id/records/:record_id", srv.DeleteRecordFromV1)
+	v1.POST("/fields", srv.AddFieldFromV1)
+	v1.GET("/fields/:entity_id", srv.ListFieldsFromV1)
+	v1.DELETE("/fields/:id", srv.DeleteFieldFromV1)
+
+	// CEL validators
+	v1.POST("/validators", srv.CreateValidator)
+	v1.POST("/validators/:id/check", srv.CheckValidator)
 
 	rpc := e.Group("/internal/dynamic_model.v1.DynamicModelService")
 	rpc.POST("/GetModel", srv.GetModel)

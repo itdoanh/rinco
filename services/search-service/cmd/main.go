@@ -14,6 +14,7 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"github.com/itdoanh/rinco/services/search-service/internal/handler"
+	"github.com/itdoanh/rinco/services/search-service/internal/models"
 	"github.com/itdoanh/rinco/services/search-service/internal/repository"
 )
 
@@ -63,7 +64,28 @@ func main() {
 	g.GET("/search", srv.Search)
 	g.POST("/reindex", srv.Reindex)
 
-	port := envOr("PORT", "8094")
+	// v1 spec-compliant endpoints ----------------------------------------
+	v1 := e.Group("/v1")
+	v1.Use(middleware.Recover())
+
+	// Universal search
+	v1.POST("/search", srv.UniversalSearch)
+	v1.POST("/search/leads", srv.SearchByType(models.TypeLead))
+	v1.POST("/search/contacts", srv.SearchByType(models.TypeContact))
+	v1.POST("/search/deals", srv.SearchByType(models.TypeDeal))
+	v1.POST("/search/users", srv.SearchByType(models.TypeUser))
+	v1.POST("/search/global", srv.GlobalSearch)
+
+	// Indexing
+	v1.POST("/index", srv.IndexDocument)
+	v1.POST("/index/bulk", srv.BulkIndex)
+	v1.DELETE("/index/:entity_type/:id", srv.DeleteByEntityType)
+
+	// Autocomplete + facets
+	v1.GET("/suggest", srv.Suggest)
+	v1.GET("/facets/:entity_type", srv.Facets)
+
+	port := envOr("PORT", "8087")
 	srv2 := &http.Server{Addr: ":" + port, Handler: e}
 	go func() {
 		logger.Info("search-service starting", "port", port)

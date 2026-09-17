@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -468,6 +469,182 @@ func (s *Server) fetchFields(ctx context.Context, modelID string) ([]validation.
 }
 
 func ctxTenantUser(c echo.Context) (string, string) { return c.Request().Header.Get("X-Tenant-ID"), c.Request().Header.Get("X-User-ID") }
+
+// =============================================================================
+// v1 entity aliases (mirror v1/models endpoints under v1/entities)
+// =============================================================================
+
+func (s *Server) CreateEntityFromV1(c echo.Context) error {
+	c2 := c
+	c2.SetPath("/v1/models")
+	return s.CreateModel(c2)
+}
+func (s *Server) ListEntitiesV1(c echo.Context) error {
+	c2 := c
+	c2.SetPath("/v1/models")
+	return s.ListModels(c2)
+}
+func (s *Server) GetEntityV1(c echo.Context) error {
+	c2 := c
+	c2.SetPath("/v1/models/:id")
+	return s.GetModel(c2)
+}
+func (s *Server) UpdateEntityV1(c echo.Context) error {
+	c2 := c
+	c2.SetPath("/v1/models/:id")
+	return s.UpdateModel(c2)
+}
+func (s *Server) DeleteEntityV1(c echo.Context) error {
+	c2 := c
+	c2.SetPath("/v1/models/:id")
+	return s.DeleteModel(c2)
+}
+
+// v1/entities/:id/records/*  — these already match the same URL pattern as
+// v1/models/:id/records/*.  Echo's router matches on the first registered
+// path that satisfies the request, so a clean way to expose both is to
+// route at the v1/models level with explicit aliases too.  For simplicity
+// here, the v1/models paths already handle these; we expose thin wrappers
+// that just re-bind the path so the spec routes work as well.
+
+func (s *Server) CreateRecordFromV1(c echo.Context) error {
+	c.SetPath("/v1/models/" + c.Param("id") + "/records")
+	return s.CreateRecord(c)
+}
+func (s *Server) ListRecordsFromV1(c echo.Context) error {
+	c.SetPath("/v1/models/" + c.Param("id") + "/records")
+	return s.ListRecords(c)
+}
+func (s *Server) GetRecordFromV1(c echo.Context) error {
+	c.SetPath("/v1/models/" + c.Param("id") + "/records/" + c.Param("record_id"))
+	return s.GetRecord(c)
+}
+func (s *Server) UpdateRecordFromV1(c echo.Context) error {
+	c.SetPath("/v1/models/" + c.Param("id") + "/records/" + c.Param("record_id"))
+	return s.UpdateRecord(c)
+}
+func (s *Server) DeleteRecordFromV1(c echo.Context) error {
+	c.SetPath("/v1/models/" + c.Param("id") + "/records/" + c.Param("record_id"))
+	return s.DeleteRecord(c)
+}
+
+// v1/fields aliases
+func (s *Server) AddFieldFromV1(c echo.Context) error {
+	var req fieldReq
+	if err := c.Bind(&req); err != nil { return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()}) }
+	// v1/fields carries entity_id in body
+	var body struct{ EntityID string `json:"entity_id"` }
+	_ = c.Bind(&body)
+	if body.EntityID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "entity_id required in body"})
+	}
+	c.SetParamNames("id"); c.SetParamValues(body.EntityID)
+	return s.AddField(c)
+}
+func (s *Server) ListFieldsFromV1(c echo.Context) error {
+	entityID := c.Param("entity_id")
+	c.SetParamNames("id"); c.SetParamValues(entityID)
+	return s.ListFields(c)
+}
+func (s *Server) DeleteFieldFromV1(c echo.Context) error {
+	c.SetParamNames("field_id"); c.SetParamValues(c.Param("id"))
+	return s.DeleteField(c)
+}
+
+// =============================================================================
+// CEL-style validators (in-process expression evaluator)
+// =============================================================================
+//
+// We support a small subset of CEL-like operators:
+//   - equality (==, !=)
+//   - comparison (>, <, >=, <=)
+//   - logical (&&, ||)
+//   - presence check (?)
+//   - identifier literals (numeric, string, bool, null)
+//   - field references (`$value` for the value being validated,
+//     `$data.field_name` for nested data)
+//
+// Expressions are compiled once at CreateValidator() and stored. Check()
+// reuses the parsed AST so this stays cheap.
+
+type validatorRule struct {
+	ID         string                 `json:"id"`
+	TenantID   string                 `json:"tenant_id"`
+	Name       string                 `json:"name"`
+	Expression string                 `json:"expression"`
+	Message    string                 `json:"message"`
+	Compiled   celASTNode             `json:"-"`
+	CreatedAt  time.Time              `json:"created_at"`
+}
+
+var (
+	validatorMu  sync.RWMutex
+	validators   = map[string]*validatorRule{}
+	exprParser   = newCELParser()
+)
+
+func (s *Server) CreateValidator(c echo.Context) error {
+	var body struct {
+		TenantID   string `json:"tenant_id"`
+		Name       string `json:"name"`
+		Expression string `json:"expression"`
+		Message    string `json:"message"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if body.TenantID == "" || body.Name == "" || body.Expression == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "tenant_id, name, expression required"})
+	}
+	ast, err := exprParser.Parse(body.Expression)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid expression: " + err.Error()})
+	}
+	if body.Message == "" {
+		body.Message = "expression failed"
+	}
+	id := uuid.NewString()
+	rule := &validatorRule{
+		ID:         id,
+		TenantID:   body.TenantID,
+		Name:       body.Name,
+		Expression: body.Expression,
+		Message:    body.Message,
+		Compiled:   ast,
+		CreatedAt:  time.Now(),
+	}
+	validatorMu.Lock()
+	validators[id] = rule
+	validatorMu.Unlock()
+	return c.JSON(http.StatusCreated, rule)
+}
+
+func (s *Server) CheckValidator(c echo.Context) error {
+	id := c.Param("id")
+	validatorMu.RLock()
+	rule, ok := validators[id]
+	validatorMu.RUnlock()
+	if !ok {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "validator not found"})
+	}
+	var body struct {
+		Value any            `json:"value"`
+		Data  map[string]any `json:"data"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	env := celEnv{Value: body.Value, Data: body.Data}
+	ok, err := rule.Compiled.eval(env)
+	if err != nil {
+		return c.JSON(http.StatusOK, map[string]any{"valid": false, "error": err.Error()})
+	}
+	resp := map[string]any{"valid": ok, "validator_id": id}
+	if !ok {
+		resp["message"] = rule.Message
+	}
+	return c.JSON(http.StatusOK, resp)
+}
 func zeroUUID() string { return "00000000-0000-0000-0000-000000000000" }
 func orEmpty(m map[string]interface{}) map[string]interface{} { if m == nil { return map[string]interface{}{} }; return m }
 func lower(in []string) []string { out := make([]string, len(in)); for i, v := range in { out[i] = strings.ToLower(strings.TrimSpace(v)) }; return out }
