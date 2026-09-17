@@ -1,11 +1,26 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: rinco
+  name: databases
   labels:
-    name: rinco
-    tier: production
-    purpose: multi-tenant-crm-platform
+    name: databases
+    tier: data
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: messaging
+  labels:
+    name: messaging
+    tier: messaging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels:
+    name: observability
+    tier: observability
 ---
 apiVersion: v1
 kind: ResourceQuota

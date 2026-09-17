@@ -1,4 +1,13 @@
-version: '3.8'
+version: '3.9'
+
+# ============================================================
+# RINCO Services Stack
+# ============================================================
+# All microservices + frontends with proper health checks
+# ============================================================
+
+x-common-env: &common-env
+  TZ: Asia/Ho_Chi_Minh
 
 x-go-env: &go-env
   ENV: development
@@ -15,30 +24,70 @@ x-python-env: &python-env
   VLLM_URL: http://vllm:8000/v1
   QDRANT_URL: http://qdrant:6333
 
+x-restart-policy: &restart
+  restart: unless-stopped
+
+x-resources-small: &resources-small
+  deploy:
+    resources:
+      limits:
+        cpus: '0.5'
+        memory: 256M
+
+x-resources-medium: &resources-medium
+  deploy:
+    resources:
+      limits:
+        cpus: '1.0'
+        memory: 512M
+
+x-resources-large: &resources-large
+  deploy:
+    resources:
+      limits:
+        cpus: '2.0'
+        memory: 1G
+
 services:
   # ============================================================
   # Go Services
   # ============================================================
+
+  # Auth Service
   auth-service:
     build: ./services/auth-service
     container_name: rinco-auth-service
-    restart: unless-stopped
+    <<: *restart
     environment:
       <<: *go-env
-      PASETO_KEY_CURRENT: ${PASETO_KEY_CURRENT}
-      PASETO_KEY_PREVIOUS: ${PASETO_KEY_PREVIOUS}
+      PASETO_KEY_CURRENT: ${PASETO_KEY_CURRENT:-rinco_dev_paseto_key_change_in_prod_32bytes}
+      PASETO_KEY_PREVIOUS: ${PASETO_KEY_PREVIOUS:-rinco_dev_paseto_key_change_in_prod_32bytes}
+      VALKEY_HOST: valkey
+      NATS_HOST: nats
     ports:
       - "8081:8081"
     depends_on:
       postgres:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Tenant Service
   tenant-service:
     build: ./services/tenant-service
     container_name: rinco-tenant-service
-    restart: unless-stopped
+    <<: *restart
     environment:
       <<: *go-env
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
@@ -47,54 +96,90 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # CRM Service
   crm-service:
     build: ./services/crm-service
     container_name: rinco-crm-service
-    restart: unless-stopped
+    <<: *restart
     environment: *go-env
     ports:
       - "8083:8083"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Dynamic Model Service
   dynamic-model-service:
     build: ./services/dynamic-model-service
     container_name: rinco-dynamic-model-service
-    restart: unless-stopped
+    <<: *restart
     environment: *go-env
     ports:
       - "8084:8084"
     depends_on:
       postgres:
         condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Lead Service
   lead-service:
     build: ./services/lead-service
     container_name: rinco-lead-service
-    restart: unless-stopped
+    <<: *restart
     environment: *go-env
     ports:
       - "8085:8085"
     depends_on:
       postgres:
         condition: service_healthy
+      scylla:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Landing Service
   landing-service:
     build: ./services/landing-service
     container_name: rinco-landing-service
-    restart: unless-stopped
+    <<: *restart
     environment:
-      ENV: development
+      <<: *go-env
       DB_HOST: postgres
       DB_USER: rinco
       DB_PASSWORD: rinco_dev_password
@@ -108,60 +193,99 @@ services:
       postgres:
         condition: service_healthy
       scylla:
-        condition: service_started
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Email Service
   email-service:
     build: ./services/email-service
     container_name: rinco-email-service
-    restart: unless-stopped
+    <<: *restart
     environment:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
       SMTP_FROM: noreply@rinco.app
+      SMTP_USER: ""
+      SMTP_PASSWORD: ""
     ports:
       - "8087:8087"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8087/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Notification Service
   notification-service:
     build: ./services/notification-service
     container_name: rinco-notification-service
-    restart: unless-stopped
+    <<: *restart
     environment:
+      <<: *go-env
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      NATS_HOST: nats
     ports:
       - "8088:8088"
+    depends_on:
+      nats:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8088/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Observability Service
   observability-service:
     build: ./services/observability-service
     container_name: rinco-observability-service
-    restart: unless-stopped
+    <<: *restart
     environment: *go-env
     ports:
       - "8089:8089"
     depends_on:
       - auth-service
       - crm-service
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8089/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Billing Service
   billing-service:
     build: ./services/billing-service
     container_name: rinco-billing-service
-    restart: unless-stopped
+    <<: *restart
     environment:
-      ENV: production
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: rinco
-      DB_PASSWORD: rinco_dev_password
-      DB_NAME: rinco
-      DB_SSLMODE: disable
+      <<: *go-env
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
       STRIPE_PRICE_FREE: ${STRIPE_PRICE_FREE:-}
@@ -173,21 +297,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8097/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Search Service
   search-service:
     build: ./services/search-service
     container_name: rinco-search-service
-    restart: unless-stopped
+    <<: *restart
     environment:
-      ENV: production
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: rinco
-      DB_PASSWORD: rinco_dev_password
-      DB_NAME: rinco
-      DB_SSLMODE: disable
+      <<: *go-env
       MEILISEARCH_HOST: http://meilisearch:7700
       MEILISEARCH_API_KEY: ${MEILISEARCH_API_KEY:-masterKey}
     ports:
@@ -196,16 +322,24 @@ services:
       postgres:
         condition: service_healthy
       meilisearch:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8094/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Analytics Service
   analytics-service:
     build: ./services/analytics-service
     container_name: rinco-analytics-service
-    restart: unless-stopped
+    <<: *restart
     environment:
-      ENV: production
+      <<: *go-env
       CLICKHOUSE_URL: clickhouse://clickhouse:9000
       CLICKHOUSE_DATABASE: analytics
       CLICKHOUSE_USER: default
@@ -214,100 +348,160 @@ services:
       - "8099:8099"
     depends_on:
       clickhouse:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8099/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
+  # Meta CAPI Service
   meta-capi-service:
     build: ./services/meta-capi-service
     container_name: rinco-meta-capi-service
-    restart: unless-stopped
+    <<: *restart
     environment:
-      ENV: production
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: rinco
-      DB_PASSWORD: rinco_dev_password
-      DB_NAME: rinco
-      DB_SSLMODE: disable
+      <<: *go-env
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
     ports:
       - "8100:8100"
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-small
     networks:
       - rinco-net
 
   # ============================================================
   # Rust Services
   # ============================================================
+
+  # Chat Engine
   chat-engine:
     build: ./services/chat-engine
     container_name: rinco-chat-engine
-    restart: unless-stopped
+    <<: *restart
     environment:
       SCYLLA_HOST: scylla
       VALKEY_URL: redis://valkey:6379
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD:-rinco_dev_password}
       RUST_LOG: info
       CHAT_HTTP_ADDR: 0.0.0.0:8101
       CHAT_WS_ADDR: 0.0.0.0:8101
+      NATS_HOST: nats
     ports:
       - "8101:8101"
     depends_on:
       scylla:
-        condition: service_started
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8101/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-medium
     networks:
       - rinco-net
 
+  # WebRTC SFU
   webrtc-sfu:
     build: ./services/webrtc-sfu
     container_name: rinco-webrtc-sfu
-    restart: unless-stopped
+    <<: *restart
     environment:
       TURN_HOST: turn.rinco.app
       TURN_SECRET: ${TURN_SECRET:-dev_turn_secret}
     ports:
       - "8095:8095"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8095/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    <<: *resources-medium
     networks:
       - rinco-net
 
+  # Recording Service
   recording-service:
     build: ./services/recording-service
     container_name: rinco-recording-service
-    restart: unless-stopped
+    <<: *restart
     environment:
       S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: rinco
-      S3_SECRET_KEY: rinco_dev_password
+      S3_ACCESS_KEY: ${MINIO_ROOT_USER:-rinco}
+      S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-rinco_dev_password}
       S3_BUCKET: recordings
       AWS_REGION: us-east-1
-      AWS_ACCESS_KEY_ID: rinco
-      AWS_SECRET_ACCESS_KEY: rinco_dev_password
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-rinco}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-rinco_dev_password}
     ports:
       - "8096:8096"
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8096/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    <<: *resources-medium
     networks:
       - rinco-net
 
   # ============================================================
   # Python Services
   # ============================================================
+
+  # Lead Scoring Service
   lead-scoring:
     build: ./services/lead-scoring
     container_name: rinco-lead-scoring
-    restart: unless-stopped
-    environment: *python-env
+    <<: *restart
+    environment:
+      <<: *python-env
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: rinco
+      DB_PASSWORD: rinco_dev_password
+      DB_NAME: rinco
     ports:
       - "8092:8092"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8092/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-medium
     networks:
       - rinco-net
 
+  # AI SRE Service
   ai-sre:
     build: ./services/ai-sre
     container_name: rinco-ai-sre
-    restart: unless-stopped
+    <<: *restart
     environment:
       <<: *python-env
       CLICKHOUSE_URL: http://clickhouse:8123
@@ -318,98 +512,168 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     ports:
       - "8090:8090"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-large
     networks:
       - rinco-net
 
+  # RAG Chatbot Service
   rag-chatbot:
     build: ./services/rag-chatbot
     container_name: rinco-rag-chatbot
-    restart: unless-stopped
-    environment: *python-env
+    <<: *restart
+    environment:
+      <<: *python-env
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: 6333
     ports:
       - "8091:8091"
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    <<: *resources-large
     networks:
       - rinco-net
 
+  # STT Service (Speech-to-Text)
   stt-service:
     build: ./services/stt-service
     container_name: rinco-stt-service
-    restart: unless-stopped
-    runtime: nvidia
+    <<: *restart
     environment:
       WHISPER_MODEL: large-v3
       WHISPER_DEVICE: cuda
       WHISPER_COMPUTE: float16
     ports:
       - "8093:8093"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8093/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     deploy:
       resources:
         reservations:
           devices:
             - capabilities: [gpu]
+        limits:
+          cpus: '4.0'
+          memory: 8G
     networks:
       - rinco-net
 
   # ============================================================
   # Frontend (Next.js)
   # ============================================================
+
+  # Landing Page Frontend
   landing-frontend:
     build: ./frontend/landing
     container_name: rinco-landing-frontend
-    restart: unless-stopped
+    <<: *restart
     environment:
       NEXT_PUBLIC_API_URL: http://landing-service:8086
       NEXT_PUBLIC_FB_PIXEL_ID: ${NEXT_PUBLIC_FB_PIXEL_ID:-}
     ports:
       - "3000:3000"
     depends_on:
-      - landing-service
+      landing-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    <<: *resources-medium
     networks:
       - rinco-net
 
+  # Admin Portal Frontend
   admin-portal-frontend:
     build: ./frontend/admin-portal
     container_name: rinco-admin-portal
-    restart: unless-stopped
+    <<: *restart
     environment:
       NEXT_PUBLIC_API_URL: http://auth-service:8081
     ports:
       - "3001:3001"
     depends_on:
-      - auth-service
+      auth-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    <<: *resources-medium
     networks:
       - rinco-net
 
+  # Tenant Site Frontend
   tenant-site-frontend:
     build: ./frontend/tenant-site
     container_name: rinco-tenant-site-frontend
-    restart: unless-stopped
+    <<: *restart
     environment:
       NEXT_PUBLIC_API_URL: http://tenant-service:8082
     ports:
       - "3002:3002"
     depends_on:
-      - tenant-service
+      tenant-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    <<: *resources-medium
     networks:
       - rinco-net
 
+  # Meeting UI Frontend
   meeting-ui-frontend:
     build: ./frontend/meeting-ui
     container_name: rinco-meeting-ui-frontend
-    restart: unless-stopped
+    <<: *restart
     environment:
       NEXT_PUBLIC_API_URL: http://auth-service:8081
       NEXT_PUBLIC_SFU_URL: http://webrtc-sfu:8095
     ports:
       - "3003:3003"
     depends_on:
-      - auth-service
+      auth-service:
+        condition: service_healthy
+      webrtc-sfu:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    <<: *resources-medium
     networks:
       - rinco-net
 
 networks:
   rinco-net:
     external: true
-    name: rinco_rinco-net
+    name: rinco-network
