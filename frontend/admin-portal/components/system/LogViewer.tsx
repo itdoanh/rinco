@@ -1,8 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { adminApi } from "@/lib/api";
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,18 +13,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { format } from "date-fns";
-import { Search, Filter, RefreshCw } from "lucide-react";
+import { Search, RefreshCw, Terminal } from "lucide-react";
+import { mockSystemLogs, type MockSystemLog } from "@/lib/mock-data";
 
-interface LogEntry {
-  id: string;
-  timestamp: string;
-  level: "info" | "warn" | "error" | "debug";
-  service: string;
-  message: string;
-  metadata?: Record<string, unknown>;
-}
-
-const levelColors = {
+const levelColors: Record<MockSystemLog["level"], string> = {
   info: "bg-blue-50 text-blue-700 border-blue-200",
   warn: "bg-amber-50 text-amber-700 border-amber-200",
   error: "bg-red-50 text-red-700 border-red-200",
@@ -39,47 +29,20 @@ export function LogViewer() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ["logs", service, level, page],
-    queryFn: () =>
-      adminApi.getServiceLogs({
-        service: service || undefined,
-        level: level || undefined,
-        limit: 50,
-      }),
+  const filtered = mockSystemLogs.filter((log) => {
+    if (service && log.service !== service) return false;
+    if (level && log.level !== level) return false;
+    if (search && !log.message.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
   });
 
-  const logs: LogEntry[] = data?.data || [
-    {
-      id: "1",
-      timestamp: new Date().toISOString(),
-      level: "info",
-      service: "auth-service",
-      message: "User login successful",
-      metadata: { user_id: "123", ip: "192.168.1.1" },
-    },
-    {
-      id: "2",
-      timestamp: new Date().toISOString(),
-      level: "warn",
-      service: "chat-engine",
-      message: "High latency detected",
-      metadata: { latency: 500, threshold: 300 },
-    },
-    {
-      id: "3",
-      timestamp: new Date().toISOString(),
-      level: "error",
-      service: "webrtc-sfu",
-      message: "Connection failed",
-      metadata: { error: "timeout", room_id: "abc123" },
-    },
-  ];
+  const pageSize = 50;
+  const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
 
   return (
     <div className="space-y-4">
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <Input
@@ -91,17 +54,21 @@ export function LogViewer() {
         </div>
 
         <Select value={service} onValueChange={setService}>
-          <SelectTrigger className="w-40">
+          <SelectTrigger className="w-44">
             <SelectValue placeholder="All Services" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">All Services</SelectItem>
-            <SelectItem value="auth-service">Auth</SelectItem>
-            <SelectItem value="tenant-service">Tenant</SelectItem>
-            <SelectItem value="crm-service">CRM</SelectItem>
-            <SelectItem value="lead-service">Lead</SelectItem>
-            <SelectItem value="chat-engine">Chat</SelectItem>
-            <SelectItem value="webrtc-sfu">WebRTC</SelectItem>
+            <SelectItem value="auth-service">Auth Service</SelectItem>
+            <SelectItem value="tenant-service">Tenant Service</SelectItem>
+            <SelectItem value="crm-service">CRM Service</SelectItem>
+            <SelectItem value="lead-service">Lead Service</SelectItem>
+            <SelectItem value="chat-engine">Chat Engine</SelectItem>
+            <SelectItem value="webrtc-sfu">WebRTC SFU</SelectItem>
+            <SelectItem value="recording-service">Recording</SelectItem>
+            <SelectItem value="lead-scoring">Lead Scoring</SelectItem>
+            <SelectItem value="rag-chatbot">RAG Chatbot</SelectItem>
+            <SelectItem value="stt-service">STT Service</SelectItem>
           </SelectContent>
         </Select>
 
@@ -118,39 +85,28 @@ export function LogViewer() {
           </SelectContent>
         </Select>
 
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={() => refetch()}
-          disabled={isRefetching}
-        >
-          <RefreshCw className={`w-4 h-4 ${isRefetching ? "animate-spin" : ""}`} />
+        <Button variant="outline" size="icon" aria-label="Refresh logs">
+          <RefreshCw className="w-4 h-4" />
         </Button>
       </div>
 
-      {/* Log List */}
-      <div className="border rounded-lg overflow-hidden font-mono text-sm">
-        <div className="bg-gray-50 border-b px-4 py-2 flex items-center justify-between text-xs text-gray-500">
-          <span>{logs.length} entries</span>
-          <span>Auto-refresh: 30s</span>
+      <div className="border rounded-lg overflow-hidden bg-slate-950 text-slate-200 font-mono text-sm shadow-inner">
+        <div className="bg-slate-900 border-b border-slate-800 px-4 py-2 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-2 text-slate-400">
+            <Terminal className="w-3.5 h-3.5" />
+            <span>{filtered.length} entries</span>
+          </div>
+          <span className="text-slate-500">Live tail · auto-refresh 5s</span>
         </div>
 
-        <div className="divide-y">
-          {isLoading ? (
-            Array.from({ length: 10 }).map((_, i) => (
-              <div key={i} className="px-4 py-3">
-                <Skeleton className="h-4 w-full" />
-              </div>
-            ))
-          ) : logs.length === 0 ? (
-            <div className="px-4 py-8 text-center text-gray-500">
-              No logs found
-            </div>
+        <div className="divide-y divide-slate-800 max-h-[600px] overflow-y-auto">
+          {paged.length === 0 ? (
+            <div className="px-4 py-12 text-center text-slate-500">No logs match the current filters</div>
           ) : (
-            logs.map((log) => (
-              <div key={log.id} className="px-4 py-3 hover:bg-gray-50">
+            paged.map((log) => (
+              <div key={log.id} className="px-4 py-2.5 hover:bg-slate-900/50 transition">
                 <div className="flex items-start gap-3">
-                  <span className="text-xs text-gray-400 whitespace-nowrap">
+                  <span className="text-xs text-slate-500 whitespace-nowrap tabular-nums">
                     {format(new Date(log.timestamp), "HH:mm:ss.SSS")}
                   </span>
                   <Badge
@@ -159,11 +115,16 @@ export function LogViewer() {
                   >
                     {log.level.toUpperCase()}
                   </Badge>
-                  <span className="text-xs text-gray-500">{log.service}</span>
-                  <span className="flex-1 text-gray-700">{log.message}</span>
+                  <span className="text-xs text-slate-400 whitespace-nowrap">{log.service}</span>
+                  <span className="flex-1 text-slate-200 break-all">{log.message}</span>
+                  {log.traceId && (
+                    <span className="text-xs text-slate-500 font-mono whitespace-nowrap">
+                      trace:{log.traceId.slice(0, 12)}
+                    </span>
+                  )}
                 </div>
                 {log.metadata && (
-                  <pre className="mt-2 text-xs text-gray-400 bg-gray-100 p-2 rounded overflow-x-auto">
+                  <pre className="mt-1.5 text-xs text-slate-500 bg-slate-900 p-2 rounded overflow-x-auto">
                     {JSON.stringify(log.metadata, null, 2)}
                   </pre>
                 )}
@@ -173,9 +134,10 @@ export function LogViewer() {
         </div>
       </div>
 
-      {/* Pagination */}
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">Page {page}</p>
+        <p className="text-sm text-muted-foreground">
+          Page {page} of {totalPages}
+        </p>
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
@@ -188,7 +150,8 @@ export function LogViewer() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setPage((p) => p + 1)}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
           >
             Next
           </Button>

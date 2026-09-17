@@ -36,6 +36,11 @@ const navItems = [
     icon: Users,
   },
   {
+    title: "CRM",
+    href: "/crm",
+    icon: Activity,
+  },
+  {
     title: "Analytics",
     href: "/analytics",
     icon: BarChart3,

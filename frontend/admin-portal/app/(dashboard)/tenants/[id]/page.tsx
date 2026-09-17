@@ -2,56 +2,32 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, Building2, Calendar, Users, Target } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  ChevronLeft,
+  Building2,
+  Calendar,
+  Users,
+  Target,
+  Activity,
+  Globe,
+  CreditCard,
+  Settings as SettingsIcon,
+  Server,
+} from "lucide-react";
 import { format } from "date-fns";
 import { notFound } from "next/navigation";
-
-// Demo data — replaced at runtime by tenant-svc
-const DEMO_TENANTS: Record<
-  string,
-  {
-    id: string;
-    slug: string;
-    name: string;
-    status: "active" | "suspended" | "pending";
-    plan: string;
-    created_at: string;
-    contacts: { name: string; email: string; phone: string };
-    stats: { leads: number; mrr: number; users: number; conversionRate: number };
-  }
-> = {
-  "apex-fintech": {
-    id: "tn_001",
-    slug: "apex-fintech",
-    name: "APEX Fintech",
-    status: "active",
-    plan: "Enterprise",
-    created_at: "2025-08-12T00:00:00Z",
-    contacts: { name: "Nguyen Van A", email: "ops@apex.vn", phone: "0987654321" },
-    stats: { leads: 125_847, mrr: 156_000_000, users: 247, conversionRate: 8.5 },
-  },
-  "demo-corp": {
-    id: "tn_002",
-    slug: "demo-corp",
-    name: "Demo Corp",
-    status: "pending",
-    plan: "Starter",
-    created_at: "2026-01-15T00:00:00Z",
-    contacts: { name: "Tran Thi B", email: "hello@demo.vn", phone: "0909123456" },
-    stats: { leads: 1_482, mrr: 2_900_000, users: 12, conversionRate: 3.2 },
-  },
-}
+import { mockTenants } from "@/lib/mock-data";
 
 export default async function TenantDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params
-  const tenant = DEMO_TENANTS[id]
+  const { id } = await params;
+  const tenant = mockTenants.find((t) => t.slug === id || t.id === id);
 
   if (!tenant) {
-    // In production this is `notFound()` after a tenant-svc fetch attempt
     return (
       <div className="p-6 space-y-4">
         <Link
@@ -67,8 +43,7 @@ export default async function TenantDetailPage({
           </CardHeader>
           <CardContent>
             <p className="text-muted-foreground">
-              We could not find a tenant with id <code>{id}</code>. The
-              record may have been deleted.
+              We could not find a tenant with id <code>{id}</code>.
             </p>
             <Button asChild className="mt-4">
               <Link href="/tenants">Return to list</Link>
@@ -76,7 +51,7 @@ export default async function TenantDetailPage({
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
   return (
@@ -90,23 +65,25 @@ export default async function TenantDetailPage({
       </Link>
 
       {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <Building2 className="w-7 h-7 text-primary" />
-            <h1 className="text-2xl font-bold">{tenant.name}</h1>
-            <Badge
-              variant={tenant.status === "active" ? "default" : "secondary"}
-              className="ml-2"
-            >
-              {tenant.status}
-            </Badge>
+      <div className="flex items-start justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-4">
+          <div
+            className="w-16 h-16 rounded-2xl flex items-center justify-center text-white font-bold text-2xl"
+            style={{ backgroundColor: tenant.color }}
+          >
+            {tenant.name[0]}
           </div>
-          <p className="text-muted-foreground mt-1">
-            <code>slug:</code> <code className="font-mono">{tenant.slug}</code>
-            {" · "}
-            <code>plan:</code> <code>{tenant.plan}</code>
-          </p>
+          <div>
+            <div className="flex items-center gap-3">
+              <h1 className="text-2xl font-bold">{tenant.name}</h1>
+              <Badge variant={tenant.status === "active" ? "default" : "secondary"}>
+                {tenant.status}
+              </Badge>
+            </div>
+            <p className="text-muted-foreground mt-1 text-sm">
+              <code className="font-mono">{tenant.slug}</code> · {tenant.plan} · {tenant.region}
+            </p>
+          </div>
         </div>
 
         <div className="flex gap-2">
@@ -117,99 +94,213 @@ export default async function TenantDetailPage({
       </div>
 
       {/* Stats grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs uppercase text-muted-foreground">Leads</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tenant.stats.leads.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-              <Target className="w-3 h-3" /> All time
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs uppercase text-muted-foreground">MRR</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {new Intl.NumberFormat("vi-VN", {
-                style: "currency",
-                currency: "VND",
-                notation: "compact",
-              }).format(tenant.stats.mrr)}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">recurring</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs uppercase text-muted-foreground">Users</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tenant.stats.users}</div>
-            <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
-              <Users className="w-3 h-3" /> Active
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs uppercase text-muted-foreground">
-              Conversion
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{tenant.stats.conversionRate}%</div>
-            <p className="text-xs text-muted-foreground mt-1">last 30 days</p>
-          </CardContent>
-        </Card>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard title="Leads" value={tenant.leads.toLocaleString()} icon={Target} hint="All time" />
+        <StatCard
+          title="MRR"
+          value={new Intl.NumberFormat("vi-VN", {
+            style: "currency",
+            currency: "VND",
+            notation: "compact",
+          }).format(tenant.revenue)}
+          icon={CreditCard}
+          hint="Monthly recurring"
+        />
+        <StatCard title="Users" value={tenant.users.toString()} icon={Users} hint="Active" />
+        <StatCard title="Conversion" value={`${tenant.conversionRate}%`} icon={Activity} hint="Last 30 days" />
       </div>
 
-      {/* Contact / Meta */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Primary Contact</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div>
-              <span className="text-muted-foreground">Name:</span>{" "}
-              <span className="font-medium">{tenant.contacts.name}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Email:</span>{" "}
-              <span className="font-mono">{tenant.contacts.email}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Phone:</span>{" "}
-              <span className="font-mono">{tenant.contacts.phone}</span>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Metadata</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-muted-foreground" />
-              <span className="text-muted-foreground">Created:</span>{" "}
-              <span>{format(new Date(tenant.created_at), "PPpp")}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">ID:</span>{" "}
-              <code className="font-mono text-xs">{tenant.id}</code>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Plan:</span>{" "}
-              <Badge variant="outline">{tenant.plan}</Badge>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Tabs */}
+      <Tabs defaultValue="overview" className="w-full">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="leads">Leads</TabsTrigger>
+          <TabsTrigger value="domains">Domains</TabsTrigger>
+          <TabsTrigger value="billing">Billing</TabsTrigger>
+          <TabsTrigger value="settings">Settings</TabsTrigger>
+          <TabsTrigger value="audit">Audit</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="w-4 h-4" /> Primary Contact
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Field label="Name" value={tenant.primaryContact.name} />
+                <Field label="Email" value={tenant.primaryContact.email} mono />
+                <Field label="Phone" value={tenant.primaryContact.phone} mono />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Server className="w-4 h-4" /> Infrastructure
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Field label="Isolation" value={tenant.isolationMode} />
+                <Field label="VPS Node" value={tenant.vpsNodeId ?? "Shared cluster"} mono />
+                <Field label="Region" value={tenant.region} />
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Globe className="w-4 h-4" /> Domains
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm font-mono">
+                {tenant.domains.map((d) => (
+                  <div key={d} className="text-slate-700">· {d}</div>
+                ))}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="w-4 h-4" /> Metadata
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Field label="Created" value={format(new Date(tenant.createdAt), "PPpp")} />
+                <Field label="ID" value={tenant.id} mono />
+                <Field label="Plan" value={<Badge variant="outline">{tenant.plan}</Badge>} />
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="users">
+          <Card>
+            <CardHeader>
+              <CardTitle>Users ({tenant.users})</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground text-sm">
+                User management UI will be implemented in Phase 2. {tenant.users} active users in this tenant.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="leads">
+          <Card>
+            <CardHeader>
+              <CardTitle>Leads ({tenant.leads.toLocaleString()})</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground text-sm">
+                {tenant.leads.toLocaleString()} leads generated all-time. View detailed lead analytics in Phase 2.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="domains">
+          <Card>
+            <CardHeader>
+              <CardTitle>Domains & SSL</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {tenant.domains.map((d) => (
+                  <div key={d} className="flex items-center justify-between p-3 rounded-lg border">
+                    <span className="font-mono text-sm">{d}</span>
+                    <Badge variant="default" className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                      SSL Active
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="billing">
+          <Card>
+            <CardHeader>
+              <CardTitle>Billing</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3 text-sm">
+                <Field label="Plan" value={<Badge variant="outline">{tenant.plan}</Badge>} />
+                <Field label="MRR" value={new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(tenant.revenue)} />
+                <Field label="Status" value={<Badge>Active</Badge>} />
+                <Field label="Next billing" value={format(new Date(Date.now() + 30 * 86400_000), "PP")} />
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="settings">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <SettingsIcon className="w-4 h-4" /> Tenant Settings
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground text-sm">
+                Per-tenant settings UI coming in Phase 2.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="audit">
+          <Card>
+            <CardHeader>
+              <CardTitle>Audit Log</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-muted-foreground text-sm">
+                Full audit log query interface in Phase 2.
+              </p>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
-  )
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  icon: Icon,
+  hint,
+}: {
+  title: string;
+  value: string;
+  icon: typeof Building2;
+  hint?: string;
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-xs uppercase tracking-wider text-muted-foreground font-medium flex items-center gap-2">
+          <Icon className="w-3 h-3" />
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-bold">{value}</div>
+        {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
+      </CardContent>
+    </Card>
+  );
+}
+
+function Field({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={mono ? "font-mono text-xs" : "font-medium"}>{value}</span>
+    </div>
+  );
 }

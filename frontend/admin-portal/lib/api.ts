@@ -16,15 +16,15 @@ class ApiError extends Error {
   }
 }
 
-export async function apiClient<T>(
+export async function apiClient<T = unknown>(
   endpoint: string,
   options: FetchOptions = {}
 ): Promise<T> {
-  const { tenantId, headers = {}, ...fetchOptions } = options;
+  const { headers = {}, ...fetchOptions } = options;
 
-  const requestHeaders: HeadersInit = {
+  const requestHeaders: Record<string, string> = {
     "Content-Type": "application/json",
-    ...headers,
+    ...(headers as Record<string, string>),
   };
 
   // Add auth token if available
@@ -65,26 +65,67 @@ export async function apiClient<T>(
   }
 }
 
-// Admin API
+// Types
+export type AdminStatsResponse = {
+  data?: {
+    totalTenants?: number;
+    totalUsers?: number;
+    totalLeads?: number;
+    mrr?: number;
+    leadsToday?: number;
+    conversionRate?: number;
+    pageviewsToday?: number;
+    apiCallsMin?: number;
+  };
+};
+
+export type PaginatedResponse<T> = {
+  data: T[];
+  total?: number;
+  page?: number;
+  limit?: number;
+};
+
+export type ServiceHealth = {
+  id: string;
+  name: string;
+  status: "healthy" | "degraded" | "down" | "unknown";
+  latency?: number;
+  errorRate?: number;
+  uptime?: number;
+  region?: string;
+  version?: string;
+  cpu?: number;
+  memory?: number;
+};
+
+function buildSearchParams(params?: Record<string, string | number | undefined | null>): string {
+  if (!params) return "";
+  const sp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && v !== "") sp.set(k, String(v));
+  });
+  const s = sp.toString();
+  return s ? `?${s}` : "";
+}
+
+// Legacy alias kept for backward compat with existing call sites
+export type AdminStats = AdminStatsResponse;
+
 export const adminApi = {
   // Dashboard
-  getStats: () => apiClient("/api/v1/admin/stats"),
-  getAnalytics: (params?: Record<string, string>) => {
-    const searchParams = new URLSearchParams(params);
-    return apiClient(`/api/v1/admin/analytics?${searchParams}`);
-  },
+  getStats: () => apiClient<AdminStatsResponse>("/api/v1/admin/stats"),
+
+  // Service Logs
+  getServiceLogs: (params?: { service?: string; level?: string; from?: string; to?: string; limit?: number }) =>
+    apiClient<PaginatedResponse<Record<string, unknown>>>(`/api/v1/admin/services/logs${buildSearchParams(params as Record<string, string | number | undefined>)}`),
+  getAnalytics: (params?: Record<string, string>) =>
+    apiClient<PaginatedResponse<Record<string, unknown>>>(`/api/v1/admin/analytics${buildSearchParams(params)}`),
 
   // Tenants
-  getTenants: (params?: { page?: number; limit?: number; search?: string; status?: string }) => {
-    const searchParams = new URLSearchParams(
-      Object.entries(params || {}).reduce((acc, [k, v]) => {
-        if (v) acc[k] = v;
-        return acc;
-      }, {} as Record<string, string>)
-    );
-    return apiClient(`/api/v1/admin/tenants?${searchParams}`);
-  },
-  getTenant: (id: string) => apiClient(`/api/v1/admin/tenants/${id}`),
+  getTenants: (params?: { page?: number; limit?: number; search?: string; status?: string }) =>
+    apiClient<PaginatedResponse<Record<string, unknown>>>(`/api/v1/admin/tenants${buildSearchParams(params as Record<string, string | number | undefined>)}`),
+  getTenant: (id: string) => apiClient<{ data: Record<string, unknown> }>(`/api/v1/admin/tenants/${id}`),
   createTenant: (data: Record<string, unknown>) =>
     apiClient("/api/v1/admin/tenants", { method: "POST", body: JSON.stringify(data) }),
   updateTenant: (id: string, data: Record<string, unknown>) =>
@@ -100,16 +141,9 @@ export const adminApi = {
     apiClient(`/api/v1/admin/tenants/${id}`, { method: "DELETE" }),
 
   // Users
-  getUsers: (params?: { page?: number; limit?: number; search?: string; role?: string }) => {
-    const searchParams = new URLSearchParams(
-      Object.entries(params || {}).reduce((acc, [k, v]) => {
-        if (v) acc[k] = v;
-        return acc;
-      }, {} as Record<string, string>)
-    );
-    return apiClient(`/api/v1/admin/users?${searchParams}`);
-  },
-  getUser: (id: string) => apiClient(`/api/v1/admin/users/${id}`),
+  getUsers: (params?: { page?: number; limit?: number; search?: string; role?: string }) =>
+    apiClient<PaginatedResponse<Record<string, unknown>>>(`/api/v1/admin/users${buildSearchParams(params as Record<string, string | number | undefined>)}`),
+  getUser: (id: string) => apiClient<{ data: Record<string, unknown> }>(`/api/v1/admin/users/${id}`),
   createUser: (data: Record<string, unknown>) =>
     apiClient("/api/v1/admin/users", { method: "POST", body: JSON.stringify(data) }),
   updateUser: (id: string, data: Record<string, unknown>) =>
@@ -118,48 +152,21 @@ export const adminApi = {
     apiClient(`/api/v1/admin/users/${id}`, { method: "DELETE" }),
 
   // System Health
-  getServicesHealth: () => apiClient("/api/v1/admin/services/health"),
-  getServiceLogs: (params?: { service?: string; level?: string; from?: string; to?: string; limit?: number }) => {
-    const searchParams = new URLSearchParams(
-      Object.entries(params || {}).reduce((acc, [k, v]) => {
-        if (v) acc[k] = v;
-        return acc;
-      }, {} as Record<string, string>)
-    );
-    return apiClient(`/api/v1/admin/services/logs?${searchParams}`);
-  },
-  getMetrics: (params?: { from?: string; to?: string }) => {
-    const searchParams = new URLSearchParams(params || {});
-    return apiClient(`/api/v1/admin/metrics?${searchParams}`);
-  },
+  getServicesHealth: () => apiClient<{ data: ServiceHealth[] }>("/api/v1/admin/services/health"),
+  getMetrics: (params?: { from?: string; to?: string }) =>
+    apiClient<{ data: Record<string, unknown>[] }>(`/api/v1/admin/metrics${buildSearchParams(params)}`),
 
   // Audit Logs
-  getAuditLogs: (params?: { page?: number; limit?: number; user_id?: string; action?: string; from?: string; to?: string }) => {
-    const searchParams = new URLSearchParams(
-      Object.entries(params || {}).reduce((acc, [k, v]) => {
-        if (v) acc[k] = v;
-        return acc;
-      }, {} as Record<string, string>)
-    );
-    return apiClient(`/api/v1/admin/audit-logs?${searchParams}`);
-  },
+  getAuditLogs: (params?: { page?: number; limit?: number; user_id?: string; action?: string; from?: string; to?: string }) =>
+    apiClient<PaginatedResponse<Record<string, unknown>>>(`/api/v1/admin/audit-logs${buildSearchParams(params as Record<string, string | number | undefined>)}`),
 
   // Leads Analytics
-  getLeadsAnalytics: (params?: { from?: string; to?: string; tenant_id?: string }) => {
-    const searchParams = new URLSearchParams(
-      Object.entries(params || {}).reduce((acc, [k, v]) => {
-        if (v) acc[k] = v;
-        return acc;
-        }, {} as Record<string, string>)
-    );
-    return apiClient(`/api/v1/admin/analytics/leads?${searchParams}`);
-  },
+  getLeadsAnalytics: (params?: { from?: string; to?: string; tenant_id?: string }) =>
+    apiClient<{ data: Record<string, unknown>[] }>(`/api/v1/admin/analytics/leads${buildSearchParams(params)}`),
 
   // Traffic Analytics
-  getTrafficAnalytics: (params?: { from?: string; to?: string }) => {
-    const searchParams = new URLSearchParams(params || {});
-    return apiClient(`/api/v1/admin/analytics/traffic?${searchParams}`);
-  },
+  getTrafficAnalytics: (params?: { from?: string; to?: string }) =>
+    apiClient<{ data: Record<string, unknown>[] }>(`/api/v1/admin/analytics/traffic${buildSearchParams(params)}`),
 };
 
 export { ApiError };

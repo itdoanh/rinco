@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,179 +12,152 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Search, Shield, AlertTriangle, Info, CheckCircle } from "lucide-react";
-import { format } from "date-fns";
-import { adminApi } from "@/lib/api";
+import { Search, Shield, AlertTriangle, Info, CheckCircle, Clock, User } from "lucide-react";
+import { format, formatDistanceToNow } from "date-fns";
+import { mockAuditLogs } from "@/lib/mock-data";
 
 type Level = "info" | "warning" | "error" | "success";
 
 interface AuditEntry {
   id: string;
   timestamp: string;
-  actor: string;
+  actorEmail: string;
+  actorRole: string;
   action: string;
-  resource: string;
-  ip: string;
-  level: Level;
+  targetType: string;
+  targetId: string;
+  tenantSlug: string;
+  ipAddress: string;
+  status: "success" | "failure";
 }
 
 const levelMeta: Record<Level, {
   icon: typeof Info;
   color: string;
+  bg: string;
   label: string;
 }> = {
-  info: { icon: Info, color: "text-blue-600", label: "INFO" },
-  warning: { icon: AlertTriangle, color: "text-amber-600", label: "WARN" },
-  error: { icon: AlertTriangle, color: "text-red-600", label: "ERROR" },
-  success: { icon: CheckCircle, color: "text-emerald-600", label: "OK" },
+  info: { icon: Info, color: "text-blue-700", bg: "bg-blue-50", label: "INFO" },
+  warning: { icon: AlertTriangle, color: "text-amber-700", bg: "bg-amber-50", label: "WARN" },
+  error: { icon: AlertTriangle, color: "text-red-700", bg: "bg-red-50", label: "ERROR" },
+  success: { icon: CheckCircle, color: "text-emerald-700", bg: "bg-emerald-50", label: "OK" },
 };
 
-/**
- * Fallback entries rendered while the admin-gateway backend is being
- * built (docs/15-roadmap §2 Phase 2).  When the backend is available we
- * replace this with data fetched via ``adminApi.getAuditLogs``.
- */
-const FALLBACK: AuditEntry[] = [
-  {
-    id: "1",
-    timestamp: new Date().toISOString(),
-    actor: "admin@rinco.app",
-    action: "tenant.create",
-    resource: "tenant/apex-fintech",
-    ip: "192.168.1.42",
-    level: "success",
-  },
-  {
-    id: "2",
-    timestamp: new Date(Date.now() - 3600_000).toISOString(),
-    actor: "ops@rinco.app",
-    action: "config.update",
-    resource: "config/feature-flags",
-    ip: "10.0.0.4",
-    level: "info",
-  },
-  {
-    id: "3",
-    timestamp: new Date(Date.now() - 7200_000).toISOString(),
-    actor: "admin@rinco.app",
-    action: "tenant.suspend",
-    resource: "tenant/demo-corp",
-    ip: "192.168.1.42",
-    level: "warning",
-  },
-  {
-    id: "4",
-    timestamp: new Date(Date.now() - 10800_000).toISOString(),
-    actor: "system",
-    action: "auth.login.failed",
-    resource: "user/unknown",
-    ip: "203.0.113.42",
-    level: "error",
-  },
-  {
-    id: "5",
-    timestamp: new Date(Date.now() - 14400_000).toISOString(),
-    actor: "admin@rinco.app",
-    action: "user.invite",
-    resource: "user/eng@rinco.app",
-    ip: "192.168.1.42",
-    level: "info",
-  },
-];
-
-function normalize(entry: Record<string, unknown>): AuditEntry {
-  return {
-    id: String(entry.id ?? entry.event_id ?? ""),
-    timestamp: String(
-      entry.timestamp ?? entry.created_at ?? new Date().toISOString(),
-    ),
-    actor: String(entry.actor ?? entry.user_id ?? "system"),
-    action: String(entry.action ?? entry.event_type ?? "unknown"),
-    resource: String(entry.resource ?? entry.target ?? "-"),
-    ip: String(entry.ip ?? entry.ip_address ?? "-"),
-    level: ((): Level => {
-      const l = String(entry.level ?? "info").toLowerCase();
-      if (l === "warn" || l === "warning") return "warning";
-      if (l === "error" || l === "err") return "error";
-      if (l === "success" || l === "ok") return "success";
-      return "info";
-    })(),
-  };
+function classifyLevel(action: string): Level {
+  const a = action.toLowerCase();
+  if (a.includes("delete") || a.includes("failed") || a.includes("deny")) return "error";
+  if (a.includes("suspend") || a.includes("reset")) return "warning";
+  if (a.includes("create") || a.includes("sign") || a.includes("verify")) return "success";
+  return "info";
 }
+
+const ROLE_COLORS: Record<string, string> = {
+  OWNER: "bg-purple-100 text-purple-700",
+  SRE_ADMIN: "bg-blue-100 text-blue-700",
+  SECURITY_ADMIN: "bg-red-100 text-red-700",
+  SUPPORT_ADMIN: "bg-emerald-100 text-emerald-700",
+  FINANCE_ADMIN: "bg-amber-100 text-amber-700",
+  READONLY_VIEWER: "bg-gray-100 text-gray-700",
+};
 
 export default function AuditPage() {
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<string>("all");
+  const [actor, setActor] = useState<string>("all");
   const [page, setPage] = useState(1);
-  const limit = 50;
+  const limit = 25;
 
-  const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["admin-audit-logs", page, limit],
-    queryFn: () =>
-      adminApi.getAuditLogs({ page, limit }).catch(() => null),
-    staleTime: 30_000,
-  });
-
-  // The admin-gateway isn't deployed yet, so we accept either a list
-  // payload or the legacy wrapped shape ``{ data: [...] }``.
-  const remote = useMemo<AuditEntry[]>(() => {
-    if (!data) return [];
-    const raw = Array.isArray(data)
-      ? data
-      : Array.isArray((data as { data?: unknown[] }).data)
-      ? ((data as { data: Record<string, unknown>[] }).data)
-      : [];
-    return raw.map((e) => normalize(e));
-  }, [data]);
-
-  const entries: AuditEntry[] = remote.length > 0 ? remote : FALLBACK;
-  const usingFallback = remote.length === 0;
+  // Map mock logs to AuditEntry shape
+  const entries: AuditEntry[] = mockAuditLogs.map((l) => ({
+    id: l.id,
+    timestamp: l.timestamp,
+    actorEmail: l.actorEmail,
+    actorRole: l.actorRole,
+    action: l.action,
+    targetType: l.targetType,
+    targetId: l.targetId,
+    tenantSlug: l.tenantSlug,
+    ipAddress: l.ipAddress,
+    status: l.status,
+  }));
 
   const filtered = useMemo(
     () =>
       entries.filter((e) => {
         const matchesSearch =
-          e.actor.toLowerCase().includes(search.toLowerCase()) ||
+          e.actorEmail.toLowerCase().includes(search.toLowerCase()) ||
           e.action.toLowerCase().includes(search.toLowerCase()) ||
-          e.resource.toLowerCase().includes(search.toLowerCase());
-        const matchesLevel = level === "all" || e.level === level;
-        return matchesSearch && matchesLevel;
+          e.tenantSlug.toLowerCase().includes(search.toLowerCase()) ||
+          e.targetId.toLowerCase().includes(search.toLowerCase());
+        const matchesLevel =
+          level === "all" ||
+          classifyLevel(e.action) === level ||
+          (level === "success" && e.status === "success") ||
+          (level === "error" && e.status === "failure");
+        const matchesActor = actor === "all" || e.actorEmail === actor;
+        return matchesSearch && matchesLevel && matchesActor;
       }),
-    [entries, search, level],
+    [entries, search, level, actor],
   );
+
+  const actors = useMemo(
+    () => Array.from(new Set(entries.map((e) => e.actorEmail))).sort(),
+    [entries],
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / limit));
+  const paged = filtered.slice((page - 1) * limit, page * limit);
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Shield className="w-6 h-6" />
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <Shield className="w-7 h-7 text-primary" />
             Audit Log
           </h1>
-          <p className="text-gray-500">
-            Immutable record of admin and system actions.
+          <p className="text-muted-foreground mt-1">
+            Immutable record of admin and system actions — {entries.length} total events
           </p>
-          {usingFallback && !isLoading && (
-            <p className="text-xs text-amber-600 mt-1">
-              Showing sample data — admin-gateway backend not yet
-              reachable (docs/15-roadmap §2 Phase 2).
-            </p>
-          )}
-          {isError && (
-            <p className="text-xs text-red-600 mt-1">
-              Failed to fetch audit logs — showing local sample.
-            </p>
-          )}
         </div>
-        <Button variant="outline" size="sm" onClick={() => refetch()}>
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className="gap-1.5">
+            <Clock className="w-3 h-3" />
+            Last 30 days
+          </Badge>
+          <Button variant="outline" size="sm">Export CSV</Button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <SummaryTile label="Total events" value={entries.length} icon={Shield} tone="slate" />
+        <SummaryTile
+          label="Success"
+          value={entries.filter((e) => e.status === "success").length}
+          icon={CheckCircle}
+          tone="emerald"
+        />
+        <SummaryTile
+          label="Failures"
+          value={entries.filter((e) => e.status === "failure").length}
+          icon={AlertTriangle}
+          tone="red"
+        />
+        <SummaryTile
+          label="Unique actors"
+          value={actors.length}
+          icon={User}
+          tone="purple"
+        />
       </div>
 
       <Card>
         <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="relative flex-1">
+          <CardTitle>Events</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search by actor, action, resource..."
@@ -195,86 +167,94 @@ export default function AuditPage() {
               />
             </div>
             <Select value={level} onValueChange={setLevel}>
-              <SelectTrigger className="w-40">
-                <SelectValue placeholder="All levels" />
+              <SelectTrigger className="w-36">
+                <SelectValue placeholder="Level" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All levels</SelectItem>
+                <SelectItem value="all">All Levels</SelectItem>
                 <SelectItem value="info">Info</SelectItem>
                 <SelectItem value="warning">Warning</SelectItem>
                 <SelectItem value="error">Error</SelectItem>
                 <SelectItem value="success">Success</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={actor} onValueChange={setActor}>
+              <SelectTrigger className="w-52">
+                <SelectValue placeholder="Actor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Actors</SelectItem>
+                {actors.map((a) => (
+                  <SelectItem key={a} value={a}>{a}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-        </CardHeader>
-        <CardContent>
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-muted-foreground text-xs uppercase">
-                  <th className="text-left py-2 px-3">Time</th>
-                  <th className="text-left py-2 px-3">Actor</th>
-                  <th className="text-left py-2 px-3">Action</th>
-                  <th className="text-left py-2 px-3">Resource</th>
-                  <th className="text-left py-2 px-3">IP</th>
-                  <th className="text-left py-2 px-3">Level</th>
+                <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
+                  <th className="py-3 px-3">Time</th>
+                  <th className="py-3 px-3">Actor</th>
+                  <th className="py-3 px-3">Action</th>
+                  <th className="py-3 px-3">Target</th>
+                  <th className="py-3 px-3">Tenant</th>
+                  <th className="py-3 px-3">IP</th>
+                  <th className="py-3 px-3">Status</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((entry) => {
-                  const meta = levelMeta[entry.level];
-                  const Icon = meta.icon;
-                  return (
-                    <tr
-                      key={entry.id}
-                      className="border-b hover:bg-muted/40"
-                    >
-                      <td className="py-2 px-3 font-mono text-xs">
-                        {format(
-                          new Date(entry.timestamp),
-                          "yyyy-MM-dd HH:mm:ss",
-                        )}
-                      </td>
-                      <td className="py-2 px-3 font-medium">
-                        {entry.actor}
-                      </td>
-                      <td className="py-2 px-3 font-mono text-xs">
-                        {entry.action}
-                      </td>
-                      <td className="py-2 px-3 font-mono text-xs">
-                        {entry.resource}
-                      </td>
-                      <td className="py-2 px-3 font-mono text-xs">
-                        {entry.ip}
-                      </td>
-                      <td className="py-2 px-3">
-                        <Badge variant="outline" className={meta.color}>
-                          <Icon className="w-3 h-3 mr-1" />
-                          {meta.label}
-                        </Badge>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filtered.length === 0 && (
+                {paged.length === 0 ? (
                   <tr>
-                    <td
-                      colSpan={6}
-                      className="text-center py-8 text-muted-foreground"
-                    >
-                      No matching entries.
+                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
+                      No matching events
                     </td>
                   </tr>
+                ) : (
+                  paged.map((entry) => {
+                    const lvl = classifyLevel(entry.action);
+                    const meta = levelMeta[lvl];
+                    const Icon = meta.icon;
+                    return (
+                      <tr key={entry.id} className="border-b hover:bg-slate-50/60">
+                        <td className="py-2.5 px-3">
+                          <div className="text-xs font-mono">{format(new Date(entry.timestamp), "yyyy-MM-dd HH:mm:ss")}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="font-medium text-xs">{entry.actorEmail}</div>
+                          <Badge variant="secondary" className={`text-[10px] mt-0.5 ${ROLE_COLORS[entry.actorRole] || ""}`}>
+                            {entry.actorRole}
+                          </Badge>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-xs">{entry.action}</td>
+                        <td className="py-2.5 px-3">
+                          <div className="text-xs font-mono">{entry.targetType}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">{entry.targetId}</div>
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-xs">{entry.tenantSlug}</td>
+                        <td className="py-2.5 px-3 font-mono text-xs">{entry.ipAddress}</td>
+                        <td className="py-2.5 px-3">
+                          <Badge variant="outline" className={`${meta.color} ${meta.bg}`}>
+                            <Icon className="w-3 h-3 mr-1" />
+                            {entry.status === "failure" ? "FAIL" : meta.label}
+                          </Badge>
+                        </td>
+                      </tr>
+                    );
+                  })
                 )}
               </tbody>
             </table>
           </div>
 
-          {!usingFallback && (
-            <div className="flex items-center justify-between mt-4 text-sm">
+          {filtered.length > 0 && (
+            <div className="flex items-center justify-between pt-2 text-sm">
               <div className="text-muted-foreground">
-                Page {page} — {filtered.length} of {entries.length} entries
+                Showing {(page - 1) * limit + 1}–{Math.min(page * limit, filtered.length)} of {filtered.length}
               </div>
               <div className="flex gap-2">
                 <Button
@@ -288,8 +268,8 @@ export default function AuditPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={filtered.length < limit}
-                  onClick={() => setPage((p) => p + 1)}
+                  disabled={page >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 >
                   Next
                 </Button>
@@ -299,5 +279,37 @@ export default function AuditPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function SummaryTile({
+  label,
+  value,
+  icon: Icon,
+  tone,
+}: {
+  label: string;
+  value: number;
+  icon: typeof Shield;
+  tone: "slate" | "emerald" | "red" | "purple";
+}) {
+  const tones = {
+    slate: "bg-slate-100 text-slate-700",
+    emerald: "bg-emerald-100 text-emerald-700",
+    red: "bg-red-100 text-red-700",
+    purple: "bg-purple-100 text-purple-700",
+  };
+  return (
+    <Card>
+      <CardContent className="p-4 flex items-center gap-3">
+        <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${tones[tone]}`}>
+          <Icon className="w-5 h-5" />
+        </div>
+        <div>
+          <div className="text-2xl font-bold tabular-nums">{value}</div>
+          <div className="text-xs text-muted-foreground">{label}</div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

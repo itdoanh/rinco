@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,36 +16,27 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Flag, Plus, Search, RotateCcw } from "lucide-react";
-import {
-  useFeatureFlagsStore,
-  type FeatureFlag,
-  type FeatureFlagCategory,
-} from "@/store/admin-stores";
+import { Flag, Plus, Search, Beaker, Rocket, Star, Archive } from "lucide-react";
+import { mockFeatureFlags, type MockFeatureFlag } from "@/lib/mock-data";
 
-const categoryColor: Record<FeatureFlagCategory, string> = {
-  core: "bg-emerald-100 text-emerald-700",
-  experimental: "bg-purple-100 text-purple-700",
-  beta: "bg-amber-100 text-amber-700",
-  deprecated: "bg-gray-100 text-gray-700",
+const categoryMeta: Record<MockFeatureFlag["category"], { color: string; icon: typeof Beaker }> = {
+  core: { color: "bg-emerald-100 text-emerald-700", icon: Rocket },
+  experimental: { color: "bg-purple-100 text-purple-700", icon: Beaker },
+  beta: { color: "bg-amber-100 text-amber-700", icon: Star },
+  deprecated: { color: "bg-gray-100 text-gray-700", icon: Archive },
 };
 
-const VALID_CATEGORIES: FeatureFlagCategory[] = [
-  "core",
-  "experimental",
-  "beta",
-  "deprecated",
-];
+const VALID_CATEGORIES: MockFeatureFlag["category"][] = ["core", "experimental", "beta", "deprecated"];
 
 export default function FeatureFlagsPage() {
-  const { flags, toggle, updateRollout, add, remove, reset } =
-    useFeatureFlagsStore();
+  const [flags, setFlags] = useState<MockFeatureFlag[]>(mockFeatureFlags);
   const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<{
     key: string;
     description: string;
-    category: FeatureFlagCategory;
+    category: MockFeatureFlag["category"];
     rolloutPercentage: number;
     enabled: boolean;
   }>({
@@ -56,55 +47,65 @@ export default function FeatureFlagsPage() {
     enabled: false,
   });
 
-  // Touch hydration side-effect to avoid SSR mismatches.
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
-  const list: FeatureFlag[] = hydrated ? flags : [];
-
-  const filtered = list.filter(
+  const filtered = flags.filter(
     (f) =>
-      f.key.toLowerCase().includes(search.toLowerCase()) ||
-      f.description.toLowerCase().includes(search.toLowerCase()),
+      (categoryFilter === "all" || f.category === categoryFilter) &&
+      (f.key.toLowerCase().includes(search.toLowerCase()) ||
+        f.description.toLowerCase().includes(search.toLowerCase())),
   );
+
+  function toggle(key: string) {
+    setFlags((prev) =>
+      prev.map((f) => (f.key === key ? { ...f, enabled: !f.enabled } : f)),
+    );
+  }
+
+  function updateRollout(key: string, value: number) {
+    setFlags((prev) =>
+      prev.map((f) => (f.key === key ? { ...f, rolloutPercentage: value } : f)),
+    );
+  }
 
   function submit() {
     const key = draft.key.trim();
     if (!key) return;
-    add({
-      key,
-      description: draft.description.trim() || "(no description)",
-      category: draft.category,
-      enabled: draft.enabled,
-      rolloutPercentage: draft.enabled ? draft.rolloutPercentage : 0,
-    });
-    setDraft({
-      key: "",
-      description: "",
-      category: "experimental",
-      rolloutPercentage: 0,
-      enabled: false,
-    });
+    setFlags((prev) => [
+      ...prev,
+      {
+        key,
+        description: draft.description.trim() || "(no description)",
+        category: draft.category,
+        enabled: draft.enabled,
+        rolloutPercentage: draft.enabled ? draft.rolloutPercentage : 0,
+        updatedAt: new Date().toISOString(),
+        updatedBy: "owner@rinco.app",
+        tenantOverrides: 0,
+      },
+    ]);
+    setDraft({ key: "", description: "", category: "experimental", rolloutPercentage: 0, enabled: false });
     setOpen(false);
   }
 
+  const counts = {
+    total: flags.length,
+    enabled: flags.filter((f) => f.enabled).length,
+    experimental: flags.filter((f) => f.category === "experimental").length,
+    core: flags.filter((f) => f.category === "core").length,
+  };
+
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Flag className="w-6 h-6" />
+          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
+            <Flag className="w-7 h-7 text-primary" />
             Feature Flags
           </h1>
-          <p className="text-gray-500">
-            Control feature availability per tenant and rollout percentage.
-            State persists in localStorage until the admin-gateway backend
-            is wired up (docs/15-roadmap §2 Phase 2).
+          <p className="text-muted-foreground mt-1">
+            {counts.enabled}/{counts.total} flags enabled · {counts.experimental} experimental · {counts.core} core
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={reset} title="Reset to defaults">
-            <RotateCcw className="w-4 h-4" />
-          </Button>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button>
@@ -125,9 +126,7 @@ export default function FeatureFlagsPage() {
                   <Input
                     id="flag-key"
                     value={draft.key}
-                    onChange={(e) =>
-                      setDraft({ ...draft, key: e.target.value })
-                    }
+                    onChange={(e) => setDraft({ ...draft, key: e.target.value })}
                     placeholder="experiment.cool_feature"
                   />
                 </div>
@@ -136,9 +135,7 @@ export default function FeatureFlagsPage() {
                   <Input
                     id="flag-desc"
                     value={draft.description}
-                    onChange={(e) =>
-                      setDraft({ ...draft, description: e.target.value })
-                    }
+                    onChange={(e) => setDraft({ ...draft, description: e.target.value })}
                     placeholder="What this flag does"
                   />
                 </div>
@@ -146,13 +143,10 @@ export default function FeatureFlagsPage() {
                   <Label htmlFor="flag-cat">Category</Label>
                   <select
                     id="flag-cat"
-                    className="w-full border rounded-md px-3 py-2 mt-1"
+                    className="w-full border-2 border-slate-200 bg-white rounded-md px-3 py-2 mt-1 text-sm"
                     value={draft.category}
                     onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        category: e.target.value as FeatureFlagCategory,
-                      })
+                      setDraft({ ...draft, category: e.target.value as MockFeatureFlag["category"] })
                     }
                   >
                     {VALID_CATEGORIES.map((c) => (
@@ -171,19 +165,14 @@ export default function FeatureFlagsPage() {
                     max={100}
                     value={draft.rolloutPercentage}
                     onChange={(e) =>
-                      setDraft({
-                        ...draft,
-                        rolloutPercentage: Number(e.target.value),
-                      })
+                      setDraft({ ...draft, rolloutPercentage: Number(e.target.value) })
                     }
                   />
                 </div>
                 <label className="flex items-center gap-2 text-sm">
                   <Switch
                     checked={draft.enabled}
-                    onCheckedChange={(v) =>
-                      setDraft({ ...draft, enabled: v })
-                    }
+                    onCheckedChange={(v) => setDraft({ ...draft, enabled: v })}
                   />
                   Enabled
                 </label>
@@ -202,8 +191,8 @@ export default function FeatureFlagsPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <div className="relative">
+        <CardHeader className="flex flex-wrap items-center gap-3">
+          <div className="relative flex-1 min-w-[200px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
               placeholder="Search flags by key or description..."
@@ -212,73 +201,89 @@ export default function FeatureFlagsPage() {
               className="pl-9"
             />
           </div>
+          <div className="flex gap-1.5 flex-wrap">
+            {(["all", "core", "experimental", "beta", "deprecated"] as const).map((c) => (
+              <Button
+                key={c}
+                size="sm"
+                variant={categoryFilter === c ? "default" : "outline"}
+                onClick={() => setCategoryFilter(c)}
+                className="capitalize"
+              >
+                {c}
+              </Button>
+            ))}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b text-muted-foreground text-xs uppercase">
-                  <th className="text-left py-3 px-3">Enabled</th>
-                  <th className="text-left py-3 px-3">Key</th>
-                  <th className="text-left py-3 px-3">Description</th>
-                  <th className="text-left py-3 px-3">Category</th>
-                  <th className="text-left py-3 px-3">Rollout</th>
-                  <th className="text-left py-3 px-3">Last Modified</th>
-                  <th className="text-right py-3 px-3">Actions</th>
+                <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
+                  <th className="py-3 px-3">Enabled</th>
+                  <th className="py-3 px-3">Key</th>
+                  <th className="py-3 px-3">Description</th>
+                  <th className="py-3 px-3">Category</th>
+                  <th className="py-3 px-3">Rollout</th>
+                  <th className="py-3 px-3">Overrides</th>
+                  <th className="py-3 px-3">Last Modified</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((f) => (
-                  <tr key={f.key} className="border-b hover:bg-muted/40">
-                    <td className="py-3 px-3">
-                      <Switch
-                        checked={f.enabled}
-                        onCheckedChange={() => toggle(f.key)}
-                      />
-                    </td>
-                    <td className="py-3 px-3 font-mono text-xs">{f.key}</td>
-                    <td className="py-3 px-3">{f.description}</td>
-                    <td className="py-3 px-3">
-                      <Badge className={categoryColor[f.category]}>
-                        {f.category}
-                      </Badge>
-                    </td>
-                    <td className="py-3 px-3 w-32">
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        value={f.rolloutPercentage}
-                        onChange={(e) =>
-                          updateRollout(f.key, Number(e.target.value))
-                        }
-                        className="h-7 w-20 text-xs"
-                        disabled={!f.enabled}
-                      />
-                      <span className="text-xs text-muted-foreground ml-1">
-                        %
-                      </span>
-                    </td>
-                    <td className="py-3 px-3 text-xs text-muted-foreground">
-                      {new Date(f.lastModified).toLocaleString()}
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => remove(f.key)}
-                      >
-                        Delete
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((f) => {
+                  const meta = categoryMeta[f.category];
+                  const Icon = meta.icon;
+                  return (
+                    <tr key={f.key} className="border-b hover:bg-slate-50/60">
+                      <td className="py-3 px-3">
+                        <Switch checked={f.enabled} onCheckedChange={() => toggle(f.key)} />
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="font-mono text-xs font-semibold">{f.key}</div>
+                      </td>
+                      <td className="py-3 px-3 max-w-xs">
+                        <div className="text-sm">{f.description}</div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <Badge className={`${meta.color} gap-1`}>
+                          <Icon className="w-3 h-3" />
+                          {f.category}
+                        </Badge>
+                      </td>
+                      <td className="py-3 px-3 w-44">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 bg-slate-200 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full transition-all ${f.enabled ? "bg-emerald-500" : "bg-slate-300"}`}
+                              style={{ width: `${f.rolloutPercentage}%` }}
+                            />
+                          </div>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={f.rolloutPercentage}
+                            onChange={(e) => updateRollout(f.key, Number(e.target.value))}
+                            className="h-7 w-16 text-xs"
+                            disabled={!f.enabled}
+                          />
+                        </div>
+                      </td>
+                      <td className="py-3 px-3">
+                        <Badge variant="secondary" className="text-xs">
+                          {f.tenantOverrides} tenants
+                        </Badge>
+                      </td>
+                      <td className="py-3 px-3 text-xs text-muted-foreground">
+                        <div>{new Date(f.updatedAt).toLocaleDateString()}</div>
+                        <div className="text-[10px]">{f.updatedBy}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {filtered.length === 0 && (
                   <tr>
-                    <td
-                      colSpan={7}
-                      className="text-center py-12 text-muted-foreground"
-                    >
+                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
                       No matching feature flags.
                     </td>
                   </tr>
