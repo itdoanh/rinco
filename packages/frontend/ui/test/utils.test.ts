@@ -227,8 +227,8 @@ test("debounce.cancel prevents pending call", async () => {
 
 test("debounce.flush fires immediately with last args", async () => {
   let lastArg: number | undefined;
-  const fn = (n: number) => (lastArg = n);
-  const d = debounce(fn, 1000);
+  const fn = (n: unknown) => (lastArg = typeof n === "number" ? n : undefined);
+  const d = debounce(fn as (...args: unknown[]) => unknown, 1000);
   d(1);
   d(2);
   d.flush();
