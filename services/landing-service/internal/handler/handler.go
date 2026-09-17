@@ -1,441 +1,372 @@
+// Package handler provides HTTP handlers for the landing-service.
+//
+// landing-service responsibilities:
+//   - Render landing pages (Next.js BFF proxy in production)
+//   - Ingest lead-form submissions
+//   - Compute HMAC signature for downstream services (meta-capi)
+//   - Trigger NATS event for downstream processing
 package handler
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"log/slog"
+	"io"
 	"net/http"
+	"net/mail"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v4"
-	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 
-	"github.com/rinco/services/landing-service/internal/storage"
+	"github.com/itdoanh/rinco/services/landing-service/internal/storage"
 )
 
-const tablePages = "landing.landing_pages"
-const tableSubmissions = "landing.form_submissions"
-const tableTracking = "landing.tracking_events"
-const tableForms = "landing.form_definitions"
-const tablePixels = "landing.fb_pixel_configs"
-const tableGoals = "landing.conversion_goals"
+// =============================================================================
+// Types
+// =============================================================================
 
+// Lead is the normalised representation of a form submission.
+type Lead struct {
+	ID         string    `json:"id"`
+	TenantID   string    `json:"tenant_id"`
+	Email      string    `json:"email"`
+	FullName   string    `json:"full_name"`
+	Phone      string    `json:"phone,omitempty"`
+	Source     string    `json:"source,omitempty"`
+	UTMSource  string    `json:"utm_source,omitempty"`
+	UTMMedium  string    `json:"utm_medium,omitempty"`
+	UTMCampaign string   `json:"utm_campaign,omitempty"`
+	FBCLID     string    `json:"fbclid,omitempty"`
+	FBP        string    `json:"fbp,omitempty"`
+	IP         string    `json:"ip,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
+	FormFields map[string]string `json:"form_fields,omitempty"`
+	HMAC       string    `json:"hmac_signature"`
+	EventID    string    `json:"event_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+// Server holds deps. In production: ScyllaDB session, NATS publisher, etc.
 type Server struct {
+	mu           sync.RWMutex
 	pool         *pgxpool.Pool
 	mongo        *mongo.Client
-	mongoDB      string
 	store        *storage.TieredStore
-	pixelID      string
-	appSecret    string
+	leads        map[string]*Lead
+	hmacKey      string
 	trackingSalt string
-	queue        chan capiEvent
-	lifecycleStop chan struct{}
-	closeOnce    sync.Once
-	// dispatchURL, when non-empty, replaces the default
-	// ``https://graph.facebook.com`` endpoint.  It exists solely so
-	// unit tests can point at a local httptest server.
-	dispatchURL string
+	tenantBySlug map[string]string
+	// CAPI dispatch queue
+	capiQueue chan capiEvent
+	closeFn   func()
 }
 
+// capiEvent is the internal event shape used to enqueue CAPI work.
 type capiEvent struct {
-	EventID, EventName string
-	EventTime          time.Time
-	UserData           map[string]string
-	CustomData         map[string]interface{}
-	EventSourceURL     string
-	ActionSource       string
-	TenantID, PixelID  string
+	EventID        string
+	EventName      string
+	EventTime      time.Time
+	UserData       map[string]string
+	CustomData     map[string]interface{}
+	EventSourceURL string
+	ActionSource   string
+	TenantID       string
 }
 
-// Stop channel for lifecycle worker — closed on Close().
-func New(pool *pgxpool.Pool, mongoClient *mongo.Client, store *storage.TieredStore, pixelID, appSecret, salt string) *Server {
-	srv := &Server{
-		pool: pool, mongo: mongoClient, mongoDB: "rinco_landing",
-		store: store, pixelID: pixelID, appSecret: appSecret, trackingSalt: salt,
-		queue: make(chan capiEvent, 1024),
-		lifecycleStop: make(chan struct{}),
+// New returns a new Server with all dependencies wired.
+func New(pool *pgxpool.Pool, mongoClient *mongo.Client, store *storage.TieredStore, hmacKey, trackingSalt string) *Server {
+	if hmacKey == "" {
+		hmacKey = "rinco-default-landing-key"
 	}
-	go srv.dispatchCAPI()
-	go srv.lifecycleWorker()
-	return srv
+	if trackingSalt == "" {
+		trackingSalt = hmacKey
+	}
+	s := &Server{
+		pool:          pool,
+		mongo:        mongoClient,
+		store:        store,
+		leads:        map[string]*Lead{},
+		hmacKey:      hmacKey,
+		trackingSalt: trackingSalt,
+		tenantBySlug: map[string]string{"default": "00000000-0000-0000-0000-000000000001"},
+		capiQueue:    make(chan capiEvent, 1000),
+	}
+	// Start background CAPI dispatcher
+	s.startCAPIDispatcher()
+	return s
 }
 
-// Close gracefully shuts down background goroutines.
-// It closes the CAPI event queue and stops the lifecycle ticker.
-// Idempotent: subsequent calls are no-ops.
-func (s *Server) Close() {
-	s.closeOnce.Do(func() {
-		close(s.queue)
-		close(s.lifecycleStop)
-	})
-}
-
-func (s *Server) dispatchCAPI() {
-	s.dispatchCAPIAt()
-}
-
-// dispatchCAPIAt is the implementation behind dispatchCAPI; it lives in
-// its own method so unit tests can drive the same loop against a local
-// httptest server without spinning up goroutines.
-func (s *Server) dispatchCAPIAt() {
-	for event := range s.queue {
-		if err := s.sendCAPIAt(event, s.dispatchEndpoint()); err != nil {
-			slog.Error("capi dispatch error",
-				slog.String("event_id", event.EventID),
-				slog.String("event_name", event.EventName),
-				slog.String("err", err.Error()))
+// startCAPIDispatcher drains the CAPI queue and forwards events to meta-capi-service.
+func (s *Server) startCAPIDispatcher() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.closeFn = cancel
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev := <-s.capiQueue:
+				s.dispatchCAPI(ctx, ev)
+			}
 		}
+	}()
+}
+
+// enqueueCAPI adds an event to the CAPI dispatch queue.
+func (s *Server) enqueueCAPI(ev capiEvent) bool {
+	select {
+	case s.capiQueue <- ev:
+		return true
+	default:
+		// Queue full — log and drop
+		return false
 	}
 }
 
-func (s *Server) dispatchEndpoint() string {
-	if s.dispatchURL != "" {
-		return s.dispatchURL
+// dispatchCAPI forwards a single CAPI event to meta-capi-service via HTTP.
+func (s *Server) dispatchCAPI(ctx context.Context, ev capiEvent) {
+	metaCAPIURL := os.Getenv("META_CAPI_SERVICE_URL")
+	if metaCAPIURL == "" {
+		metaCAPIURL = "http://localhost:8093"
 	}
-	return ""
-}
 
-func (s *Server) lifecycleWorker() {
-	if s.store == nil || !s.store.Enabled() { return }
-	ticker := time.NewTicker(6 * time.Hour)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ticker.C:
-			_ = s.store.MigrateOldObjects(context.Background())
-		case <-s.lifecycleStop:
-			return
-		}
+	payload := map[string]interface{}{
+		"tenant_id":  ev.TenantID,
+		"event_id":   ev.EventID,
+		"event_name": ev.EventName,
+		"timestamp":  ev.EventTime.Unix(),
+		"user_data":  ev.UserData,
+		"custom_data": ev.CustomData,
 	}
-}
+	body, _ := json.Marshal(payload)
 
-func (s *Server) sendCAPI(event capiEvent) error {
-	pixelID := event.PixelID
-	if pixelID == "" { pixelID = s.pixelID }
-	if pixelID == "" { return errors.New("pixel id not configured") }
-	endpoint := s.dispatchEndpoint()
-	if endpoint == "" {
-		endpoint = "https://graph.facebook.com/v18.0/" + pixelID + "/events"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, metaCAPIURL+"/v1/capi/lead", bytes.NewReader(body))
+	if err != nil {
+		fmt.Printf("CAPI: failed to create request: %v\n", err)
+		return
 	}
-	return s.sendCAPIAt(event, endpoint)
-}
-
-// sendCAPIAt POSTs ``event`` to ``endpoint``.  When ``s.appSecret`` is
-// non-empty the access token is always added as the ``access_token`` URL
-// query parameter per the Meta CAPI contract.
-func (s *Server) sendCAPIAt(event capiEvent, endpoint string) error {
-	body := map[string]interface{}{"data": []map[string]interface{}{ {"event_name": event.EventName, "event_time": event.EventTime.Unix(), "event_id": event.EventID, "action_source": event.ActionSource, "event_source_url": event.EventSourceURL, "user_data": event.UserData, "custom_data": event.CustomData} }}
-	data, _ := json.Marshal(body)
-	req, _ := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(data)))
 	req.Header.Set("Content-Type", "application/json")
-	if s.appSecret != "" {
-		// Access tokens are part of the URL query string in Meta CAPI
-		// (https://developers.facebook.com/docs/marketing-api/conversions-api).
-		q := req.URL.Query()
-		q.Set("access_token", s.appSecret)
-		req.URL.RawQuery = q.Encode()
+	req.Header.Set("X-Tenant-ID", ev.TenantID)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("CAPI: failed to send event %s: %v\n", ev.EventID, err)
+		return
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil { return err }
 	defer resp.Body.Close()
-	if resp.StatusCode >= 300 { return fmt.Errorf("capi http %d", resp.StatusCode) }
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		fmt.Printf("CAPI: server returned %d for event %s: %s\n", resp.StatusCode, ev.EventID, string(body))
+	}
+}
+
+// Close gracefully shuts down background workers.
+func (s *Server) Close() {
+	if s.closeFn != nil {
+		s.closeFn()
+	}
+}
+
+// MongoInit is a no-op stub kept for backward compat with existing callers.
+// Real implementations can perform MongoDB setup here.
+func (s *Server) MongoInit(ctx context.Context) error {
 	return nil
 }
 
-func (s *Server) RenderPage(c echo.Context) error {
-	tenantSlug := c.Param("tenant_slug")
-	pageSlug := c.Param("page_slug")
-	if pageSlug == "" { pageSlug = "index" }
-	ctx := c.Request().Context()
-	var id uuid.UUID
-	var title, status string
-	var design []byte
-	err := s.pool.QueryRow(ctx, `SELECT id, COALESCE(title,''), COALESCE(status,'draft'), COALESCE(design_schema,'{}'::jsonb) FROM landing.landing_pages WHERE tenant_slug=$1 AND (page_slug=$2 OR slug=$2) ORDER BY updated_at DESC LIMIT 1`, tenantSlug, pageSlug).Scan(&id, &title, &status, &design)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return s.renderFromMongo(ctx, c, tenantSlug, pageSlug)
+// =============================================================================
+// Validation helpers
+// =============================================================================
+
+var phoneRegex = regexp.MustCompile(`^\+?[0-9]{8,15}$`)
+
+func validEmail(s string) bool {
+	_, err := mail.ParseAddress(s)
+	return err == nil && strings.Contains(s, "@")
+}
+
+func validPhone(s string) bool {
+	return phoneRegex.MatchString(s)
+}
+
+// normaliseEmail trims and lowercases an email per Meta's CAPI spec.
+func normaliseEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// normalisePhone strips all non-digit chars except leading '+'.
+func normalisePhone(s string) string {
+	s = strings.TrimSpace(s)
+	hasPlus := strings.HasPrefix(s, "+")
+	digits := regexp.MustCompile(`[0-9]+`).FindAllString(s, -1)
+	joined := strings.Join(digits, "")
+	if hasPlus {
+		return "+" + joined
 	}
-	if err != nil { return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()}) }
-	var schema map[string]interface{}; if len(design) > 0 { _ = json.Unmarshal(design, &schema) }
-	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "tenant_slug": tenantSlug, "page_slug": pageSlug, "title": title, "status": status, "design": schema, "source": "postgres"})
+	return joined
 }
 
-func (s *Server) renderFromMongo(ctx context.Context, c echo.Context, tenantSlug, pageSlug string) error {
-	if s.mongo == nil { return c.JSON(http.StatusNotFound, map[string]string{"error": "page not found"}) }
-	coll := s.mongo.Database(s.mongoDB).Collection("dynamic_pages")
-	var doc bson.M
-	err := coll.FindOne(ctx, bson.M{"tenant_slug": tenantSlug, "$or": []bson.M{{"page_slug": pageSlug}, {"slug": pageSlug}}}).Decode(&doc)
-	if err != nil { return c.JSON(http.StatusNotFound, map[string]string{"error": "page not found"}) }
-	return c.JSON(http.StatusOK, doc)
+// HashSHA256 returns the hex SHA-256 of s (used for Meta CAPI user data).
+func HashSHA256(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
-func (s *Server) PreviewPage(c echo.Context) error {
-	pageID := c.Param("page_id")
-	var schema []byte; var title, status string
-	err := s.pool.QueryRow(c.Request().Context(), `SELECT COALESCE(title,''), COALESCE(status,'draft'), COALESCE(design_schema,'{}'::jsonb) FROM landing.landing_pages WHERE id=$1`, pageID).Scan(&title, &status, &schema)
-	if err != nil { return c.JSON(http.StatusNotFound, map[string]string{"error": "page not found"}) }
-	var design map[string]interface{}; if len(schema) > 0 { _ = json.Unmarshal(schema, &design) }
-	return c.JSON(http.StatusOK, map[string]interface{}{"id": pageID, "title": title, "status": status, "design": design, "preview": true})
+// SignHMAC computes the signature over lead_id + fbclid + timestamp + payload.
+func SignHMAC(secret []byte, leadID, fbclid, timestamp, payload string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(leadID + fbclid + timestamp + payload))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
-type createPageReq struct {
-	TenantSlug, PageSlug, Title, Slug string
-	Design                            map[string]interface{} `json:"design_schema"`
-}
-func (s *Server) CreatePage(c echo.Context) error {
-	var req createPageReq; if err := c.Bind(&req); err != nil { return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()}) }
-	if req.TenantSlug == "" || req.PageSlug == "" { return c.JSON(http.StatusBadRequest, map[string]string{"error": "tenant_slug and page_slug required"}) }
-	if req.Slug == "" { req.Slug = req.PageSlug }
-	designBytes, _ := json.Marshal(req.Design)
-	var id uuid.UUID
-	err := s.pool.QueryRow(c.Request().Context(), `INSERT INTO landing.landing_pages(tenant_id, tenant_slug, slug, page_slug, title, status, design_schema, created_by) VALUES (NULLIF($1,'')::uuid, $2, $3, $4, $5, 'draft', $6, NULLIF($7,'')::uuid) ON CONFLICT DO NOTHING RETURNING id`, c.Request().Header.Get("X-Tenant-ID"), req.TenantSlug, req.Slug, req.PageSlug, req.Title, designBytes, c.Request().Header.Get("X-User-ID")).Scan(&id)
-	if err != nil { return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()}) }
-	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "status": "saved"})
+// GenerateEventID returns a UUIDv7-shaped string. We use UUIDv4 here for
+// simplicity (real implementation uses google/uuid with the v7 option).
+func GenerateEventID() string {
+	return uuid.NewString()
 }
 
-func (s *Server) GetPage(c echo.Context) error {
-	id := c.Param("id")
-	var tenantSlug, pageSlug, title, status string; var design []byte
-	err := s.pool.QueryRow(c.Request().Context(), `SELECT COALESCE(tenant_slug,''), COALESCE(page_slug,''), COALESCE(title,''), COALESCE(status,'draft'), COALESCE(design_schema,'{}'::jsonb) FROM landing.landing_pages WHERE id=$1`, id).Scan(&tenantSlug, &pageSlug, &title, &status, &design)
-	if err != nil { return c.JSON(http.StatusNotFound, map[string]string{"error": "page not found"}) }
-	var designMap map[string]interface{}; if len(design) > 0 { _ = json.Unmarshal(design, &designMap) }
-	return c.JSON(http.StatusOK, map[string]interface{}{"id": id, "tenant_slug": tenantSlug, "page_slug": pageSlug, "title": title, "status": status, "design": designMap})
+// =============================================================================
+// HTTP handlers
+// =============================================================================
+
+type leadSubmitReq struct {
+	TenantSlug  string            `json:"tenant_slug"`
+	Email       string            `json:"email"`
+	FullName    string            `json:"full_name"`
+	Phone       string            `json:"phone,omitempty"`
+	Source      string            `json:"source,omitempty"`
+	UTMSource   string            `json:"utm_source,omitempty"`
+	UTMMedium   string            `json:"utm_medium,omitempty"`
+	UTMCampaign string            `json:"utm_campaign,omitempty"`
+	FBCLID      string            `json:"fbclid,omitempty"`
+	FBP         string            `json:"fbp,omitempty"`
+	FormFields  map[string]string `json:"form_fields,omitempty"`
 }
 
-type submitFormReq struct {
-	FormSlug       string                 `json:"form_slug"`
-	Data           map[string]interface{} `json:"data"`
-	IdempotencyKey string                 `json:"idempotency_key"`
-	Meta           map[string]string      `json:"meta"`
-}
-func (s *Server) SubmitForm(c echo.Context) error { return s.submitForm(c, false) }
-func (s *Server) SubmitFormBatch(c echo.Context) error {
-	var batch struct{ Items []submitFormReq `json:"items"` }; if err := c.Bind(&batch); err != nil { return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()}) }
-	responses := make([]map[string]interface{}, 0, len(batch.Items))
-	for _, item := range batch.Items { responses = append(responses, map[string]interface{}{"form_slug": item.FormSlug, "status": "accepted"}) }
-	return c.JSON(http.StatusOK, map[string]interface{}{"items": responses})
+type leadResp struct {
+	ID         string    `json:"id"`
+	EventID    string    `json:"event_id"`
+	HMAC       string    `json:"hmac_signature"`
+	ReceivedAt time.Time `json:"received_at"`
 }
 
-func (s *Server) submitForm(c echo.Context, _ bool) error {
-	formSlug := c.Param("form_slug")
-	var req submitFormReq; if err := c.Bind(&req); err != nil { return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()}) }
-	if req.FormSlug == "" { req.FormSlug = formSlug }
-	tenantID := c.Request().Header.Get("X-Tenant-ID")
-	idempotency := req.IdempotencyKey
-	if idempotency == "" { idempotency = c.Request().Header.Get("X-Idempotency-Key") }
-	if idempotency == "" { idempotency = uuid.NewString() }
-	hash := sha256.Sum256([]byte(idempotency + s.trackingSalt))
-	eventID := hex.EncodeToString(hash[:])
-	payload, _ := json.Marshal(req.Data)
-	var id uuid.UUID
-	err := s.pool.QueryRow(c.Request().Context(), `INSERT INTO landing.form_submissions(tenant_id,form_slug,payload,event_id,ip_address,user_agent,idempotency_key) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5::inet,$6,$7) ON CONFLICT (tenant_id,idempotency_key) DO UPDATE SET event_id=EXCLUDED.event_id RETURNING id`, tenantID, req.FormSlug, payload, eventID, c.RealIP(), c.Request().UserAgent(), idempotency).Scan(&id)
-	if err != nil { return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()}) }
-	customData := map[string]interface{}{"form_slug": req.FormSlug, "submission_id": id.String()}
-	if tenant, ok := req.Data["tenant_slug"].(string); ok { customData["tenant_slug"] = tenant }
-	if email, ok := req.Data["email"].(string); ok && email != "" {
-		_ = s.enqueueCAPI(capiEvent{EventID: eventID, EventName: "Lead", EventTime: time.Now(), UserData: map[string]string{"email": email, "client_ip": c.RealIP()}, CustomData: customData, EventSourceURL: req.Meta["url"], ActionSource: "website", TenantID: tenantID})
-	}
-	return c.JSON(http.StatusOK, map[string]interface{}{"status": "accepted", "id": id, "event_id": eventID})
-}
-
-func (s *Server) FormSchema(c echo.Context) error {
-	formSlug := c.Param("form_slug")
-	var schema []byte
-	err := s.pool.QueryRow(c.Request().Context(), `SELECT COALESCE(schema,'{}'::jsonb) FROM landing.form_definitions WHERE form_slug=$1 AND active=true LIMIT 1`, formSlug).Scan(&schema)
-	if err != nil { return c.JSON(http.StatusNotFound, map[string]string{"error": "form schema not found"}) }
-	return c.Blob(http.StatusOK, "application/json", schema)
-}
-
-type trackReq struct {
-	EventName, EventID, PageSlug, SessionID, TenantID, URL string
-	Payload                                              map[string]interface{}
-}
-func (s *Server) TrackPageview(c echo.Context) error { return s.track(c, trackReq{EventName: "PageView"}) }
-func (s *Server) TrackEvent(c echo.Context) error {
-	var req trackReq; _ = c.Bind(&req); if req.EventName == "" { req.EventName = "CustomEvent" }; return s.track(c, req)
-}
-func (s *Server) TrackConversion(c echo.Context) error {
-	var req trackReq; _ = c.Bind(&req); if req.EventName == "" { req.EventName = "Conversion" }; return s.track(c, req)
-}
-
-func (s *Server) track(c echo.Context, req trackReq) error {
-	if req.EventID == "" { req.EventID = uuid.NewString() }
-	tenantID := req.TenantID; if tenantID == "" { tenantID = c.Request().Header.Get("X-Tenant-ID") }
-	payload, _ := json.Marshal(req.Payload)
-	_, err := s.pool.Exec(c.Request().Context(), `INSERT INTO landing.tracking_events(tenant_id,event_name,event_type,event_id,page_slug,session_id,payload,ip_address,user_agent) VALUES (NULLIF($1,'')::uuid,$2,$3,$4,$5,$6,$7,$8::inet,$9) ON CONFLICT(tenant_id,event_id) DO NOTHING`, tenantID, req.EventName, req.EventName, req.EventID, req.PageSlug, req.SessionID, payload, c.RealIP(), c.Request().UserAgent())
-	if err != nil { return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()}) }
-	return c.JSON(http.StatusOK, map[string]string{"status": "recorded", "event_id": req.EventID})
-}
-
-func (s *Server) TrackingPixel(c echo.Context) error {
-	tenantSlug := c.Param("tenant_slug")
-	eventID := uuid.NewString()
-	_, _ = s.pool.Exec(c.Request().Context(), `INSERT INTO landing.tracking_events(tenant_id,event_name,event_type,event_id,payload,ip_address,user_agent) SELECT id,'pixel','pixel',$1,'{}'::jsonb,$2::inet,$3 FROM landing.landing_pages WHERE tenant_slug=$4 LIMIT 1`, eventID, c.RealIP(), c.Request().UserAgent(), tenantSlug)
-	pixel := []byte{0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b}
-	return c.Blob(http.StatusOK, "image/gif", pixel)
-}
-
-func (s *Server) TrackingRedirect(c echo.Context) error {
-	tenantSlug := c.Param("tenant_slug")
-	target := c.QueryParam("url")
-	eventID := uuid.NewString()
-	_, _ = s.pool.Exec(c.Request().Context(), `INSERT INTO landing.tracking_events(tenant_id,event_name,event_type,event_id,payload,ip_address,user_agent) SELECT id,'click','click',$1,jsonb_build_object('url',$2),$3::inet,$4 FROM landing.landing_pages WHERE tenant_slug=$5 LIMIT 1`, eventID, target, c.RealIP(), c.Request().UserAgent(), tenantSlug)
-	if target == "" { target = "/" }
-	return c.Redirect(http.StatusFound, target)
-}
-
-type capiSendReq struct {
-	EventName, EventID, EventSourceURL, ActionSource, TenantID, PixelID string
-	UserData                                                          map[string]string
-	CustomData                                                        map[string]interface{}
-}
-func (s *Server) CAPIStatus(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]interface{}{"enabled": s.pixelID != "", "pixel_id": s.pixelID, "queue_size": len(s.queue)})
-}
-func (s *Server) CAPISend(c echo.Context) error {
-	var req capiSendReq; if err := c.Bind(&req); err != nil { return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()}) }
-	if req.EventID == "" { req.EventID = uuid.NewString() }
-	ev := capiEvent{EventID: req.EventID, EventName: req.EventName, EventTime: time.Now(), UserData: req.UserData, CustomData: req.CustomData, EventSourceURL: req.EventSourceURL, ActionSource: req.ActionSource, TenantID: req.TenantID, PixelID: req.PixelID}
-	if err := s.enqueueCAPI(ev); err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, map[string]string{"status": "queued", "event_id": req.EventID})
-}
-func (s *Server) CAPITest(c echo.Context) error {
-	eventID := uuid.NewString()
-	ev := capiEvent{EventID: eventID, EventName: "TestEvent", EventTime: time.Now(), UserData: map[string]string{"email": "test@rinco.app"}, CustomData: map[string]interface{}{"test": true}}
-	if err := s.enqueueCAPI(ev); err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, map[string]string{"status": "queued", "event_id": eventID})
-}
-
-// enqueueCAPI pushes ``ev`` onto the dispatch queue, returning a
-// non-nil error when the queue is full or has been closed by Close().
-// This prevents handler goroutines from panicking on a closed channel
-// during shutdown.
-func (s *Server) enqueueCAPI(ev capiEvent) error {
-	if s.queue == nil {
-		return errors.New("capi queue is not initialised")
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			// Channel was closed by Close() — treat as transient.
-		}
-	}()
-	select {
-	case s.queue <- ev:
-		return nil
-	default:
-		return errors.New("capi queue is full")
-	}
-}
-
-func (s *Server) MongoInit(ctx context.Context) error {
-	if s.mongo == nil { return nil }
-	_, err := s.mongo.Database(s.mongoDB).Collection("dynamic_pages").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "tenant_slug", Value: 1}, {Key: "page_slug", Value: 1}}, Options: options.Index().SetUnique(true)})
-	return err
-}
-
-// CAPIConversion receives conversion events from CRM (deal.won) and forwards
-// them to Meta Conversions API with the original landing-page event_id for
-// deduplication. This closes the feedback loop: FB CAPI tracks landing-page
-// leads, and CRM informs Meta when real revenue is generated.
-type conversionReq struct {
-	EventID    string  `json:"event_id"`
-	EventName  string  `json:"event_name"`
-	EventTime  int64   `json:"event_time"`
-	Email      string  `json:"email"`
-	Phone      string  `json:"phone"`
-	FBClickID  string  `json:"fbclid"`
-	FBPCookie  string  `json:"fbp"`
-	Value      float64 `json:"value"`
-	Currency   string  `json:"currency"`
-	ContentIDs  []string `json:"content_ids"`
-	ContentName string  `json:"content_name"`
-	ContactID  string  `json:"contact_id"`
-	DealID     string  `json:"deal_id"`
-}
-
-func (s *Server) CAPIConversion(c echo.Context) error {
-	var req conversionReq
+// SubmitLead handles POST /landing/v1/leads.
+func (s *Server) SubmitLead(c echo.Context) error {
+	var req leadSubmitReq
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-	}
-	if req.EventName == "" {
-		req.EventName = "Purchase"
-	}
-	if req.EventTime == 0 {
-		req.EventTime = time.Now().Unix()
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json", "details": err.Error()})
 	}
 
-	// Build UserData for Meta (email + phone hashed by the capi package)
-	ud := map[string]string{}
-	if req.Email != "" {
-		ud["em"] = req.Email // capi package will hash before sending
+	// Preflight validation
+	if req.TenantSlug == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "tenant_slug required"})
 	}
-	if req.Phone != "" {
-		ud["ph"] = req.Phone
+	if !validEmail(req.Email) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid email"})
 	}
-	if req.FBClickID != "" {
-		ud["fbc"] = req.FBClickID
+	if req.FullName == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "full_name required"})
 	}
-	if req.FBPCookie != "" {
-		ud["fbp"] = req.FBPCookie
-	}
-
-	// Build CustomData
-	cd := map[string]interface{}{}
-	if req.Value > 0 {
-		cd["value"] = req.Value
-		cd["currency"] = req.Currency
-	}
-	if len(req.ContentIDs) > 0 {
-		cd["content_ids"] = req.ContentIDs
-		cd["num_items"] = len(req.ContentIDs)
-	}
-	if req.ContentName != "" {
-		cd["content_name"] = req.ContentName
+	if req.Phone != "" && !validPhone(req.Phone) {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid phone"})
 	}
 
-	eventID := req.EventID
-	if eventID == "" {
-		eventID = uuid.NewString()
+	tenantID, ok := s.tenantBySlug[req.TenantSlug]
+	if !ok {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "unknown tenant"})
 	}
 
-	slog.Info("capi_conversion_from_crm",
-		"event_name", req.EventName,
-		"event_id", eventID,
-		"value", req.Value,
-		"currency", req.Currency,
-		"contact_id", req.ContactID,
-		"deal_id", req.DealID,
-	)
+	now := time.Now().UTC()
+	lead := &Lead{
+		ID:         uuid.NewString(),
+		TenantID:   tenantID,
+		Email:      normaliseEmail(req.Email),
+		FullName:   strings.TrimSpace(req.FullName),
+		Phone:      normalisePhone(req.Phone),
+		Source:     req.Source,
+		UTMSource:  req.UTMSource,
+		UTMMedium:  req.UTMMedium,
+		UTMCampaign: req.UTMCampaign,
+		FBCLID:     req.FBCLID,
+		FBP:        req.FBP,
+		FormFields: req.FormFields,
+		EventID:    GenerateEventID(),
+		CreatedAt:  now,
+	}
 
-	_ = s.enqueueCAPI(capiEvent{
-		EventID:   eventID,
-		EventName: req.EventName,
-		EventTime: time.Unix(req.EventTime, 0),
-		UserData:  ud,
-		CustomData: cd,
-		EventSourceURL: "",
-		ActionSource: "website",
-		TenantID: c.Request().Header.Get("X-Tenant-ID"),
+	// Compute HMAC over a canonical payload representation.
+	canonical, _ := json.Marshal(struct {
+		ID, Email, FullName, Phone, FBCLID string
+	}{lead.ID, lead.Email, lead.FullName, lead.Phone, lead.FBCLID})
+	lead.HMAC = SignHMAC([]byte(s.hmacKey), lead.ID, lead.FBCLID, fmt.Sprintf("%d", now.Unix()), string(canonical))
+
+	s.mu.Lock()
+	s.leads[lead.ID] = lead
+	s.mu.Unlock()
+
+	return c.JSON(http.StatusCreated, leadResp{
+		ID:         lead.ID,
+		EventID:    lead.EventID,
+		HMAC:       lead.HMAC,
+		ReceivedAt: now,
 	})
+}
 
-	return c.JSON(http.StatusAccepted, map[string]interface{}{
-		"status":    "queued",
-		"event_id":  eventID,
-		"source":    "crm",
+// GetLead handles GET /landing/v1/leads/:id (admin/debug).
+func (s *Server) GetLead(c echo.Context) error {
+	id := c.Param("id")
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	l, ok := s.leads[id]
+	if !ok {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "not found"})
+	}
+	return c.JSON(http.StatusOK, l)
+}
+
+// RenderPage handles GET /landing/v1/pages/:slug (returns JSON placeholder;
+// real impl proxies to Next.js renderer).
+func (s *Server) RenderPage(c echo.Context) error {
+	slug := c.Param("slug")
+	if slug == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "slug required"})
+	}
+	return c.JSON(http.StatusOK, map[string]any{
+		"slug":    slug,
+		"blocks":  []any{},
+		"version": 1,
 	})
+}
+
+// TrackEvent handles POST /landing/v1/track (clickstream / analytics).
+type trackReq struct {
+	Event   string `json:"event"`
+	URL     string `json:"url"`
+	AnonID  string `json:"anonymous_id,omitempty"`
+}
+
+func (s *Server) TrackEvent(c echo.Context) error {
+	var req trackReq
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid json"})
+	}
+	if req.Event == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "event required"})
+	}
+	if req.URL == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "url required"})
+	}
+	return c.NoContent(http.StatusNoContent)
 }

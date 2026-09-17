@@ -1,209 +1,279 @@
-// Tests for meta-capi-service handler.
+// Unit tests for meta-capi-service.
 package handler
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestSetupCAPIRequest_JSON(t *testing.T) {
-	body := `{"tenant_id":"550e8400-e29b-41d4-a716-446655440000","pixel_id":"123","access_token":"secret","sample_rate":0.5}`
-	var req SetupCAPIRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if req.TenantID != "550e8400-e29b-41d4-a716-446655440000" {
-		t.Errorf("TenantID: got %s", req.TenantID)
-	}
-	if req.PixelID != "123" {
-		t.Errorf("PixelID: got %s", req.PixelID)
-	}
-	if req.AccessToken != "secret" {
-		t.Errorf("AccessToken: got %s", req.AccessToken)
-	}
-	if req.SampleRate != 0.5 {
-		t.Errorf("SampleRate: got %f", req.SampleRate)
-	}
-}
+var testSecret = []byte("rinco-meta-capi-secret-2026")
 
-func TestSetupCAPIRequest_Defaults(t *testing.T) {
-	body := `{"tenant_id":"550e8400-e29b-41d4-a716-446655440000","pixel_id":"123","access_token":"secret"}`
-	var req SetupCAPIRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if req.SampleRate != 0 {
-		t.Errorf("SampleRate default: want 0, got %f", req.SampleRate)
-	}
-	if req.EventTypes != nil {
-		t.Errorf("EventTypes default: want nil, got %v", req.EventTypes)
-	}
-}
-
-func TestSendEventRequest_JSON(t *testing.T) {
-	body := `{"event_name":"Lead","email":"test@example.com","order_value":99.99,"currency":"USD"}`
-	var req SendEventRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if req.EventName != "Lead" {
-		t.Errorf("EventName: got %s", req.EventName)
-	}
-	if req.Email != "test@example.com" {
-		t.Errorf("Email: got %s", req.Email)
-	}
-	if req.OrderValue != 99.99 {
-		t.Errorf("OrderValue: got %f", req.OrderValue)
-	}
-	if req.Currency != "USD" {
-		t.Errorf("Currency: got %s", req.Currency)
-	}
-}
-
-func TestSendEventHandler_MissingTenant(t *testing.T) {
+func newCtx(method, path, body string) (echo.Context, *httptest.ResponseRecorder) {
 	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/events", nil)
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	}
 	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+	return e.NewContext(req, rec), rec
+}
 
-	s := New(nil)
-	if err := s.SendEvent(c); err != nil {
-		t.Fatalf("handler returned error: %v", err)
+// signedPayload returns a payload + the matching HMAC for testing.
+func signedPayload(t *testing.T) (string, RINCOCAPIPayload) {
+	t.Helper()
+	p := RINCOCAPIPayload{
+		TenantID:  "tid",
+		LeadID:    "lid",
+		EventName: "Lead",
+		EventID:   "eid",
+		Timestamp: 1700000000,
+		Email:     "User@Example.COM",
+		Phone:     "+84 90 123 4567",
+		FBCLID:    "fb.1.123.456",
+		FBP:       "fbp.1.123.456",
 	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
+	canonical, _ := json.Marshal(struct {
+		LeadID, EventID, Email, Phone, FBCLID, FBP, EventName string
+		Timestamp                                              int64
+	}{p.LeadID, p.EventID, p.Email, p.Phone, p.FBCLID, p.FBP, p.EventName, p.Timestamp})
+	p.HMAC = SignHMAC(testSecret, p.LeadID, p.FBCLID, "1700000000", string(canonical))
+	body, _ := json.Marshal(p)
+	return string(body), p
+}
+
+// ============================================================================
+// Normalisation
+// ============================================================================
+
+func TestNormaliseEmail(t *testing.T) {
+	assert.Equal(t, "user@example.com", NormaliseEmail("  User@Example.COM  "))
+	assert.Equal(t, "a@b.co", NormaliseEmail("A@B.CO"))
+}
+
+func TestNormalisePhone_StripsFormatting(t *testing.T) {
+	assert.Equal(t, "84901234567", NormalisePhone("+84 90 123 4567"))
+	assert.Equal(t, "0901234567", NormalisePhone("(090) 123-4567"))
+	assert.Equal(t, "84901234567", NormalisePhone("+84-90-123-4567"))
+}
+
+func TestHashSHA256(t *testing.T) {
+	h := HashSHA256("test@example.com")
+	assert.Len(t, h, 64)
+	assert.Equal(t, HashSHA256("test@example.com"), h)
+}
+
+// ============================================================================
+// User data hashing
+// ============================================================================
+
+func TestHashUserData_AllFields(t *testing.T) {
+	ud := HashUserData("a@b.co", "+84 90 123 4567", "fb.1.x.y", "fbp.1.x.y")
+	assert.Equal(t, HashSHA256("a@b.co"), ud["em"])
+	assert.Equal(t, HashSHA256("84901234567"), ud["ph"])
+	assert.Equal(t, HashSHA256("fb.1.x.y"), ud["fbclid"])
+	assert.Equal(t, HashSHA256("fbp.1.x.y"), ud["fbp"])
+}
+
+func TestHashUserData_Empty(t *testing.T) {
+	ud := HashUserData("", "", "", "")
+	assert.NotEmpty(t, ud, "Meta requires at least one user_data field; we synthesise one")
+}
+
+func TestHashUserData_OnlyEmail(t *testing.T) {
+	ud := HashUserData("a@b.co", "", "", "")
+	assert.Contains(t, ud, "em")
+	assert.NotContains(t, ud, "ph")
+}
+
+// ============================================================================
+// HMAC verification
+// ============================================================================
+
+func TestVerifyHMAC_ValidSignature(t *testing.T) {
+	body, p := signedPayload(t)
+	_ = body
+	assert.True(t, VerifyHMAC(testSecret, p, p.HMAC))
+}
+
+func TestVerifyHMAC_TamperedSignature(t *testing.T) {
+	_, p := signedPayload(t)
+	p.HMAC = "deadbeef" + p.HMAC[8:]
+	assert.False(t, VerifyHMAC(testSecret, p, p.HMAC))
+}
+
+func TestVerifyHMAC_WrongSecret(t *testing.T) {
+	_, p := signedPayload(t)
+	assert.False(t, VerifyHMAC([]byte("wrong-secret"), p, p.HMAC))
+}
+
+func TestVerifyHMAC_TamperedPayload(t *testing.T) {
+	body, p := signedPayload(t)
+	_ = body
+	// Change email after signing
+	p.Email = "attacker@b.co"
+	assert.False(t, VerifyHMAC(testSecret, p, p.HMAC))
+}
+
+// ============================================================================
+// Event name validation
+// ============================================================================
+
+func TestValidEventName(t *testing.T) {
+	good := []string{"Lead", "Purchase", "InitiateCheckout", "Contact", "Custom"}
+	bad := []string{"", "click", "pageview", "submit-form"}
+	for _, e := range good {
+		t.Run("accept/"+e, func(t *testing.T) { assert.True(t, validEventName(e)) })
+	}
+	for _, e := range bad {
+		t.Run("reject/"+e, func(t *testing.T) { assert.False(t, validEventName(e)) })
 	}
 }
 
-func TestSendEventHandler_InvalidTenantUUID(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/events", bytes.NewReader([]byte(`{"event_name":"Lead"}`)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Tenant-ID", "not-a-uuid")
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+// ============================================================================
+// IngestEvent
+// ============================================================================
 
-	s := New(nil)
-	if err := s.SendEvent(c); err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
+func TestIngestEvent_HappyPath(t *testing.T) {
+	body, _ := signedPayload(t)
+	fp := &fakePublisher{}
+	s := NewServer(testSecret, "pixel-123", "access-tok", fp)
+
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body)
+	err := s.IngestEvent(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+	assert.Len(t, fp.events, 1, "publisher should receive one event")
+
+	got := fp.events[0]
+	assert.Equal(t, "pixel-123", got.PixelID)
+	assert.Equal(t, "access-tok", got.AccessToken)
+	assert.Len(t, got.Data, 1)
+	assert.Equal(t, "Lead", got.Data[0].EventName)
+	assert.Equal(t, "eid", got.Data[0].EventID)
+	assert.Contains(t, got.Data[0].UserData, "em")
 }
 
-func TestGetCAPIStatus_MissingTenant(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/status", nil)
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+func TestIngestEvent_HMACFailure(t *testing.T) {
+	body, p := signedPayload(t)
+	p.HMAC = "0" + strings.Repeat("0", 63)
+	body2, _ := json.Marshal(p)
 
-	s := New(nil)
-	if err := s.GetCAPIStatus(c); err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
+	fp := &fakePublisher{}
+	s := NewServer(testSecret, "pixel-1", "tok", fp)
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body2)
+	_ = s.IngestEvent(c)
+	assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	assert.Empty(t, fp.events, "publisher should not receive events with bad HMAC")
 }
 
-func TestGetCAPIStatus_InvalidTenant(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodGet, "/status", nil)
-	req.Header.Set("X-Tenant-ID", "bad-uuid")
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+func TestIngestEvent_InvalidEventName(t *testing.T) {
+	body, p := signedPayload(t)
+	p.EventName = "pageview"
+	canonical, _ := json.Marshal(struct {
+		LeadID, EventID, Email, Phone, FBCLID, FBP, EventName string
+		Timestamp                                              int64
+	}{p.LeadID, p.EventID, p.Email, p.Phone, p.FBCLID, p.FBP, p.EventName, p.Timestamp})
+	p.HMAC = SignHMAC(testSecret, p.LeadID, p.FBCLID, "1700000000", string(canonical))
+	body2, _ := json.Marshal(p)
 
-	s := New(nil)
-	if err := s.GetCAPIStatus(c); err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
+	fp := &fakePublisher{}
+	s := NewServer(testSecret, "pixel", "tok", fp)
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body2)
+	_ = s.IngestEvent(c)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestCRMBridgeRequest_JSON(t *testing.T) {
-	body := `{"crm_event_type":"deal_won","tenant_id":"550e8400-e29b-41d4-a716-446655440000","deal_value":500,"currency":"USD"}`
-	var req CRMBridgeRequest
-	if err := json.Unmarshal([]byte(body), &req); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if req.CRMEventType != "deal_won" {
-		t.Errorf("CRMEventType: got %s", req.CRMEventType)
-	}
-	if req.DealValue != 500 {
-		t.Errorf("DealValue: got %f", req.DealValue)
-	}
-	if req.Currency != "USD" {
-		t.Errorf("Currency: got %s", req.Currency)
-	}
+func TestIngestEvent_MissingTenant(t *testing.T) {
+	body, p := signedPayload(t)
+	p.TenantID = ""
+	body2, _ := json.Marshal(p)
+	s := NewServer(testSecret, "pixel", "tok", &fakePublisher{})
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body2)
+	_ = s.IngestEvent(c)
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
-func TestCRMBridge_MissingTenant(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/bridge", bytes.NewReader([]byte(`{}`)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+func TestIngestEvent_MetaAPIFailureReturns502(t *testing.T) {
+	body, _ := signedPayload(t)
+	fp := &fakePublisher{failN: 1}
+	s := NewServer(testSecret, "pixel", "tok", fp)
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body)
+	_ = s.IngestEvent(c)
+	assert.Equal(t, http.StatusBadGateway, rec.Code)
 
-	s := New(nil)
-	if err := s.CRMBridge(c); err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
+	// And delivery status should reflect the failure.
+	id := "eid"
+	c2, rec2 := newCtx(http.MethodGet, "/meta-capi/v1/events/"+id, "")
+	c2.SetPath("/meta-capi/v1/events/:event_id")
+	c2.SetParamNames("event_id")
+	c2.SetParamValues(id)
+	_ = s.DeliveryStatus(c2)
+	var dr DeliveryRecord
+	_ = json.Unmarshal(rec2.Body.Bytes(), &dr)
+	assert.Equal(t, "failed", dr.Status)
 }
 
-func TestCRMBridge_InvalidTenant(t *testing.T) {
-	e := echo.New()
-	req := httptest.NewRequest(http.MethodPost, "/bridge", bytes.NewReader([]byte(`{"crm_event_type":"deal_won","tenant_id":"not-uuid"}`)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	c := e.NewContext(req, rec)
+func TestIngestEvent_DeliveryStatusTracking(t *testing.T) {
+	body, p := signedPayload(t)
+	fp := &fakePublisher{}
+	s := NewServer(testSecret, "pixel", "tok", fp)
+	c, _ := newCtx(http.MethodPost, "/meta-capi/v1/events", body)
+	_ = s.IngestEvent(c)
 
-	s := New(nil)
-	if err := s.CRMBridge(c); err != nil {
-		t.Fatalf("handler returned error: %v", err)
-	}
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
-	}
+	c2, rec := newCtx(http.MethodGet, "/meta-capi/v1/events/"+p.EventID, "")
+	c2.SetPath("/meta-capi/v1/events/:event_id")
+	c2.SetParamNames("event_id")
+	c2.SetParamValues(p.EventID)
+	_ = s.DeliveryStatus(c2)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var dr DeliveryRecord
+	_ = json.Unmarshal(rec.Body.Bytes(), &dr)
+	assert.Equal(t, "sent", dr.Status)
+	assert.Equal(t, 1, dr.Attempts)
 }
 
-func TestMapCRMEvents(t *testing.T) {
-	tests := []struct {
-		crmEvent   string
-		wantCAPI   string
-	}{
-		{"deal_won", "Purchase"},
-		{"deal_closed_won", "Purchase"},
-		{"lead_created", "Lead"},
-		{"lead_new", "Lead"},
-		{"contact", "Contact"},
-		{"contact_created", "Contact"},
-		{"page_view", "ViewContent"},
-		{"landing_view", "ViewContent"},
-		{"form_submit", "CompleteRegistration"},
-		{"form_filled", "CompleteRegistration"},
-		{"add_to_cart", "AddToCart"},
-		{"checkout", "InitiateCheckout"},
-		{"subscribe", "Subscribe"},
-		{"unknown_event", "unknown_event"},
-		{"", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.crmEvent, func(t *testing.T) {
-			got := mapCRMEvents(tt.crmEvent)
-			if got != tt.wantCAPI {
-				t.Errorf("mapCRMEvents(%q): want %q, got %q", tt.crmEvent, tt.wantCAPI, got)
-			}
-		})
-	}
+func TestIngestEvent_EmailIsNormalisedBeforeHashing(t *testing.T) {
+	body, p := signedPayload(t)
+	p.Email = "  USER@EXAMPLE.COM  "
+	body2, _ := json.Marshal(p)
+	// Re-sign with the new payload
+	canonical, _ := json.Marshal(struct {
+		LeadID, EventID, Email, Phone, FBCLID, FBP, EventName string
+		Timestamp                                              int64
+	}{p.LeadID, p.EventID, p.Email, p.Phone, p.FBCLID, p.FBP, p.EventName, p.Timestamp})
+	p.HMAC = SignHMAC(testSecret, p.LeadID, p.FBCLID, "1700000000", string(canonical))
+	body3, _ := json.Marshal(p)
+
+	fp := &fakePublisher{}
+	s := NewServer(testSecret, "p", "t", fp)
+	c, _ := newCtx(http.MethodPost, "/meta-capi/v1/events", body3)
+	_ = s.IngestEvent(c)
+
+	_ = body2
+	assert.Len(t, fp.events, 1)
+	// The hashed email field should match the normalised form.
+	want := HashSHA256("user@example.com")
+	assert.Equal(t, want, fp.events[0].Data[0].UserData["em"])
+}
+
+// ============================================================================
+// Health
+// ============================================================================
+
+func TestHealth(t *testing.T) {
+	s := NewServer(testSecret, "p", "t", &fakePublisher{})
+	c, rec := newCtx(http.MethodGet, "/healthz", "")
+	err := s.Health(c)
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &body)
+	assert.Equal(t, "ok", body["status"])
+	assert.Equal(t, "meta-capi", body["service"])
 }

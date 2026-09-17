@@ -28,10 +28,10 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 	"go.opentelemetry.io/otel"
 
-	"github.com/rinco/services/landing-service/internal/handler"
-	"github.com/rinco/services/landing-service/internal/middleware"
-	"github.com/rinco/services/landing-service/internal/platform"
-	"github.com/rinco/services/landing-service/internal/storage"
+	"github.com/itdoanh/rinco/services/landing-service/internal/handler"
+	"github.com/itdoanh/rinco/services/landing-service/internal/middleware"
+	"github.com/itdoanh/rinco/services/landing-service/internal/platform"
+	"github.com/itdoanh/rinco/services/landing-service/internal/storage"
 )
 
 const serviceName = "landing-service"
@@ -96,8 +96,7 @@ func main() {
 	if err != nil { logger.Warn("tiered storage disabled", slog.String("error", err.Error())) }
 	if store != nil { _ = store.EnsureBuckets(rootCtx) }
 
-	srv := handler.New(pool, mongoClient, store, cfg.FBPixelID, cfg.FBAppSecret, cfg.TrackingSalt)
-	_ = srv.MongoInit(rootCtx)
+	srv := handler.New(pool, mongoClient, store, cfg.FBPixelID, cfg.TrackingSalt)
 
 	e := newEcho(cfg, srv, pool, valkey)
 	go func() { if err := e.Start(cfg.HTTPAddr); err != nil && !errors.Is(err, http.ErrServerClosed) { logger.Error("http server", slog.String("error", err.Error())) } }()

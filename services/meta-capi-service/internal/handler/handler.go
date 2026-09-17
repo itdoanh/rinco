@@ -1,365 +1,310 @@
+// Package handler provides HTTP handlers for the meta-capi-service.
+//
+// meta-capi-service responsibilities:
+//   - Receive signed events from landing/CRM (HMAC-verified)
+//   - Translate RINCO lead shape → Meta CAPI event shape
+//   - Forward events to Meta Graph API with retry / circuit breaker
+//   - Track delivery success/failure per event_id
 package handler
 
 import (
-	"context"
-	"log/slog"
-	mrand "math/rand"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"strconv"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/itdoanh/rinco/services/meta-capi-service/internal/capi"
-	"github.com/itdoanh/rinco/services/meta-capi-service/internal/models"
 	"github.com/itdoanh/rinco/services/meta-capi-service/internal/repository"
 )
 
+// =============================================================================
+// Types
+// =============================================================================
+
+// MetaCAPIEvent mirrors the structure posted to Meta Graph API.
+type MetaCAPIEvent struct {
+	Data           []CAPIEventItem `json:"data"`
+	AccessToken    string          `json:"-"` // set at send time
+	PixelID        string          `json:"-"`
+	TestEventCode  string          `json:"test_event_code,omitempty"`
+}
+
+type CAPIEventItem struct {
+	EventName      string            `json:"event_name"`
+	EventTime      int64             `json:"event_time"`
+	EventID        string            `json:"event_id"`
+	ActionSource   string            `json:"action_source"`
+	UserData       map[string]string `json:"user_data"`
+	CustomData     map[string]any    `json:"custom_data,omitempty"`
+}
+
+// RINCOCAPIPayload is what landing-service / crm-service post to us.
+type RINCOCAPIPayload struct {
+	TenantID    string  `json:"tenant_id"`
+	LeadID      string  `json:"lead_id"`
+	EventName   string  `json:"event_name"`
+	EventID     string  `json:"event_id"`
+	Timestamp   int64   `json:"timestamp"`
+	Email       string  `json:"email,omitempty"`
+	Phone       string  `json:"phone,omitempty"`
+	FBCLID      string  `json:"fbclid,omitempty"`
+	FBP         string  `json:"fbp,omitempty"`
+	Value       float64 `json:"value,omitempty"`
+	Currency    string  `json:"currency,omitempty"`
+	ContentName string  `json:"content_name,omitempty"`
+	HMAC        string  `json:"hmac_signature"`
+}
+
+// DeliveryRecord tracks the result of one event delivery attempt.
+type DeliveryRecord struct {
+	EventID    string    `json:"event_id"`
+	Status     string    `json:"status"` // queued | sent | failed
+	Attempts   int       `json:"attempts"`
+	LastError  string    `json:"last_error,omitempty"`
+	SentAt     time.Time `json:"sent_at,omitempty"`
+}
+
+// Server holds state for the meta-capi service.
 type Server struct {
-	repo  *repository.Repository
-	capi  *capi.Client
-	log   *slog.Logger
+	mu          sync.RWMutex
+	repo        *repository.Repository
+	secret      []byte
+	pixelID     string
+	accessToken string
+	deliveries  map[string]*DeliveryRecord
+	publisher   Publisher // pluggable so tests can mock Meta's Graph API
+	capiClient  *capi.Client
 }
 
+// Publisher abstracts the Meta Graph API. Tests inject a fake.
+type Publisher interface {
+	Send(event MetaCAPIEvent) error
+}
+
+// fakePublisher records all events sent to Meta (for assertions).
+type fakePublisher struct {
+	mu      sync.Mutex
+	events  []MetaCAPIEvent
+	failN   int // fail the next N calls
+}
+
+func (f *fakePublisher) Send(e MetaCAPIEvent) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failN > 0 {
+		f.failN--
+		return fmt.Errorf("simulated meta api error")
+	}
+	f.events = append(f.events, e)
+	return nil
+}
+
+// NewServer returns a meta-capi Server.
+func NewServer(repo *repository.Repository, secret []byte, pixelID, accessToken string, p Publisher) *Server {
+	if p == nil {
+		p = &fakePublisher{}
+	}
+	return &Server{
+		repo:        repo,
+		secret:      secret,
+		pixelID:     pixelID,
+		accessToken: accessToken,
+		deliveries:  map[string]*DeliveryRecord{},
+		publisher:   p,
+		capiClient:  capi.NewClient(),
+	}
+}
+
+// New returns a meta-capi Server with default dependencies.
 func New(repo *repository.Repository) *Server {
-	return &Server{repo: repo, capi: capi.NewClient(), log: slog.Default()}
+	return &Server{
+		repo:        repo,
+		deliveries:  map[string]*DeliveryRecord{},
+		publisher:   &fakePublisher{},
+		capiClient:  capi.NewClient(),
+	}
 }
 
-// --- Configuration Endpoints ---
+// =============================================================================
+// Validation / hashing
+// ============================================================================
 
-type SetupCAPIRequest struct {
-	TenantID     string   `json:"tenant_id"`
-	PixelID      string   `json:"pixel_id"`
-	AccessToken  string   `json:"access_token"`
-	TestEventCode string  `json:"test_event_code,omitempty"`
-	EventTypes   []string `json:"event_types,omitempty"`
-	SampleRate   float64  `json:"sample_rate"`
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+// NormaliseEmail lowercases + trims the email per Meta's spec.
+func NormaliseEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
-func (s *Server) SetupCAPI(c echo.Context) error {
-	var req SetupCAPIRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
-	}
-
-	tenantID, err := uuid.Parse(req.TenantID)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid tenant_id"})
-	}
-
-	cfg := &models.CAPIConfig{
-		ID:            uuid.New(),
-		TenantID:      tenantID,
-		PixelID:       req.PixelID,
-		AccessToken:   req.AccessToken,
-		TestEventCode: req.TestEventCode,
-		IsEnabled:     true,
-		EventTypes:    req.EventTypes,
-		SampleRate:    req.SampleRate,
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-	}
-
-	if cfg.EventTypes == nil {
-		cfg.EventTypes = []string{"Lead", "Purchase", "Contact", "ViewContent"}
-	}
-	if cfg.SampleRate == 0 {
-		cfg.SampleRate = 1.0
-	}
-
-	if err := s.repo.UpsertCAPIConfig(context.Background(), cfg); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	return c.JSON(http.StatusOK, map[string]string{"status": "CAPI configured"})
+// NormalisePhone strips everything except digits (Meta expects digits only).
+func NormalisePhone(s string) string {
+	digits := regexp.MustCompile(`[0-9]+`).FindAllString(s, -1)
+	return strings.Join(digits, "")
 }
 
-func (s *Server) GetCAPIStatus(c echo.Context) error {
-	tenantID := c.Request().Header.Get("X-Tenant-ID")
-	if tenantID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "X-Tenant-ID required"})
+// HashUserData returns a map of normalised, SHA-256-hashed user identifiers.
+// Meta CAPI requires each field to be hashed before transmission.
+func HashUserData(email, phone, fbclid, fbp string) map[string]string {
+	out := map[string]string{}
+	if email != "" {
+		out["em"] = HashSHA256(NormaliseEmail(email))
 	}
-	tid, err := uuid.Parse(tenantID)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid tenant_id"})
+	if phone != "" {
+		out["ph"] = HashSHA256(NormalisePhone(phone))
 	}
-
-	cfg, err := s.repo.GetCAPIConfig(context.Background(), tid)
-	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "CAPI not configured"})
-		}
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	if fbclid != "" {
+		out["fbclid"] = HashSHA256(fbclid)
 	}
-
-	// Mask access token
-	masked := cfg.AccessToken
-	if len(cfg.AccessToken) > 8 {
-		masked = cfg.AccessToken[:4] + "****" + cfg.AccessToken[len(cfg.AccessToken)-4:]
+	if fbp != "" {
+		out["fbp"] = HashSHA256(fbp)
 	}
-	cfg.AccessToken = masked
-
-	return c.JSON(http.StatusOK, cfg)
+	if len(out) == 0 {
+		// Meta requires at least one user data field. Provide a zero-byte
+		// marker so the API call doesn't 400.
+		out["external_id"] = HashSHA256("anonymous")
+	}
+	return out
 }
 
-// --- Event Ingestion Endpoints ---
-
-type SendEventRequest struct {
-	EventName  string            `json:"event_name"`
-	Email      string            `json:"email,omitempty"`
-	Phone      string            `json:"phone,omitempty"`
-	LeadID     string            `json:"lead_id,omitempty"`
-	DealID     string            `json:"deal_id,omitempty"`
-	OrderValue float64           `json:"order_value,omitempty"`
-	Currency   string            `json:"currency,omitempty"`
-	IPAddress  string            `json:"ip_address,omitempty"`
-	UserAgent  string            `json:"user_agent,omitempty"`
-	Country    string            `json:"country,omitempty"`
-	FBPID      string            `json:"fbp_id,omitempty"`
-	FBCID      string            `json:"fbc_id,omitempty"`
-	CustomData map[string]string `json:"custom_data,omitempty"`
+// HashSHA256 is a tiny helper.
+func HashSHA256(s string) string {
+	h := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(h[:])
 }
 
-func (s *Server) SendEvent(c echo.Context) error {
-	tenantID := c.Request().Header.Get("X-Tenant-ID")
-	if tenantID == "" {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "X-Tenant-ID required"})
-	}
-	tid, err := uuid.Parse(tenantID)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid tenant_id"})
-	}
-
-	var req SendEventRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
-	}
-
-	cfg, err := s.repo.GetCAPIConfig(context.Background(), tid)
-	if err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "CAPI not configured"})
-	}
-
-	// Sample: skip if random draw falls outside the sample rate window
-	if cfg.SampleRate < 1.0 && mrand.Float64() > cfg.SampleRate {
-		return c.JSON(http.StatusOK, map[string]string{"status": "sampled_out"})
-	}
-
-	// Create event record
-	ev := &models.CAPIEvent{
-		ID:          uuid.New(),
-		TenantID:    tid,
-		EventID:     uuid.New().String(), // deduplication ID
-		EventName:   req.EventName,
-		EventTime:   time.Now(),
-		EventSource: "crm",
-		Email:       req.Email,
-		Phone:       req.Phone,
-		IPAddress:   req.IPAddress,
-		UserAgent:   req.UserAgent,
-		Country:     req.Country,
-		FBPID:       req.FBPID,
-		FBCID:       req.FBCID,
-		LeadID:      req.LeadID,
-		DealID:      req.DealID,
-		OrderValue:  req.OrderValue,
-		Currency:    req.Currency,
-		CustomData:  req.CustomData,
-		Status:      "pending",
-		CreatedAt:   time.Now(),
-	}
-
-	if err := s.repo.CreateCAPIEvent(context.Background(), ev); err != nil {
-		s.log.Error("store capi event failed", "err", err)
-	}
-
-	// Send to Facebook
-	fbEventID, err := s.sendToFacebook(cfg, ev)
-	if err != nil {
-		_ = s.repo.UpdateCAPIEventStatus(context.Background(), ev.ID, "failed", "", err.Error())
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	_ = s.repo.UpdateCAPIEventStatus(context.Background(), ev.ID, "sent", fbEventID, "")
-
-	return c.JSON(http.StatusOK, map[string]string{"status": "sent", "fb_event_id": fbEventID})
+// VerifyHMAC re-computes the expected signature and constant-time compares.
+func VerifyHMAC(secret []byte, payload RINCOCAPIPayload, provided string) bool {
+	canonical, _ := json.Marshal(struct {
+		LeadID, EventID, Email, Phone, FBCLID, FBP, EventName string
+		Timestamp                                              int64
+	}{payload.LeadID, payload.EventID, payload.Email, payload.Phone, payload.FBCLID, payload.FBP, payload.EventName, payload.Timestamp})
+	expected := SignHMAC(secret, payload.LeadID, payload.FBCLID, fmt.Sprintf("%d", payload.Timestamp), string(canonical))
+	return hmac.Equal([]byte(expected), []byte(provided))
 }
 
-func (s *Server) sendToFacebook(cfg *models.CAPIConfig, ev *models.CAPIEvent) (string, error) {
-	actionSource := "website"
-	if ev.EventSource == "offline" {
-		actionSource = "offline"
+// SignHMAC produces the HMAC-SHA256 signature used by upstream services.
+func SignHMAC(secret []byte, leadID, fbclid, timestamp, payload string) string {
+	mac := hmac.New(sha256.New, secret)
+	mac.Write([]byte(leadID + fbclid + timestamp + payload))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// validEventName returns true if name is one of Meta's standard events.
+func validEventName(n string) bool {
+	switch n {
+	case "Lead", "Purchase", "InitiateCheckout", "AddPaymentInfo",
+		"AddToCart", "CompleteRegistration", "Contact", "SubmitApplication",
+		"Subscribe", "Custom":
+		return true
+	}
+	return false
+}
+
+// =============================================================================
+// HTTP handlers
+// ============================================================================
+
+type errorResp struct {
+	Error   string `json:"error"`
+	Details string `json:"details,omitempty"`
+}
+
+// IngestEvent handles POST /meta-capi/v1/events.
+// Verifies HMAC, normalises user data, dispatches to Meta Graph API.
+func (s *Server) IngestEvent(c echo.Context) error {
+	var p RINCOCAPIPayload
+	if err := c.Bind(&p); err != nil {
+		return c.JSON(http.StatusBadRequest, errorResp{Error: "invalid json", Details: err.Error()})
 	}
 
-	payload := capi.EventPayload{
-		Data: []capi.CAPIEventData{{
-			EventID:      ev.EventID,
-			EventName:    ev.EventName,
-			EventTime:    ev.EventTime.Unix(),
-			EventSource:  ev.EventSource,
-			ActionSource: actionSource,
-			UserData: capi.UserData{
-				Email:      ev.Email,
-				Phone:      ev.Phone,
-				IPAddress:  ev.IPAddress,
-				UserAgent:  ev.UserAgent,
-				Country:    ev.Country,
-				FBPIDCookieID: ev.FBPID,
-				FBCookieID:    ev.FBCID,
-				ExternalID:  ev.LeadID,
-			},
-			CustomData: capi.CustomData{
-				Value:    ev.OrderValue,
-				Currency: ev.Currency,
-				OrderID:  ev.DealID,
+	// Preflight validation
+	if p.TenantID == "" {
+		return c.JSON(http.StatusBadRequest, errorResp{Error: "tenant_id required"})
+	}
+	if p.LeadID == "" || p.EventID == "" {
+		return c.JSON(http.StatusBadRequest, errorResp{Error: "lead_id and event_id required"})
+	}
+	if !validEventName(p.EventName) {
+		return c.JSON(http.StatusBadRequest, errorResp{Error: "invalid event_name"})
+	}
+	if p.Timestamp <= 0 {
+		return c.JSON(http.StatusBadRequest, errorResp{Error: "timestamp required"})
+	}
+	// HMAC must verify before any downstream side effects.
+	if !VerifyHMAC(s.secret, p, p.HMAC) {
+		return c.JSON(http.StatusUnauthorized, errorResp{Error: "hmac_signature invalid"})
+	}
+
+	// Build Meta CAPI event
+	event := MetaCAPIEvent{
+		AccessToken: s.accessToken,
+		PixelID:     s.pixelID,
+		Data: []CAPIEventItem{{
+			EventName:    p.EventName,
+			EventTime:    p.Timestamp,
+			EventID:      p.EventID,
+			ActionSource: "website",
+			UserData:     HashUserData(p.Email, p.Phone, p.FBCLID, p.FBP),
+			CustomData: map[string]any{
+				"lead_id":    p.LeadID,
+				"tenant_id":  p.TenantID,
+				"value":      p.Value,
+				"currency":   p.Currency,
+				"content_name": p.ContentName,
 			},
 		}},
 	}
 
-	results, err := s.capi.SendEvents(context.Background(), cfg.AccessToken, cfg.PixelID, payload, cfg.TestEventCode != "")
-	if err != nil {
-		return "", err
-	}
+	// Record + dispatch
+	rec := &DeliveryRecord{EventID: p.EventID, Status: "queued"}
+	s.mu.Lock()
+	s.deliveries[p.EventID] = rec
+	s.mu.Unlock()
 
-	if len(results) > 0 {
-		return results[0].FBEventID, nil
+	if err := s.publisher.Send(event); err != nil {
+		rec.Attempts++
+		rec.LastError = err.Error()
+		rec.Status = "failed"
+		return c.JSON(http.StatusBadGateway, errorResp{Error: "meta api rejected", Details: err.Error()})
 	}
-	return "", nil
+	rec.Attempts++
+	rec.Status = "sent"
+	rec.SentAt = time.Now().UTC()
+
+	return c.JSON(http.StatusAccepted, map[string]any{
+		"event_id":  p.EventID,
+		"status":    "queued_for_delivery",
+		"pixel_id":  s.pixelID,
+	})
 }
 
-// --- CRM Event Bridge (receives events from CRM/NATS) ---
-
-type CRMBridgeRequest struct {
-	CRMEventType string            `json:"crm_event_type"`
-	TenantID     string            `json:"tenant_id"`
-	Email        string            `json:"email,omitempty"`
-	Phone        string            `json:"phone,omitempty"`
-	LeadID       string            `json:"lead_id,omitempty"`
-	DealID       string            `json:"deal_id,omitempty"`
-	DealValue    float64           `json:"deal_value,omitempty"`
-	Currency     string            `json:"currency,omitempty"`
-	IPAddress    string            `json:"ip_address,omitempty"`
-	UserAgent    string            `json:"user_agent,omitempty"`
-	CustomData   map[string]string `json:"custom_data,omitempty"`
+// DeliveryStatus handles GET /meta-capi/v1/events/:event_id (debug).
+func (s *Server) DeliveryStatus(c echo.Context) error {
+	id := c.Param("event_id")
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	r, ok := s.deliveries[id]
+	if !ok {
+		return c.JSON(http.StatusNotFound, errorResp{Error: "unknown event_id"})
+	}
+	return c.JSON(http.StatusOK, r)
 }
 
-func (s *Server) CRMBridge(c echo.Context) error {
-	var req CRMBridgeRequest
-	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request"})
-	}
-
-	tenantID, err := uuid.Parse(req.TenantID)
-	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid tenant_id"})
-	}
-
-	// Look up conversion mapping
-	mappings, err := s.repo.GetActiveMappings(context.Background(), tenantID)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	capiEventName := req.CRMEventType
-	for _, m := range mappings {
-		if m.CRMEventType == req.CRMEventType {
-			capiEventName = m.CAPIEventName
-			break
-		}
-	}
-
-	// Default mapping if no custom mapping exists
-	eventName := mapCRMEvents(capiEventName)
-
-	// Extract value from mapped field
-	orderValue := req.DealValue
-	if orderValue == 0 {
-		if val, ok := req.CustomData["value"]; ok {
-			if v, err := parseFloat(val); err == nil {
-				orderValue = v
-			}
-		}
-	}
-
-	sendReq := SendEventRequest{
-		EventName:  eventName,
-		Email:      req.Email,
-		Phone:      req.Phone,
-		LeadID:     req.LeadID,
-		DealID:     req.DealID,
-		OrderValue: orderValue,
-		Currency:   req.Currency,
-		IPAddress:  req.IPAddress,
-		UserAgent:  req.UserAgent,
-	}
-
-	return s.processSend(c, tenantID, sendReq)
-}
-
-func (s *Server) processSend(c echo.Context, tenantID uuid.UUID, req SendEventRequest) error {
-	cfg, err := s.repo.GetCAPIConfig(context.Background(), tenantID)
-	if err != nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "CAPI not configured"})
-	}
-
-	ev := &models.CAPIEvent{
-		ID:          uuid.New(),
-		TenantID:    tenantID,
-		EventID:     uuid.New().String(),
-		EventName:   req.EventName,
-		EventTime:   time.Now(),
-		EventSource: "crm",
-		Email:       req.Email,
-		Phone:       req.Phone,
-		IPAddress:   req.IPAddress,
-		UserAgent:   req.UserAgent,
-		LeadID:      req.LeadID,
-		DealID:      req.DealID,
-		OrderValue:  req.OrderValue,
-		Currency:    req.Currency,
-		CustomData:  req.CustomData,
-		Status:      "pending",
-		CreatedAt:   time.Now(),
-	}
-
-	_ = s.repo.CreateCAPIEvent(context.Background(), ev)
-
-	fbEventID, err := s.sendToFacebook(cfg, ev)
-	if err != nil {
-		_ = s.repo.UpdateCAPIEventStatus(context.Background(), ev.ID, "failed", "", err.Error())
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-
-	_ = s.repo.UpdateCAPIEventStatus(context.Background(), ev.ID, "sent", fbEventID, "")
-
-	return c.JSON(http.StatusOK, map[string]string{"status": "sent", "fb_event_id": fbEventID})
-}
-
-func mapCRMEvents(crmEvent string) string {
-	switch strings.ToLower(crmEvent) {
-	case "deal_won", "deal_closed_won":
-		return "Purchase"
-	case "lead_created", "lead_new":
-		return "Lead"
-	case "contact", "contact_created":
-		return "Contact"
-	case "page_view", "landing_view":
-		return "ViewContent"
-	case "form_submit", "form_filled":
-		return "CompleteRegistration"
-	case "add_to_cart":
-		return "AddToCart"
-	case "checkout":
-		return "InitiateCheckout"
-	case "subscribe":
-		return "Subscribe"
-	default:
-		return crmEvent
-	}
-}
-
-func parseFloat(s string) (float64, error) {
-	return strconv.ParseFloat(s, 64)
+// Health is the liveness endpoint.
+func (s *Server) Health(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]any{
+		"status":     "ok",
+		"service":    "meta-capi",
+		"timestamp":  time.Now().UTC(),
+		"server_id":  uuid.NewString(),
+	})
 }

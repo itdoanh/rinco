@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/rinco/services/landing-service/internal/platform"
+	"github.com/itdoanh/rinco/services/landing-service/internal/platform"
 )
 
 func TestLoadConfig_Defaults(t *testing.T) {
