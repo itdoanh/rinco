@@ -31,6 +31,10 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan manager."""
     logger.info("stt_service_starting", version=__version__)
+    # Inject mock transcripts / languages if seeding is enabled.
+    from app.seed import initialise_seed_data
+
+    initialise_seed_data()
     yield
     logger.info("stt_service_shutting_down")
 

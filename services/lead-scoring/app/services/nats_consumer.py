@@ -107,12 +107,11 @@ async def _run_scoring(features: "LeadFeatures", lead_id: str | None = None,
 
 def warm_global_model() -> None:
     """Ensure the global fallback model is initialised at startup."""
-    from app.services.inference import GLOBAL_MODEL, _initialise_default_model, load_model
+    import app.services.inference as _inference
 
-    global GLOBAL_MODEL
-    if GLOBAL_MODEL is None:
-        GLOBAL_MODEL = _initialise_default_model()
-    _ = load_model
+    if _inference.GLOBAL_MODEL is None:
+        _inference.GLOBAL_MODEL = _inference._initialise_default_model()
+    _ = _inference.load_model
 
 
 __all__ = ["nats_consumer", "warm_global_model"]

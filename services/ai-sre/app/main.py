@@ -34,6 +34,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     t0 = time.monotonic()
     logger.info("ai_sre_starting", version="2.0.0")
     # Warm up: check connectivity to dependent services could be added here
+    # Inject mock incidents so the service responds in dev/offline mode.
+    from app.seed import initialise_seed_data
+
+    initialise_seed_data()
     elapsed = time.monotonic() - t0
     logger.info("ai_sre_ready", startup_ms=round(elapsed * 1000))
     yield

@@ -22,6 +22,10 @@ async def lifespan(app: FastAPI):
     load_embedder()
     load_reranker()
     get_client()  # eagerly attempt connection
+    # Inject mock collections/docs if seeding is enabled.
+    from app.seed import initialise_seed_data
+
+    initialise_seed_data()
     log.info("rag_chatbot_started", version="2.0.0")
     yield
 

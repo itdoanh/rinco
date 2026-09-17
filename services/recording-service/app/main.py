@@ -19,6 +19,10 @@ logger = logging.getLogger("recording-service")
 def create_app() -> FastAPI:
     storage = Storage()
     service = RecordingService(storage=storage)
+    # Inject mock recordings for dev/offline mode.
+    from .seed import seed_recordings
+
+    seed_recordings(service)
 
     app = FastAPI(
         title="RINCO Recording Service",

@@ -17,8 +17,10 @@ from app.api.extras import router as extras_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.tracing import configure_tracing, instrument_fastapi
-from app.services.inference import GLOBAL_MODEL, _initialise_default_model
+from app.services.inference import _initialise_default_model
 from app.services.nats_consumer import nats_consumer, warm_global_model
+
+import app.services.inference as _inf
 
 log = get_logger("lead-scoring.main")
 
@@ -29,6 +31,10 @@ async def lifespan(app: FastAPI):
     configure_logging(settings.log_level, settings.service_name)
     warm_global_model()
     configure_tracing(settings.service_name)
+    # Inject mock leads + demo-tenant model when seeding is enabled.
+    from app.seed import initialise_seed_data
+
+    initialise_seed_data()
 
     task: asyncio.Task[Any] | None = None
     if settings.nats_url:
@@ -37,7 +43,7 @@ async def lifespan(app: FastAPI):
     log.info(
         "lead_scoring_started",
         version=settings.version,
-        global_model=GLOBAL_MODEL is not None,
+        global_model=_inf.GLOBAL_MODEL is not None,
     )
     try:
         yield
@@ -69,13 +75,21 @@ def create_app() -> FastAPI:
 
     @app.get("/")
     async def root():
-        from app.services.inference import TENANT_MODELS
-
         return {
             "service": "lead-scoring",
             "version": settings.version,
-            "models_loaded": list(TENANT_MODELS.keys()),
-            "global_model": GLOBAL_MODEL is not None,
+            "models_loaded": list(_inf.TENANT_MODELS.keys()),
+            "global_model": _inf.GLOBAL_MODEL is not None,
+        }
+
+    @app.get("/health")
+    async def health():
+        """Liveness probe (returns 200 even before model is ready)."""
+        return {
+            "status": "ok",
+            "service": "lead-scoring",
+            "version": settings.version,
+            "models_loaded": list(_inf.TENANT_MODELS.keys()),
         }
 
     @app.exception_handler(Exception)

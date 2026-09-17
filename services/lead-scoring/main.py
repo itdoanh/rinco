@@ -20,12 +20,12 @@ from app.main import app, create_app
 from app.schemas.lead import LeadFeatures
 from app.services.features import featurize as _featurize
 from app.services.inference import (
-    GLOBAL_MODEL,
     load_model,
     predict_score,
     shap_top_k,
     tier_from_score,
 )
+import app.services.inference as _inf
 
 # Backwards-compatible band logic used by the original test suite.
 # Different thresholds than `tier_from_score` for legacy callers.
@@ -69,8 +69,8 @@ async def _legacy_health() -> JSONResponse:
         {
             "status": "ok",
             "service": "lead-scoring",
-            "models_loaded": [],
-            "global_model": GLOBAL_MODEL is not None,
+            "models_loaded": list(_inf.TENANT_MODELS.keys()),
+            "global_model": _inf.GLOBAL_MODEL is not None,
         }
     )
 
