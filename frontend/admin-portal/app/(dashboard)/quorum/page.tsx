@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,39 +16,27 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Shield, Check, Clock, AlertTriangle, Plus, Timer } from "lucide-react";
-import { mockQuorumRequests, type MockQuorumRequest } from "@/lib/mock-data";
+import { LoadingSkeleton, EmptyState, ErrorBoundary } from "@rinco/ui";
+import {
+  Shield,
+  Check,
+  Clock,
+  AlertTriangle,
+  Plus,
+  Timer,
+} from "lucide-react";
+import { adminApi, type QuorumRequest } from "@/lib/admin-api";
 
-const statusMeta: Record<MockQuorumRequest["status"], {
+const statusMeta: Record<QuorumRequest["status"], {
   icon: typeof Shield;
   color: string;
   bg: string;
   label: string;
 }> = {
-  pending: {
-    icon: Clock,
-    color: "text-amber-700",
-    bg: "bg-amber-50 border-amber-200",
-    label: "PENDING",
-  },
-  approved: {
-    icon: Check,
-    color: "text-emerald-700",
-    bg: "bg-emerald-50 border-emerald-200",
-    label: "APPROVED",
-  },
-  rejected: {
-    icon: AlertTriangle,
-    color: "text-red-700",
-    bg: "bg-red-50 border-red-200",
-    label: "REJECTED",
-  },
-  expired: {
-    icon: Clock,
-    color: "text-gray-600",
-    bg: "bg-gray-50 border-gray-200",
-    label: "EXPIRED",
-  },
+  pending: { icon: Clock, color: "text-amber-700", bg: "bg-amber-50 border-amber-200", label: "PENDING" },
+  approved: { icon: Check, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", label: "APPROVED" },
+  rejected: { icon: AlertTriangle, color: "text-red-700", bg: "bg-red-50 border-red-200", label: "REJECTED" },
+  expired: { icon: Clock, color: "text-gray-600", bg: "bg-gray-50 border-gray-200", label: "EXPIRED" },
 };
 
 const SUPPORTED_ACTIONS: { value: string; label: string }[] = [
@@ -66,13 +55,37 @@ function formatCountdown(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export default function QuorumPage() {
-  const [requests, setRequests] = useState<MockQuorumRequest[]>(mockQuorumRequests);
+function QuorumInner() {
+  const qc = useQueryClient();
   const [now, setNow] = useState(Date.now());
   const [open, setOpen] = useState(false);
   const [newAction, setNewAction] = useState("");
   const [newReason, setNewReason] = useState("");
   const [newSigs, setNewSigs] = useState(2);
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["quorum"],
+    queryFn: async () => {
+      const r = await adminApi.getQuorumRequests();
+      return r.data ?? [];
+    },
+    staleTime: 15_000,
+  });
+
+  const createMut = useMutation({
+    mutationFn: (q: Partial<QuorumRequest>) => adminApi.createQuorumRequest(q),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["quorum"] }),
+  });
+  const signMut = useMutation({
+    mutationFn: (id: string) => adminApi.signQuorumRequest(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["quorum"] }),
+  });
+  const rejectMut = useMutation({
+    mutationFn: (id: string) => adminApi.rejectQuorumRequest(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["quorum"] }),
+  });
+
+  const requests: QuorumRequest[] = data ?? [];
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
@@ -89,51 +102,15 @@ export default function QuorumPage() {
 
   function createQuorum() {
     if (!newAction || newReason.length < 10) return;
-    setRequests((prev) => [
-      ...prev,
-      {
-        id: `qr_${Date.now().toString(36)}`,
-        action: newAction,
-        payload: {},
-        initiatorEmail: "owner@rinco.app",
-        reason: newReason,
-        requiredSignatures: Math.max(1, Math.min(5, newSigs)),
-        collectedSignatures: [
-          { email: "owner@rinco.app", signedAt: new Date().toISOString() },
-        ],
-        status: "pending",
-        expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
-        createdAt: new Date().toISOString(),
-      },
-    ]);
+    createMut.mutate({
+      action: newAction,
+      reason: newReason,
+      requiredSignatures: Math.max(1, Math.min(5, newSigs)),
+    });
     setNewAction("");
     setNewReason("");
     setNewSigs(2);
     setOpen(false);
-  }
-
-  function sign(id: string) {
-    setRequests((prev) =>
-      prev.map((q) => {
-        if (q.id !== id) return q;
-        if (q.collectedSignatures.some((s) => s.email === "owner@rinco.app")) return q;
-        const newSigs = [
-          ...q.collectedSignatures,
-          { email: "owner@rinco.app", signedAt: new Date().toISOString() },
-        ];
-        return {
-          ...q,
-          collectedSignatures: newSigs,
-          status: newSigs.length >= q.requiredSignatures ? "approved" : "pending",
-        };
-      }),
-    );
-  }
-
-  function reject(id: string) {
-    setRequests((prev) =>
-      prev.map((q) => (q.id === id ? { ...q, status: "rejected" } : q)),
-    );
   }
 
   const pending = sorted.filter((q) => q.status === "pending").length;
@@ -150,7 +127,7 @@ export default function QuorumPage() {
             Multi-Party Authorization
           </h1>
           <p className="text-muted-foreground mt-1">
-            2-of-3 YubiKey signing required cho các thao tác nguy hiểm
+            2-of-3 YubiKey signing required cho các thao tác nguy hiểm · tenant-service :8082
           </p>
         </div>
         <div className="flex gap-2">
@@ -210,7 +187,14 @@ export default function QuorumPage() {
                 <Button variant="outline" onClick={() => setOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={createQuorum} disabled={!newAction || newReason.length < 10}>
+                <Button
+                  onClick={createQuorum}
+                  disabled={
+                    !newAction ||
+                    newReason.length < 10 ||
+                    createMut.isPending
+                  }
+                >
                   Create Request
                 </Button>
               </DialogFooter>
@@ -220,130 +204,184 @@ export default function QuorumPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-3xl font-bold text-amber-600 tabular-nums">{pending}</div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider">Pending</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-3xl font-bold text-emerald-600 tabular-nums">{approved}</div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider">Approved</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-3xl font-bold text-red-600 tabular-nums">{rejected}</div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider">Rejected</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <div className="text-3xl font-bold text-gray-500 tabular-nums">{expired}</div>
-            <div className="text-xs text-muted-foreground uppercase tracking-wider">Expired</div>
-          </CardContent>
-        </Card>
+        <StatTile value={pending} label="Pending" tone="amber" loading={isLoading} />
+        <StatTile value={approved} label="Approved" tone="emerald" loading={isLoading} />
+        <StatTile value={rejected} label="Rejected" tone="red" loading={isLoading} />
+        <StatTile value={expired} label="Expired" tone="slate" loading={isLoading} />
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>Active &amp; Recent Quorum Requests</CardTitle>
           <CardDescription>
-            Each request expires in 5 minutes after creation. Required signatures selected by the initiator (1-5).
+            Each request expires in 5 minutes after creation.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          {sorted.map((q) => {
-            const meta = statusMeta[q.status];
-            const Icon = meta.icon;
-            const remaining = Math.round((new Date(q.expiresAt).getTime() - now) / 1000);
-            const isExpiring = q.status === "pending" && remaining > 0 && remaining < 60;
-            const isExpired = q.status === "pending" && remaining <= 0;
+          {isLoading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <LoadingSkeleton key={i} className="h-24 w-full" />
+              ))}
+            </div>
+          ) : error ? (
+            <EmptyState
+              variant="error"
+              title="Không tải được quorum"
+              description={(error as Error).message}
+            />
+          ) : sorted.length === 0 ? (
+            <EmptyState
+              variant="default"
+              title="No quorum requests"
+              description="Create one to require multi-party authorization."
+            />
+          ) : (
+            sorted.map((q) => {
+              const meta = statusMeta[q.status] ?? statusMeta.pending;
+              const Icon = meta.icon;
+              const remaining = Math.round(
+                (new Date(q.expiresAt).getTime() - now) / 1000,
+              );
+              const isExpiring = q.status === "pending" && remaining > 0 && remaining < 60;
+              const isExpired = q.status === "pending" && remaining <= 0;
+              const alreadySigned = q.collectedSignatures.some(
+                (s) => s.email === "owner@rinco.app",
+              );
 
-            return (
-              <div
-                key={q.id}
-                className={`border rounded-xl p-4 transition ${meta.bg} ${q.status === "approved" ? "opacity-80" : ""}`}
-              >
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <Icon className={`w-5 h-5 ${meta.color}`} />
-                      <h3 className="font-semibold font-mono text-sm">{q.action}</h3>
-                      <Badge variant="outline" className={meta.color}>
-                        {meta.label}
-                      </Badge>
-                      {q.status === "pending" && remaining > 0 && (
-                        <Badge
-                          variant="outline"
-                          className={`text-xs ${isExpiring ? "bg-red-50 text-red-700 border-red-300 animate-pulse" : ""}`}
-                        >
-                          <Timer className="w-3 h-3 mr-1" />
-                          {formatCountdown(remaining)}
+              return (
+                <div
+                  key={q.id}
+                  className={`border rounded-xl p-4 transition ${meta.bg} ${
+                    q.status === "approved" ? "opacity-80" : ""
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <Icon className={`w-5 h-5 ${meta.color}`} />
+                        <h3 className="font-semibold font-mono text-sm">{q.action}</h3>
+                        <Badge variant="outline" className={meta.color}>
+                          {meta.label}
                         </Badge>
-                      )}
-                      {isExpired && (
-                        <Badge variant="destructive" className="text-xs">
-                          EXPIRED
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="text-sm text-slate-700 mb-2 italic">"{q.reason}"</p>
-                    <div className="flex items-center gap-4 text-xs text-slate-600 flex-wrap">
-                      <span>
-                        Initiator: <span className="font-mono font-semibold">{q.initiatorEmail}</span>
-                      </span>
-                      <span>
-                        Signatures: <span className="font-bold">{q.collectedSignatures.length}/{q.requiredSignatures}</span>
-                      </span>
-                      <span>Created: {new Date(q.createdAt).toLocaleString()}</span>
-                    </div>
-                    {q.collectedSignatures.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {q.collectedSignatures.map((sig, idx) => (
+                        {q.status === "pending" && remaining > 0 && (
                           <Badge
-                            key={idx}
                             variant="outline"
-                            className="text-xs font-mono bg-white/50"
+                            className={`text-xs ${
+                              isExpiring
+                                ? "bg-red-50 text-red-700 border-red-300 animate-pulse"
+                                : ""
+                            }`}
                           >
-                            <Check className="w-3 h-3 mr-1 text-emerald-600" />
-                            {sig.email}
+                            <Timer className="w-3 h-3 mr-1" />
+                            {formatCountdown(remaining)}
                           </Badge>
-                        ))}
+                        )}
+                        {isExpired && (
+                          <Badge variant="destructive" className="text-xs">
+                            EXPIRED
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-700 mb-2 italic">"{q.reason}"</p>
+                      <div className="flex items-center gap-4 text-xs text-slate-600 flex-wrap">
+                        <span>
+                          Initiator:{" "}
+                          <span className="font-mono font-semibold">
+                            {q.initiatorEmail}
+                          </span>
+                        </span>
+                        <span>
+                          Signatures:{" "}
+                          <span className="font-bold">
+                            {q.collectedSignatures.length}/{q.requiredSignatures}
+                          </span>
+                        </span>
+                        <span>
+                          Created: {new Date(q.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      {q.collectedSignatures.length > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {q.collectedSignatures.map((sig, idx) => (
+                            <Badge
+                              key={idx}
+                              variant="outline"
+                              className="text-xs font-mono bg-white/50"
+                            >
+                              <Check className="w-3 h-3 mr-1 text-emerald-600" />
+                              {sig.email}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {q.status === "pending" && (
+                      <div className="flex flex-col gap-1.5 shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={() => signMut.mutate(q.id)}
+                          disabled={alreadySigned || signMut.isPending}
+                          title="Sign with YubiKey"
+                        >
+                          <Check className="w-3 h-3 mr-1" /> Sign
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => rejectMut.mutate(q.id)}
+                          disabled={rejectMut.isPending}
+                        >
+                          Reject
+                        </Button>
                       </div>
                     )}
                   </div>
-                  {q.status === "pending" && (
-                    <div className="flex flex-col gap-1.5 shrink-0">
-                      <Button
-                        size="sm"
-                        onClick={() => sign(q.id)}
-                        disabled={q.collectedSignatures.some((s) => s.email === "owner@rinco.app")}
-                        title="Sign with YubiKey"
-                      >
-                        <Check className="w-3 h-3 mr-1" /> Sign
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => reject(q.id)}
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  )}
                 </div>
-              </div>
-            );
-          })}
-          {sorted.length === 0 && (
-            <div className="text-center py-12 text-muted-foreground">
-              No quorum requests. Create one to require multi-party authorization.
-            </div>
+              );
+            })
           )}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function StatTile({
+  value,
+  label,
+  tone,
+  loading,
+}: {
+  value: number;
+  label: string;
+  tone: "amber" | "emerald" | "red" | "slate";
+  loading?: boolean;
+}) {
+  const tones = {
+    amber: "text-amber-600",
+    emerald: "text-emerald-600",
+    red: "text-red-600",
+    slate: "text-gray-500",
+  };
+  return (
+    <Card>
+      <CardContent className="p-4 text-center">
+        {loading ? (
+          <LoadingSkeleton className="h-8 w-12 mx-auto" />
+        ) : (
+          <div className={`text-3xl font-bold tabular-nums ${tones[tone]}`}>{value}</div>
+        )}
+        <div className="text-xs text-muted-foreground uppercase tracking-wider">{label}</div>
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function QuorumPage() {
+  return (
+    <ErrorBoundary>
+      <QuorumInner />
+    </ErrorBoundary>
   );
 }

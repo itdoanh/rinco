@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -16,27 +17,36 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { Flag, Plus, Search, Beaker, Rocket, Star, Archive } from "lucide-react";
-import { mockFeatureFlags, type MockFeatureFlag } from "@/lib/mock-data";
+import { LoadingSkeleton, EmptyState, ErrorBoundary } from "@rinco/ui";
+import {
+  Flag,
+  Plus,
+  Search,
+  Beaker,
+  Rocket,
+  Star,
+  Archive,
+} from "lucide-react";
+import { adminApi, type FeatureFlag } from "@/lib/admin-api";
 
-const categoryMeta: Record<MockFeatureFlag["category"], { color: string; icon: typeof Beaker }> = {
+const categoryMeta: Record<FeatureFlag["category"], { color: string; icon: typeof Beaker }> = {
   core: { color: "bg-emerald-100 text-emerald-700", icon: Rocket },
   experimental: { color: "bg-purple-100 text-purple-700", icon: Beaker },
   beta: { color: "bg-amber-100 text-amber-700", icon: Star },
   deprecated: { color: "bg-gray-100 text-gray-700", icon: Archive },
 };
 
-const VALID_CATEGORIES: MockFeatureFlag["category"][] = ["core", "experimental", "beta", "deprecated"];
+const VALID_CATEGORIES: FeatureFlag["category"][] = ["core", "experimental", "beta", "deprecated"];
 
-export default function FeatureFlagsPage() {
-  const [flags, setFlags] = useState<MockFeatureFlag[]>(mockFeatureFlags);
+function FeatureFlagsInner() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<{
     key: string;
     description: string;
-    category: MockFeatureFlag["category"];
+    category: FeatureFlag["category"];
     rolloutPercentage: number;
     enabled: boolean;
   }>({
@@ -47,6 +57,32 @@ export default function FeatureFlagsPage() {
     enabled: false,
   });
 
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["feature-flags"],
+    queryFn: async () => {
+      const r = await adminApi.getFeatureFlags();
+      return r.data ?? [];
+    },
+    staleTime: 30_000,
+  });
+
+  const flags: FeatureFlag[] = data ?? [];
+
+  const toggleMut = useMutation({
+    mutationFn: ({ key, enabled }: { key: string; enabled: boolean }) =>
+      adminApi.toggleFeatureFlag(key, enabled),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["feature-flags"] }),
+  });
+  const rolloutMut = useMutation({
+    mutationFn: ({ key, rollout }: { key: string; rollout: number }) =>
+      adminApi.updateFeatureFlagRollout(key, rollout),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["feature-flags"] }),
+  });
+  const createMut = useMutation({
+    mutationFn: (f: Partial<FeatureFlag>) => adminApi.createFeatureFlag(f),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["feature-flags"] }),
+  });
+
   const filtered = flags.filter(
     (f) =>
       (categoryFilter === "all" || f.category === categoryFilter) &&
@@ -54,35 +90,23 @@ export default function FeatureFlagsPage() {
         f.description.toLowerCase().includes(search.toLowerCase())),
   );
 
-  function toggle(key: string) {
-    setFlags((prev) =>
-      prev.map((f) => (f.key === key ? { ...f, enabled: !f.enabled } : f)),
-    );
-  }
-
-  function updateRollout(key: string, value: number) {
-    setFlags((prev) =>
-      prev.map((f) => (f.key === key ? { ...f, rolloutPercentage: value } : f)),
-    );
-  }
-
   function submit() {
     const key = draft.key.trim();
     if (!key) return;
-    setFlags((prev) => [
-      ...prev,
-      {
-        key,
-        description: draft.description.trim() || "(no description)",
-        category: draft.category,
-        enabled: draft.enabled,
-        rolloutPercentage: draft.enabled ? draft.rolloutPercentage : 0,
-        updatedAt: new Date().toISOString(),
-        updatedBy: "owner@rinco.app",
-        tenantOverrides: 0,
-      },
-    ]);
-    setDraft({ key: "", description: "", category: "experimental", rolloutPercentage: 0, enabled: false });
+    createMut.mutate({
+      key,
+      description: draft.description.trim() || "(no description)",
+      category: draft.category,
+      enabled: draft.enabled,
+      rolloutPercentage: draft.enabled ? draft.rolloutPercentage : 0,
+    });
+    setDraft({
+      key: "",
+      description: "",
+      category: "experimental",
+      rolloutPercentage: 0,
+      enabled: false,
+    });
     setOpen(false);
   }
 
@@ -102,7 +126,8 @@ export default function FeatureFlagsPage() {
             Feature Flags
           </h1>
           <p className="text-muted-foreground mt-1">
-            {counts.enabled}/{counts.total} flags enabled · {counts.experimental} experimental · {counts.core} core
+            {counts.enabled}/{counts.total} flags enabled · {counts.experimental} experimental ·{" "}
+            {counts.core} core
           </p>
         </div>
         <div className="flex gap-2">
@@ -146,7 +171,7 @@ export default function FeatureFlagsPage() {
                     className="w-full border-2 border-slate-200 bg-white rounded-md px-3 py-2 mt-1 text-sm"
                     value={draft.category}
                     onChange={(e) =>
-                      setDraft({ ...draft, category: e.target.value as MockFeatureFlag["category"] })
+                      setDraft({ ...draft, category: e.target.value as FeatureFlag["category"] })
                     }
                   >
                     {VALID_CATEGORIES.map((c) => (
@@ -181,7 +206,10 @@ export default function FeatureFlagsPage() {
                 <Button variant="outline" onClick={() => setOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={submit} disabled={!draft.key.trim()}>
+                <Button
+                  onClick={submit}
+                  disabled={!draft.key.trim() || createMut.isPending}
+                >
                   Create
                 </Button>
               </DialogFooter>
@@ -216,83 +244,111 @@ export default function FeatureFlagsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-3">Enabled</th>
-                  <th className="py-3 px-3">Key</th>
-                  <th className="py-3 px-3">Description</th>
-                  <th className="py-3 px-3">Category</th>
-                  <th className="py-3 px-3">Rollout</th>
-                  <th className="py-3 px-3">Overrides</th>
-                  <th className="py-3 px-3">Last Modified</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((f) => {
-                  const meta = categoryMeta[f.category];
-                  const Icon = meta.icon;
-                  return (
-                    <tr key={f.key} className="border-b hover:bg-slate-50/60">
-                      <td className="py-3 px-3">
-                        <Switch checked={f.enabled} onCheckedChange={() => toggle(f.key)} />
-                      </td>
-                      <td className="py-3 px-3">
-                        <div className="font-mono text-xs font-semibold">{f.key}</div>
-                      </td>
-                      <td className="py-3 px-3 max-w-xs">
-                        <div className="text-sm">{f.description}</div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <Badge className={`${meta.color} gap-1`}>
-                          <Icon className="w-3 h-3" />
-                          {f.category}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-3 w-44">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 bg-slate-200 rounded-full h-1.5">
-                            <div
-                              className={`h-1.5 rounded-full transition-all ${f.enabled ? "bg-emerald-500" : "bg-slate-300"}`}
-                              style={{ width: `${f.rolloutPercentage}%` }}
+          {isLoading ? (
+            <LoadingSkeleton.Table rows={10} columns={6} />
+          ) : error ? (
+            <EmptyState
+              variant="error"
+              title="Không tải được flags"
+              description={(error as Error).message}
+            />
+          ) : filtered.length === 0 ? (
+            <EmptyState
+              variant="search"
+              title="Không có flag nào"
+              description="Tạo flag mới để bắt đầu rollout thử nghiệm."
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-3">Enabled</th>
+                    <th className="py-3 px-3">Key</th>
+                    <th className="py-3 px-3">Description</th>
+                    <th className="py-3 px-3">Category</th>
+                    <th className="py-3 px-3">Rollout</th>
+                    <th className="py-3 px-3">Overrides</th>
+                    <th className="py-3 px-3">Last Modified</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((f) => {
+                    const meta = categoryMeta[f.category];
+                    const Icon = meta.icon;
+                    return (
+                      <tr key={f.key} className="border-b hover:bg-slate-50/60">
+                        <td className="py-3 px-3">
+                          <Switch
+                            checked={f.enabled}
+                            disabled={toggleMut.isPending}
+                            onCheckedChange={(v) =>
+                              toggleMut.mutate({ key: f.key, enabled: v })
+                            }
+                          />
+                        </td>
+                        <td className="py-3 px-3">
+                          <div className="font-mono text-xs font-semibold">{f.key}</div>
+                        </td>
+                        <td className="py-3 px-3 max-w-xs">
+                          <div className="text-sm">{f.description}</div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <Badge className={`${meta.color} gap-1`}>
+                            <Icon className="w-3 h-3" />
+                            {f.category}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-3 w-44">
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 bg-slate-200 rounded-full h-1.5">
+                              <div
+                                className={`h-1.5 rounded-full transition-all ${f.enabled ? "bg-emerald-500" : "bg-slate-300"}`}
+                                style={{ width: `${f.rolloutPercentage}%` }}
+                              />
+                            </div>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={f.rolloutPercentage}
+                              onChange={(e) =>
+                                rolloutMut.mutate({
+                                  key: f.key,
+                                  rollout: Number(e.target.value),
+                                })
+                              }
+                              className="h-7 w-16 text-xs"
+                              disabled={!f.enabled || rolloutMut.isPending}
                             />
                           </div>
-                          <Input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={f.rolloutPercentage}
-                            onChange={(e) => updateRollout(f.key, Number(e.target.value))}
-                            className="h-7 w-16 text-xs"
-                            disabled={!f.enabled}
-                          />
-                        </div>
-                      </td>
-                      <td className="py-3 px-3">
-                        <Badge variant="secondary" className="text-xs">
-                          {f.tenantOverrides} tenants
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-3 text-xs text-muted-foreground">
-                        <div>{new Date(f.updatedAt).toLocaleDateString()}</div>
-                        <div className="text-[10px]">{f.updatedBy}</div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {filtered.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
-                      No matching feature flags.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="py-3 px-3">
+                          <Badge variant="secondary" className="text-xs">
+                            {f.tenantOverrides ?? 0} tenants
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-3 text-xs text-muted-foreground">
+                          <div>{new Date(f.updatedAt).toLocaleDateString()}</div>
+                          <div className="text-[10px]">{f.updatedBy ?? "system"}</div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function FeatureFlagsPage() {
+  return (
+    <ErrorBoundary>
+      <FeatureFlagsInner />
+    </ErrorBoundary>
   );
 }

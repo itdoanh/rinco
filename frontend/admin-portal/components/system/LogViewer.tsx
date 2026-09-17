@@ -1,10 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -12,16 +12,30 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LoadingSkeleton, EmptyState } from "@rinco/ui";
 import { format } from "date-fns";
 import { Search, RefreshCw, Terminal } from "lucide-react";
-import { mockSystemLogs, type MockSystemLog } from "@/lib/mock-data";
+import { adminApi, type SystemLogEntry } from "@/lib/admin-api";
 
-const levelColors: Record<MockSystemLog["level"], string> = {
+const levelColors: Record<SystemLogEntry["level"], string> = {
   info: "bg-blue-50 text-blue-700 border-blue-200",
   warn: "bg-amber-50 text-amber-700 border-amber-200",
   error: "bg-red-50 text-red-700 border-red-200",
   debug: "bg-gray-50 text-gray-700 border-gray-200",
 };
+
+const KNOWN_SERVICES = [
+  "auth-service",
+  "tenant-service",
+  "crm-service",
+  "lead-service",
+  "chat-engine",
+  "webrtc-sfu",
+  "recording-service",
+  "lead-scoring",
+  "rag-chatbot",
+  "stt-service",
+];
 
 export function LogViewer() {
   const [service, setService] = useState<string>("");
@@ -29,7 +43,21 @@ export function LogViewer() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
 
-  const filtered = mockSystemLogs.filter((log) => {
+  const { data, isLoading, error, refetch, isRefetching } = useQuery({
+    queryKey: ["system-logs", { service, level, search }],
+    queryFn: () =>
+      adminApi.getServiceLogs({
+        ...(service ? { service } : {}),
+        ...(level ? { level } : {}),
+        ...(search ? { search } : {}),
+        limit: 200,
+      }),
+    staleTime: 10_000,
+    refetchInterval: 5_000,
+  });
+
+  const logs: SystemLogEntry[] = data?.data ?? [];
+  const filtered = logs.filter((log) => {
     if (service && log.service !== service) return false;
     if (level && log.level !== level) return false;
     if (search && !log.message.toLowerCase().includes(search.toLowerCase())) return false;
@@ -59,16 +87,11 @@ export function LogViewer() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="">All Services</SelectItem>
-            <SelectItem value="auth-service">Auth Service</SelectItem>
-            <SelectItem value="tenant-service">Tenant Service</SelectItem>
-            <SelectItem value="crm-service">CRM Service</SelectItem>
-            <SelectItem value="lead-service">Lead Service</SelectItem>
-            <SelectItem value="chat-engine">Chat Engine</SelectItem>
-            <SelectItem value="webrtc-sfu">WebRTC SFU</SelectItem>
-            <SelectItem value="recording-service">Recording</SelectItem>
-            <SelectItem value="lead-scoring">Lead Scoring</SelectItem>
-            <SelectItem value="rag-chatbot">RAG Chatbot</SelectItem>
-            <SelectItem value="stt-service">STT Service</SelectItem>
+            {KNOWN_SERVICES.map((s) => (
+              <SelectItem key={s} value={s}>
+                {s}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
 
@@ -85,8 +108,14 @@ export function LogViewer() {
           </SelectContent>
         </Select>
 
-        <Button variant="outline" size="icon" aria-label="Refresh logs">
-          <RefreshCw className="w-4 h-4" />
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Refresh logs"
+          onClick={() => refetch()}
+          disabled={isRefetching}
+        >
+          <RefreshCw className={`w-4 h-4 ${isRefetching ? "animate-spin" : ""}`} />
         </Button>
       </div>
 
@@ -100,8 +129,25 @@ export function LogViewer() {
         </div>
 
         <div className="divide-y divide-slate-800 max-h-[600px] overflow-y-auto">
-          {paged.length === 0 ? (
-            <div className="px-4 py-12 text-center text-slate-500">No logs match the current filters</div>
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <LoadingSkeleton key={i} className="h-5 w-full bg-slate-700" />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="p-4">
+              <EmptyState
+                variant="error"
+                title="Không tải được logs"
+                description={(error as Error).message}
+                className="bg-slate-900 text-slate-200 border-slate-700"
+              />
+            </div>
+          ) : paged.length === 0 ? (
+            <div className="px-4 py-12 text-center text-slate-500">
+              No logs match the current filters
+            </div>
           ) : (
             paged.map((log) => (
               <div key={log.id} className="px-4 py-2.5 hover:bg-slate-900/50 transition">
@@ -109,10 +155,7 @@ export function LogViewer() {
                   <span className="text-xs text-slate-500 whitespace-nowrap tabular-nums">
                     {format(new Date(log.timestamp), "HH:mm:ss.SSS")}
                   </span>
-                  <Badge
-                    className={levelColors[log.level]}
-                    variant="outline"
-                  >
+                  <Badge className={levelColors[log.level] ?? levelColors.info} variant="outline">
                     {log.level.toUpperCase()}
                   </Badge>
                   <span className="text-xs text-slate-400 whitespace-nowrap">{log.service}</span>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,15 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { LoadingSkeleton, ErrorBoundary } from "@rinco/ui";
 import {
   Settings,
   Globe,
@@ -33,12 +26,9 @@ import {
   Database,
   Shield,
   Palette,
-  Code,
   Plus,
   Copy,
   Trash2,
-  Eye,
-  EyeOff,
   Save,
   RefreshCw,
   Zap,
@@ -47,6 +37,7 @@ import {
   Lock,
 } from "lucide-react";
 import { format } from "date-fns";
+import { adminApi } from "@/lib/admin-api";
 
 // Mock API Keys
 const mockApiKeys = [
@@ -64,8 +55,18 @@ const mockIntegrations = [
   { id: "int_005", name: "Datadog", status: "disconnected", config: {} },
 ];
 
-export default function SettingsPage() {
+function SettingsInner() {
   const [activeTab, setActiveTab] = useState("general");
+  const { data, isLoading } = useQuery({
+    queryKey: ["platform-settings"],
+    queryFn: async () => {
+      const r = await adminApi.getPlatformSettings();
+      return r.data ?? {};
+    },
+    staleTime: 60_000,
+  });
+
+  const platformName: string = (data?.platformName as string | undefined) ?? "RINCO Platform";
 
   return (
     <div className="p-6 space-y-6">
@@ -118,8 +119,13 @@ export default function SettingsPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label htmlFor="platform-name">Platform Name</Label>
-                  <Input id="platform-name" defaultValue="RINCO Platform" />
+                  <Input id="platform-name" defaultValue={platformName} />
                 </div>
+                {isLoading && (
+                  <div className="col-span-2">
+                    <LoadingSkeleton className="h-9 w-full" />
+                  </div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="default-region">Default Region</Label>
                   <Select defaultValue="vn-sg">
@@ -584,5 +590,13 @@ export default function SettingsPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <ErrorBoundary>
+      <SettingsInner />
+    </ErrorBoundary>
   );
 }

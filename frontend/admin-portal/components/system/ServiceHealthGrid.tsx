@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
-import { adminApi, type ServiceHealth as ApiServiceHealth } from "@/lib/api";
+import { adminApi, type ServiceHealth as ApiServiceHealth } from "@/lib/admin-api";
 import { mockServiceHealth } from "@/lib/mock-data";
 import {
   Activity,

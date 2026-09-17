@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -12,24 +13,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LoadingSkeleton, EmptyState, ErrorBoundary } from "@rinco/ui";
 import { Search, Shield, AlertTriangle, Info, CheckCircle, Clock, User } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
-import { mockAuditLogs } from "@/lib/mock-data";
+import { adminApi, type AuditLogEntry } from "@/lib/admin-api";
 
 type Level = "info" | "warning" | "error" | "success";
-
-interface AuditEntry {
-  id: string;
-  timestamp: string;
-  actorEmail: string;
-  actorRole: string;
-  action: string;
-  targetType: string;
-  targetId: string;
-  tenantSlug: string;
-  ipAddress: string;
-  status: "success" | "failure";
-}
 
 const levelMeta: Record<Level, {
   icon: typeof Info;
@@ -60,35 +49,29 @@ const ROLE_COLORS: Record<string, string> = {
   READONLY_VIEWER: "bg-gray-100 text-gray-700",
 };
 
-export default function AuditPage() {
+function AuditPageInner() {
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<string>("all");
   const [actor, setActor] = useState<string>("all");
   const [page, setPage] = useState(1);
   const limit = 25;
 
-  // Map mock logs to AuditEntry shape
-  const entries: AuditEntry[] = mockAuditLogs.map((l) => ({
-    id: l.id,
-    timestamp: l.timestamp,
-    actorEmail: l.actorEmail,
-    actorRole: l.actorRole,
-    action: l.action,
-    targetType: l.targetType,
-    targetId: l.targetId,
-    tenantSlug: l.tenantSlug,
-    ipAddress: l.ipAddress,
-    status: l.status,
-  }));
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["audit-logs", { level, actor }],
+    queryFn: () => adminApi.getAuditLogs({ limit: 200 }),
+    staleTime: 30_000,
+  });
+
+  const entries: AuditLogEntry[] = data?.data ?? [];
 
   const filtered = useMemo(
     () =>
       entries.filter((e) => {
         const matchesSearch =
-          e.actorEmail.toLowerCase().includes(search.toLowerCase()) ||
-          e.action.toLowerCase().includes(search.toLowerCase()) ||
-          e.tenantSlug.toLowerCase().includes(search.toLowerCase()) ||
-          e.targetId.toLowerCase().includes(search.toLowerCase());
+          (e.actorEmail ?? "").toLowerCase().includes(search.toLowerCase()) ||
+          (e.action ?? "").toLowerCase().includes(search.toLowerCase()) ||
+          (e.tenantSlug ?? "").toLowerCase().includes(search.toLowerCase()) ||
+          (e.targetId ?? "").toLowerCase().includes(search.toLowerCase());
         const matchesLevel =
           level === "all" ||
           classifyLevel(e.action) === level ||
@@ -101,7 +84,7 @@ export default function AuditPage() {
   );
 
   const actors = useMemo(
-    () => Array.from(new Set(entries.map((e) => e.actorEmail))).sort(),
+    () => Array.from(new Set(entries.map((e) => e.actorEmail).filter(Boolean))).sort(),
     [entries],
   );
 
@@ -117,7 +100,7 @@ export default function AuditPage() {
             Audit Log
           </h1>
           <p className="text-muted-foreground mt-1">
-            Immutable record of admin and system actions — {entries.length} total events
+            Immutable record of admin actions from CRM :8083 + observability :8096 — {entries.length} events
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -130,24 +113,27 @@ export default function AuditPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <SummaryTile label="Total events" value={entries.length} icon={Shield} tone="slate" />
+        <SummaryTile label="Total events" value={entries.length} icon={Shield} tone="slate" loading={isLoading} />
         <SummaryTile
           label="Success"
           value={entries.filter((e) => e.status === "success").length}
           icon={CheckCircle}
           tone="emerald"
+          loading={isLoading}
         />
         <SummaryTile
           label="Failures"
           value={entries.filter((e) => e.status === "failure").length}
           icon={AlertTriangle}
           tone="red"
+          loading={isLoading}
         />
         <SummaryTile
           label="Unique actors"
           value={actors.length}
           icon={User}
           tone="purple"
+          loading={isLoading}
         />
       </div>
 
@@ -184,59 +170,80 @@ export default function AuditPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Actors</SelectItem>
-                {actors.map((a) => (
-                  <SelectItem key={a} value={a}>{a}</SelectItem>
+                {actors.filter((a): a is string => !!a).map((a) => (
+                  <SelectItem key={a} value={a}>
+                    {a}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="py-3 px-3">Time</th>
-                  <th className="py-3 px-3">Actor</th>
-                  <th className="py-3 px-3">Action</th>
-                  <th className="py-3 px-3">Target</th>
-                  <th className="py-3 px-3">Tenant</th>
-                  <th className="py-3 px-3">IP</th>
-                  <th className="py-3 px-3">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
-                      No matching events
-                    </td>
+          {isLoading ? (
+            <LoadingSkeleton.Table rows={10} columns={7} />
+          ) : error ? (
+            <EmptyState
+              variant="error"
+              title="Không tải được audit logs"
+              description={(error as Error).message}
+            />
+          ) : paged.length === 0 ? (
+            <EmptyState
+              variant="search"
+              title="Không có event nào"
+              description="Audit logs sẽ xuất hiện khi có admin actions."
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
+                    <th className="py-3 px-3">Time</th>
+                    <th className="py-3 px-3">Actor</th>
+                    <th className="py-3 px-3">Action</th>
+                    <th className="py-3 px-3">Target</th>
+                    <th className="py-3 px-3">Tenant</th>
+                    <th className="py-3 px-3">IP</th>
+                    <th className="py-3 px-3">Status</th>
                   </tr>
-                ) : (
-                  paged.map((entry) => {
+                </thead>
+                <tbody>
+                  {paged.map((entry) => {
                     const lvl = classifyLevel(entry.action);
                     const meta = levelMeta[lvl];
                     const Icon = meta.icon;
                     return (
                       <tr key={entry.id} className="border-b hover:bg-slate-50/60">
                         <td className="py-2.5 px-3">
-                          <div className="text-xs font-mono">{format(new Date(entry.timestamp), "yyyy-MM-dd HH:mm:ss")}</div>
+                          <div className="text-xs font-mono">
+                            {format(new Date(entry.timestamp), "yyyy-MM-dd HH:mm:ss")}
+                          </div>
                           <div className="text-[10px] text-muted-foreground">
                             {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
                           </div>
                         </td>
                         <td className="py-2.5 px-3">
-                          <div className="font-medium text-xs">{entry.actorEmail}</div>
-                          <Badge variant="secondary" className={`text-[10px] mt-0.5 ${ROLE_COLORS[entry.actorRole] || ""}`}>
-                            {entry.actorRole}
+                          <div className="font-medium text-xs">{entry.actorEmail ?? "—"}</div>
+                          <Badge
+                            variant="secondary"
+                            className={`text-[10px] mt-0.5 ${ROLE_COLORS[entry.actorRole ?? ""] ?? ""}`}
+                          >
+                            {entry.actorRole ?? "system"}
                           </Badge>
                         </td>
                         <td className="py-2.5 px-3 font-mono text-xs">{entry.action}</td>
                         <td className="py-2.5 px-3">
-                          <div className="text-xs font-mono">{entry.targetType}</div>
-                          <div className="text-[10px] text-muted-foreground font-mono">{entry.targetId}</div>
+                          <div className="text-xs font-mono">{entry.targetType ?? "—"}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">
+                            {entry.targetId ?? "—"}
+                          </div>
                         </td>
-                        <td className="py-2.5 px-3 font-mono text-xs">{entry.tenantSlug}</td>
-                        <td className="py-2.5 px-3 font-mono text-xs">{entry.ipAddress}</td>
+                        <td className="py-2.5 px-3 font-mono text-xs">
+                          {entry.tenantSlug ?? "—"}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono text-xs">
+                          {entry.ipAddress ?? "—"}
+                        </td>
                         <td className="py-2.5 px-3">
                           <Badge variant="outline" className={`${meta.color} ${meta.bg}`}>
                             <Icon className="w-3 h-3 mr-1" />
@@ -245,11 +252,11 @@ export default function AuditPage() {
                         </td>
                       </tr>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {filtered.length > 0 && (
             <div className="flex items-center justify-between pt-2 text-sm">
@@ -287,11 +294,13 @@ function SummaryTile({
   value,
   icon: Icon,
   tone,
+  loading,
 }: {
   label: string;
   value: number;
   icon: typeof Shield;
   tone: "slate" | "emerald" | "red" | "purple";
+  loading?: boolean;
 }) {
   const tones = {
     slate: "bg-slate-100 text-slate-700",
@@ -305,11 +314,23 @@ function SummaryTile({
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${tones[tone]}`}>
           <Icon className="w-5 h-5" />
         </div>
-        <div>
-          <div className="text-2xl font-bold tabular-nums">{value}</div>
+        <div className="flex-1 min-w-0">
+          {loading ? (
+            <LoadingSkeleton className="h-7 w-12" />
+          ) : (
+            <div className="text-2xl font-bold tabular-nums">{value}</div>
+          )}
           <div className="text-xs text-muted-foreground">{label}</div>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export default function AuditPage() {
+  return (
+    <ErrorBoundary>
+      <AuditPageInner />
+    </ErrorBoundary>
   );
 }
