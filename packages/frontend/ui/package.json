@@ -9,6 +9,11 @@
     "./components/*": "./components/*",
     "./lib/*": "./lib/*"
   },
+  "typesVersions": {
+    "*": {
+      ".": ["./index.ts"]
+    }
+  },
   "scripts": {
     "lint": "echo 'ui package: lint ok'",
     "typecheck": "tsc --noEmit",

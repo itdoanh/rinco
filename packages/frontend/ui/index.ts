@@ -281,3 +281,43 @@ export {
 // Utilities
 // ============================================================
 export { cn } from "@/lib/utils"
+
+// ============================================================
+// WS-C additions — service registry, API client, hooks, shared UI
+// ============================================================
+export {
+  SERVICES,
+  httpUrl,
+  wsUrl,
+  serviceUrl,
+  getServiceInfo,
+  listServices,
+  type ServiceName,
+  type WebSocketService,
+} from "./services-registry"
+
+export {
+  ApiError,
+  apiFetch,
+  apiGet,
+  apiPost,
+  apiPut,
+  apiPatch,
+  apiDelete,
+  type FetchOptions,
+  type ApiErrorData,
+} from "./api-client"
+
+export {
+  useApiQuery,
+  useApiMutation,
+} from "./hooks"
+
+export { LoadingSkeleton } from "@/components/loading-skeleton"
+export { EmptyState } from "@/components/empty-state"
+export { ErrorBoundary } from "@/components/error-boundary"
+export {
+  ThemeProvider,
+  useTheme,
+  ThemeToggle,
+} from "@/components/theme-provider"
