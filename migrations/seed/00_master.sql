@@ -80,6 +80,16 @@ VALUES (
 )
 ON CONFLICT (slug) DO NOTHING;
 
+-- ============================================================
+-- WS-B expansion (additional demo data — idempotent)
+-- ============================================================
+\echo '--- [12/N] WS-B Loop expansion seeds (extra leads/deals/users/etc) ---'
+\i expansion/01_leads_extra.sql
+\i expansion/02_deals_activities_extra.sql
+\i expansion/03_users_crm_tree_extra.sql
+\i expansion/04_workflows_audit_extra.sql
+\i expansion/05_notifications_chat_extra.sql
+
 \echo ''
 \echo '==========================================='
 \echo 'RINCO Demo Seed complete. Summary:'
