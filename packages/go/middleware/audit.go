@@ -869,3 +869,250 @@ func SetBeforeSnapshotAsJSON(c echo.Context, v any) {
 	}
 	SetBeforeSnapshot(c, string(b))
 }
+
+// =============================================================================
+// Compatibility shims (preserve old API surface so legacy tests in
+// the package keep compiling).
+// =============================================================================
+
+// parseActionResource splits a path into (action, resource).  It is
+// used by older tests in this package; new code should use the
+// dedicated deriveAction / deriveResourceType helpers.
+func parseActionResource(path string) (action, resource string) {
+	path = strings.TrimPrefix(path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) >= 2 {
+		last := parts[len(parts)-1]
+		switch last {
+		case "create", "update", "delete", "list", "get":
+			action = last
+			resource = strings.Join(parts[:len(parts)-1], ".")
+		default:
+			if isUUIDLike(last) || isNumericIDCompat(last) {
+				if len(parts) >= 3 {
+					action = parts[len(parts)-2]
+					resource = strings.Join(parts[:len(parts)-2], ".")
+				} else {
+					action = "get"
+					resource = parts[0]
+				}
+			} else {
+				action = "access"
+				resource = strings.Join(parts, ".")
+			}
+		}
+	} else {
+		action = "access"
+		resource = path
+	}
+	return
+}
+
+// isUUIDLike reports whether s looks like a UUID (len 36, hex + '-').
+func isUUIDLike(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for _, c := range s {
+		if c != '-' && (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// isUUID is the legacy public name retained for older tests.
+func isUUID(s string) bool { return isUUIDLike(s) }
+
+// isNumericIDCompat returns true when s is non-empty and contains
+// only digits.
+func isNumericIDCompat(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isNumericID is the legacy public name retained for older tests.
+func isNumericID(s string) bool { return isNumericIDCompat(s) }
+
+// redactSensitiveData is the legacy public helper that delegates to
+// redactJSONString.
+func redactSensitiveData(body string, fields []string) string {
+	return redactJSONString(body, fields, nil)
+}
+
+// redactMap walks m in place and replaces sensitive field values with
+// "[REDACTED]".  Retained for older tests.
+func redactMap(m map[string]any, fields []string) {
+	redactValue(m, fields)
+}
+
+// responseWriter is a tiny echo.Response wrapper used by the older
+// audit middleware.  Retained so existing tests compile.
+type responseWriter struct {
+	echo.Response
+	statusCode int
+}
+
+// bodyCapture is an io.ReadCloser that mirrors everything it reads
+// into a buffer.  Retained so existing tests compile.
+type bodyCapture struct {
+	Buffer *bytes.Buffer
+	Reader io.ReadCloser
+}
+
+func (b *bodyCapture) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if n > 0 {
+		b.Buffer.Write(p[:n])
+	}
+	return n, err
+}
+
+func (b *bodyCapture) Close() error { return b.Reader.Close() }
+
+// AuditLog is the legacy struct kept for backwards compatibility.
+type AuditLog struct {
+	Timestamp    time.Time      `json:"timestamp"`
+	ActorID      string         `json:"actor_id"`
+	TenantID     string         `json:"tenant_id"`
+	IP           string         `json:"ip"`
+	UserAgent    string         `json:"user_agent"`
+	Method       string         `json:"method"`
+	Path         string         `json:"path"`
+	QueryString  string         `json:"query_string"`
+	StatusCode   int            `json:"status_code"`
+	Duration     int64          `json:"duration_ms"`
+	RequestSize  int64          `json:"request_size"`
+	ResponseSize int64          `json:"response_size"`
+	Action       string         `json:"action"`
+	Resource     string         `json:"resource"`
+	Outcome      string         `json:"outcome"`
+	Error        string         `json:"error,omitempty"`
+	RequestBody  string         `json:"request_body,omitempty"`
+	Extra        map[string]any `json:"extra,omitempty"`
+}
+
+// AuditLogWriter is the legacy interface kept for compatibility.
+type AuditLogWriter interface {
+	Write(ctx context.Context, log *AuditLog) error
+	WriteBatch(ctx context.Context, logs []*AuditLog) error
+}
+
+// AuditLogChanWriter is the legacy channel-backed writer.
+type AuditLogChanWriter struct {
+	ch chan *AuditLog
+}
+
+// NewAuditLogChanWriter creates a new AuditLogChanWriter.
+func NewAuditLogChanWriter(bufferSize int) *AuditLogChanWriter {
+	return &AuditLogChanWriter{ch: make(chan *AuditLog, bufferSize)}
+}
+
+// Write pushes one entry to the channel.
+func (w *AuditLogChanWriter) Write(ctx context.Context, log *AuditLog) error {
+	select {
+	case w.ch <- log:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// WriteBatch pushes every entry one by one.
+func (w *AuditLogChanWriter) WriteBatch(ctx context.Context, logs []*AuditLog) error {
+	for _, l := range logs {
+		if err := w.Write(ctx, l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LogChan returns the underlying channel for consumers.
+func (w *AuditLogChanWriter) LogChan() <-chan *AuditLog { return w.ch }
+
+// AuditLogSlogWriter writes audit log entries via slog.
+type AuditLogSlogWriter struct {
+	logger *slog.Logger
+}
+
+// NewAuditLogSlogWriter creates a new slog writer.
+func NewAuditLogSlogWriter(logger *slog.Logger) *AuditLogSlogWriter {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &AuditLogSlogWriter{logger: logger}
+}
+
+// Write logs one audit entry.
+func (w *AuditLogSlogWriter) Write(ctx context.Context, log *AuditLog) error {
+	level := slog.LevelInfo
+	if log.Outcome == "failure" {
+		level = slog.LevelWarn
+	}
+	attrs := []any{
+		slog.String("audit_action", log.Action),
+		slog.String("audit_resource", log.Resource),
+		slog.String("audit_actor", log.ActorID),
+		slog.String("audit_tenant", log.TenantID),
+		slog.String("audit_method", log.Method),
+		slog.String("audit_path", log.Path),
+		slog.Int("audit_status", log.StatusCode),
+		slog.Int64("audit_duration_ms", log.Duration),
+		slog.String("audit_outcome", log.Outcome),
+		slog.String("audit_ip", log.IP),
+		slog.String("audit_user_agent", log.UserAgent),
+	}
+	if log.Error != "" {
+		attrs = append(attrs, slog.String("audit_error", log.Error))
+	}
+	if log.RequestBody != "" {
+		attrs = append(attrs, slog.String("audit_request_body", log.RequestBody))
+	}
+	w.logger.Log(ctx, level, "audit", attrs...)
+	return nil
+}
+
+// WriteBatch logs every entry via slog.
+func (w *AuditLogSlogWriter) WriteBatch(ctx context.Context, logs []*AuditLog) error {
+	for _, l := range logs {
+		if err := w.Write(ctx, l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AuditContext is a small helper that travels on the request context.
+type AuditContext struct {
+	ActorID  string
+	TenantID string
+	Action   string
+	Resource string
+	Extra    map[string]any
+}
+
+// AuditContextKey is the context key for AuditContext.
+const AuditContextKey = "audit_context"
+
+// WithAuditContext attaches an AuditContext to ctx.
+func WithAuditContext(ctx context.Context, audit *AuditContext) context.Context {
+	return context.WithValue(ctx, AuditContextKey, audit)
+}
+
+// GetAuditContext retrieves the AuditContext from ctx (or nil).
+func GetAuditContext(ctx context.Context) *AuditContext {
+	if v := ctx.Value(AuditContextKey); v != nil {
+		if a, ok := v.(*AuditContext); ok {
+			return a
+		}
+	}
+	return nil
+}
