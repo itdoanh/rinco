@@ -321,3 +321,10 @@ export {
   useTheme,
   ThemeToggle,
 } from "./components/theme-provider"
+export {
+  ResponsiveGrid,
+  MobileOnly,
+  TabletOnly,
+  DesktopOnly,
+  type ResponsiveGridProps,
+} from "./components/responsive-grid"

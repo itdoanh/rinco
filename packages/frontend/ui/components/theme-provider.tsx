@@ -12,7 +12,7 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
-const STORAGE_KEY = "rinco-theme";
+const DEFAULT_STORAGE_KEY = "rinco-theme";
 
 function resolveTheme(theme: Theme): "light" | "dark" {
   if (theme === "system") {
@@ -31,23 +31,33 @@ function applyTheme(resolved: "light" | "dark") {
 
 /**
  * ThemeProvider — cung cấp light/dark/system theme với persistence
- * (localStorage "rinco-theme") và sync với system preference.
+ * (localStorage) và sync với system preference.
  *
  * Yêu cầu:
  *   - Tailwind dark mode: ["class"] (đã config trong tailwind.config)
  *   - CSS variables ở :root và .dark (shadcn theme).
  */
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("system");
+export interface ThemeProviderProps {
+  children: ReactNode;
+  defaultTheme?: Theme;
+  storageKey?: string;
+}
+
+export function ThemeProvider({
+  children,
+  defaultTheme = "system",
+  storageKey = DEFAULT_STORAGE_KEY,
+}: ThemeProviderProps) {
+  const [theme, setThemeState] = useState<Theme>(defaultTheme);
 
   // Hydrate từ localStorage sau khi mount (tránh hydration mismatch).
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
+    const stored = window.localStorage.getItem(storageKey) as Theme | null;
     if (stored === "light" || stored === "dark" || stored === "system") {
       setThemeState(stored);
     }
-  }, []);
+  }, [storageKey]);
 
   // Áp dụng theme lên DOM mỗi khi đổi.
   useEffect(() => {
@@ -67,7 +77,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const setTheme = (t: Theme) => {
     setThemeState(t);
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(STORAGE_KEY, t);
+      window.localStorage.setItem(storageKey, t);
     }
   };
 
@@ -84,7 +94,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 export function useTheme(): ThemeContextValue {
   const ctx = useContext(ThemeContext);
   if (!ctx) {
-    // Trả về default nếu không có provider — app nào chưa wrap vẫn chạy được.
     return {
       theme: "system",
       setTheme: () => {
