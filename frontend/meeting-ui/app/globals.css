@@ -43,3 +43,27 @@
 .recording-dot {
   @apply w-3 h-3 bg-red-500 rounded-full animate-pulse;
 }
+
+/* Floating reaction emoji animation */
+@keyframes reaction-float {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.5);
+  }
+  10% {
+    opacity: 1;
+    transform: translate(-50%, -10px) scale(1.1);
+  }
+  80% {
+    opacity: 1;
+    transform: translate(-50%, -60px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -90px) scale(0.9);
+  }
+}
+
+.reaction-float {
+  animation: reaction-float 1.5s ease-out forwards;
+}
