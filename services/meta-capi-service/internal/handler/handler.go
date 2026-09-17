@@ -124,6 +124,12 @@ func NewServer(repo *repository.Repository, secret []byte, pixelID, accessToken 
 	}
 }
 
+// NewServerLegacy keeps backward compatibility with the old constructor
+// signature (no repository, just secret/pixelID/accessToken/publisher).
+func NewServerLegacy(secret []byte, pixelID, accessToken string, p Publisher) *Server {
+	return NewServer(nil, secret, pixelID, accessToken, p)
+}
+
 // New returns a meta-capi Server with default dependencies.
 func New(repo *repository.Repository) *Server {
 	return &Server{

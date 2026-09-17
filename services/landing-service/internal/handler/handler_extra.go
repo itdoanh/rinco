@@ -491,16 +491,23 @@ func (s *Server) CAPIStatus(c echo.Context) error {
 	}
 
 	var totalEvents int64
-	_ = s.pool.QueryRow(c.Request().Context(),
-		`SELECT COUNT(*) FROM landing.tracking_events WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'`,
-		tenantID,
-	).Scan(&totalEvents)
+	if s.pool != nil {
+		_ = s.pool.QueryRow(c.Request().Context(),
+			`SELECT COUNT(*) FROM landing.tracking_events WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '24 hours'`,
+			tenantID,
+		).Scan(&totalEvents)
+	}
+
+	queueLen := 0
+	if s.capiQueue != nil {
+		queueLen = len(s.capiQueue)
+	}
 
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"status":         "active",
-		"tenant_id":      tenantID,
+		"status":           "active",
+		"tenant_id":        tenantID,
 		"total_events_24h": totalEvents,
-		"queue_depth":    len(s.capiQueue),
+		"queue_depth":      queueLen,
 	})
 }
 

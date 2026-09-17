@@ -96,8 +96,7 @@ func TestHashUserData_OnlyEmail(t *testing.T) {
 // ============================================================================
 
 func TestVerifyHMAC_ValidSignature(t *testing.T) {
-	body, p := signedPayload(t)
-	_ = body
+	_, p := signedPayload(t)
 	assert.True(t, VerifyHMAC(testSecret, p, p.HMAC))
 }
 
@@ -113,8 +112,7 @@ func TestVerifyHMAC_WrongSecret(t *testing.T) {
 }
 
 func TestVerifyHMAC_TamperedPayload(t *testing.T) {
-	body, p := signedPayload(t)
-	_ = body
+	_, p := signedPayload(t)
 	// Change email after signing
 	p.Email = "attacker@b.co"
 	assert.False(t, VerifyHMAC(testSecret, p, p.HMAC))
@@ -142,7 +140,7 @@ func TestValidEventName(t *testing.T) {
 func TestIngestEvent_HappyPath(t *testing.T) {
 	body, _ := signedPayload(t)
 	fp := &fakePublisher{}
-	s := NewServer(testSecret, "pixel-123", "access-tok", fp)
+	s := NewServerLegacy(testSecret, "pixel-123", "access-tok", fp)
 
 	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body)
 	err := s.IngestEvent(c)
@@ -160,20 +158,20 @@ func TestIngestEvent_HappyPath(t *testing.T) {
 }
 
 func TestIngestEvent_HMACFailure(t *testing.T) {
-	body, p := signedPayload(t)
+	_, p := signedPayload(t)
 	p.HMAC = "0" + strings.Repeat("0", 63)
 	body2, _ := json.Marshal(p)
 
 	fp := &fakePublisher{}
-	s := NewServer(testSecret, "pixel-1", "tok", fp)
-	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body2)
+	s := NewServerLegacy(testSecret, "pixel-1", "tok", fp)
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", string(body2))
 	_ = s.IngestEvent(c)
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	assert.Empty(t, fp.events, "publisher should not receive events with bad HMAC")
 }
 
 func TestIngestEvent_InvalidEventName(t *testing.T) {
-	body, p := signedPayload(t)
+	_, p := signedPayload(t)
 	p.EventName = "pageview"
 	canonical, _ := json.Marshal(struct {
 		LeadID, EventID, Email, Phone, FBCLID, FBP, EventName string
@@ -183,18 +181,18 @@ func TestIngestEvent_InvalidEventName(t *testing.T) {
 	body2, _ := json.Marshal(p)
 
 	fp := &fakePublisher{}
-	s := NewServer(testSecret, "pixel", "tok", fp)
-	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body2)
+	s := NewServerLegacy(testSecret, "pixel", "tok", fp)
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", string(body2))
 	_ = s.IngestEvent(c)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
 func TestIngestEvent_MissingTenant(t *testing.T) {
-	body, p := signedPayload(t)
+	_, p := signedPayload(t)
 	p.TenantID = ""
 	body2, _ := json.Marshal(p)
-	s := NewServer(testSecret, "pixel", "tok", &fakePublisher{})
-	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body2)
+	s := NewServerLegacy(testSecret, "pixel", "tok", &fakePublisher{})
+	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", string(body2))
 	_ = s.IngestEvent(c)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
@@ -202,7 +200,7 @@ func TestIngestEvent_MissingTenant(t *testing.T) {
 func TestIngestEvent_MetaAPIFailureReturns502(t *testing.T) {
 	body, _ := signedPayload(t)
 	fp := &fakePublisher{failN: 1}
-	s := NewServer(testSecret, "pixel", "tok", fp)
+	s := NewServerLegacy(testSecret, "pixel", "tok", fp)
 	c, rec := newCtx(http.MethodPost, "/meta-capi/v1/events", body)
 	_ = s.IngestEvent(c)
 	assert.Equal(t, http.StatusBadGateway, rec.Code)
@@ -222,7 +220,7 @@ func TestIngestEvent_MetaAPIFailureReturns502(t *testing.T) {
 func TestIngestEvent_DeliveryStatusTracking(t *testing.T) {
 	body, p := signedPayload(t)
 	fp := &fakePublisher{}
-	s := NewServer(testSecret, "pixel", "tok", fp)
+	s := NewServerLegacy(testSecret, "pixel", "tok", fp)
 	c, _ := newCtx(http.MethodPost, "/meta-capi/v1/events", body)
 	_ = s.IngestEvent(c)
 
@@ -239,9 +237,8 @@ func TestIngestEvent_DeliveryStatusTracking(t *testing.T) {
 }
 
 func TestIngestEvent_EmailIsNormalisedBeforeHashing(t *testing.T) {
-	body, p := signedPayload(t)
+	_, p := signedPayload(t)
 	p.Email = "  USER@EXAMPLE.COM  "
-	body2, _ := json.Marshal(p)
 	// Re-sign with the new payload
 	canonical, _ := json.Marshal(struct {
 		LeadID, EventID, Email, Phone, FBCLID, FBP, EventName string
@@ -251,11 +248,10 @@ func TestIngestEvent_EmailIsNormalisedBeforeHashing(t *testing.T) {
 	body3, _ := json.Marshal(p)
 
 	fp := &fakePublisher{}
-	s := NewServer(testSecret, "p", "t", fp)
-	c, _ := newCtx(http.MethodPost, "/meta-capi/v1/events", body3)
+	s := NewServerLegacy(testSecret, "p", "t", fp)
+	c, _ := newCtx(http.MethodPost, "/meta-capi/v1/events", string(body3))
 	_ = s.IngestEvent(c)
 
-	_ = body2
 	assert.Len(t, fp.events, 1)
 	// The hashed email field should match the normalised form.
 	want := HashSHA256("user@example.com")
@@ -267,7 +263,7 @@ func TestIngestEvent_EmailIsNormalisedBeforeHashing(t *testing.T) {
 // ============================================================================
 
 func TestHealth(t *testing.T) {
-	s := NewServer(testSecret, "p", "t", &fakePublisher{})
+	s := NewServerLegacy(testSecret, "p", "t", &fakePublisher{})
 	c, rec := newCtx(http.MethodGet, "/healthz", "")
 	err := s.Health(c)
 	assert.NoError(t, err)

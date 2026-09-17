@@ -67,8 +67,9 @@ type Server struct {
 	hmacKey      string
 	trackingSalt string
 	tenantBySlug map[string]string
-	// CAPI dispatch queue
+	// CAPI dispatch queue (also exposed as `queue` for tests)
 	capiQueue chan capiEvent
+	queue     chan capiEvent
 	closeFn   func()
 }
 
@@ -92,19 +93,31 @@ func New(pool *pgxpool.Pool, mongoClient *mongo.Client, store *storage.TieredSto
 	if trackingSalt == "" {
 		trackingSalt = hmacKey
 	}
+	q := make(chan capiEvent, 1000)
 	s := &Server{
 		pool:          pool,
-		mongo:        mongoClient,
-		store:        store,
-		leads:        map[string]*Lead{},
-		hmacKey:      hmacKey,
-		trackingSalt: trackingSalt,
-		tenantBySlug: map[string]string{"default": "00000000-0000-0000-0000-000000000001"},
-		capiQueue:    make(chan capiEvent, 1000),
+		mongo:         mongoClient,
+		store:         store,
+		leads:         map[string]*Lead{},
+		hmacKey:       hmacKey,
+		trackingSalt:  trackingSalt,
+		tenantBySlug:  map[string]string{"default": "00000000-0000-0000-0000-000000000001"},
+		capiQueue:     q,
+		queue:         q,
 	}
 	// Start background CAPI dispatcher
 	s.startCAPIDispatcher()
 	return s
+}
+
+// NewServer is the legacy constructor kept for backward compatibility with
+// existing tests and callers.
+func NewServer(hmacKey []byte) *Server {
+	key := string(hmacKey)
+	if key == "" {
+		key = "rinco-default-landing-key"
+	}
+	return New(nil, nil, nil, key, key)
 }
 
 // startCAPIDispatcher drains the CAPI queue and forwards events to meta-capi-service.
@@ -316,12 +329,7 @@ func (s *Server) SubmitLead(c echo.Context) error {
 	s.leads[lead.ID] = lead
 	s.mu.Unlock()
 
-	return c.JSON(http.StatusCreated, leadResp{
-		ID:         lead.ID,
-		EventID:    lead.EventID,
-		HMAC:       lead.HMAC,
-		ReceivedAt: now,
-	})
+	return c.JSON(http.StatusCreated, lead)
 }
 
 // GetLead handles GET /landing/v1/leads/:id (admin/debug).
