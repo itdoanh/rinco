@@ -1,0 +1,300 @@
+# ============================================================
+# RINCO WS-E — Critical (P0) alert rules
+# ============================================================
+# P0 pages on-call.  These alerts indicate user-visible outages,
+# data-integrity issues, or active security breaches.  All alerts
+# in this file fire PagerDuty / Slack #war-room.
+
+groups:
+
+# ============================================================
+# 1. Service down
+# ============================================================
+- name: rinco.service_down
+  interval: 30s
+  rules:
+  - alert: ServiceDown
+    expr: |
+      up{job=~"rinco-.*"} == 0
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+      runbook: "https://wiki.rinco.app/runbooks/service-down"
+    annotations:
+      summary: "Service {{ $labels.job }} is DOWN (instance {{ $labels.instance }})"
+      description: "Prometheus has been unable to scrape {{ $labels.job }} for 1 minute."
+      action: "1. Check kubectl get pods -l app={{ $labels.job }}. 2. Read recent logs. 3. Verify upstream dependencies."
+
+  - alert: ServiceDownMultipleReplicas
+    expr: |
+      (count by (job) (up{job=~"rinco-.*"} == 0))
+      /
+      count by (job) (up{job=~"rinco-.*"}) > 0.5
+    for: 2m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: ">50% of {{ $labels.job }} replicas are down"
+
+  - alert: NewPodCrashLooping
+    expr: |
+      rate(kube_pod_container_status_restarts_total[15m]) > 0.1
+    for: 5m
+    labels:
+      severity: P0
+      team: sre
+    annotations:
+      summary: "Pod {{ $labels.pod }} restart loop ({{ $labels.namespace }})"
+
+# ============================================================
+# 2. OOMKilled / memory pressure
+# ============================================================
+- name: rinco.memory
+  interval: 30s
+  rules:
+  - alert: OOMKilled
+    expr: |
+      increase(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[10m]) > 0
+    for: 0m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "OOMKilled: pod {{ $labels.pod }} in {{ $labels.namespace }}"
+      action: "Check memory limits.  Increase or fix leak.  Page on-call."
+
+  - alert: NodeMemoryPressureCritical
+    expr: |
+      (
+        1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+      ) * 100 > 95
+    for: 2m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Memory > 95% on {{ $labels.instance }}"
+
+# ============================================================
+# 3. RLS bypass / data-integrity
+# ============================================================
+- name: rinco.data_integrity
+  interval: 30s
+  rules:
+  - alert: RLSBypassDetected
+    expr: |
+      rinco_rls_policy_violations_total > 0
+    for: 0m
+    labels:
+      severity: P0
+      team: sre
+      security: "true"
+      page: "true"
+    annotations:
+      summary: "Postgres RLS bypass attempt detected"
+      description: "A query attempted to access data outside its tenant scope on {{ $labels.service }}.  Investigate immediately."
+      action: "1. Identify offending tenant/user. 2. Verify SET LOCAL is being issued. 3. Check for RLS policy regression."
+
+  - alert: CrossTenantQueryBlocked
+    expr: |
+      rate(rinco_cross_tenant_query_blocked[5m]) > 0
+    for: 0m
+    labels:
+      severity: P0
+      team: sre
+      security: "true"
+      page: "true"
+    annotations:
+      summary: "Cross-tenant query blocked for {{ $labels.tenant_id }}"
+
+  - alert: ForceRowLevelDisabled
+    expr: |
+      pg_stat_user_tables_n_tup_ins{schemaname="public"} > 1000
+      and on (relname) pg_force_row_level_security{relname="leads"} == 0
+    for: 0m
+    labels:
+      severity: P0
+      team: sre
+      security: "true"
+    annotations:
+      summary: "FORCE ROW LEVEL SECURITY disabled on {{ $labels.relname }}"
+
+  - alert: PASETOSigningKeyCompromised
+    expr: |
+      increase(auth_paseto_key_revocation_total[5m]) > 0
+    for: 0m
+    labels:
+      severity: P0
+      team: sre
+      security: "true"
+      page: "true"
+    annotations:
+      summary: "PASETO signing key revoked (potential compromise)"
+      action: "Run scripts/rotate-secrets.sh immediately.  Force re-auth for all sessions."
+
+  - alert: SuperAdminUnauthorizedAccess
+    expr: |
+      rate(rinco_super_admin_access_denied_total[5m]) > 0
+    for: 0m
+    labels:
+      severity: P0
+      team: sre
+      security: "true"
+      page: "true"
+    annotations:
+      summary: "Unauthorized super-admin access attempt blocked"
+
+# ============================================================
+# 4. Database outage / failover
+# ============================================================
+- name: rinco.databases.critical
+  interval: 30s
+  rules:
+  - alert: PostgresDown
+    expr: |
+      pg_up == 0
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Postgres instance {{ $labels.instance }} is DOWN"
+
+  - alert: PostgresConnectionsExhausted
+    expr: pg_stat_activity_count >= 195
+    for: 30s
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Postgres connections near max on {{ $labels.instance }}"
+
+  - alert: PostgresReplicationBroken
+    expr: |
+      pg_replication_lag_seconds > 300
+    for: 2m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Postgres replica lag > 5m on {{ $labels.instance }}"
+
+  - alert: ScyllaClusterDown
+    expr: |
+      count by (cluster) (scylla_node_is_up == 1) < 2
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Scylla cluster {{ $labels.cluster }} has < 2 nodes up"
+
+  - alert: ValkeyDown
+    expr: |
+      valkey_up == 0
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Valkey instance {{ $labels.instance }} is DOWN"
+
+  - alert: ValkeyConnectionsExhausted
+    expr: valkey_connected_clients > 9000
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Valkey connections exhausted on {{ $labels.instance }}"
+
+  - alert: ClickHouseReplicatedLost
+    expr: |
+      clickhouse_replication_is_active == 0
+    for: 2m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "ClickHouse replication lost on {{ $labels.instance }}"
+
+# ============================================================
+# 5. Disk critical
+# ============================================================
+- name: rinco.resources.critical
+  interval: 30s
+  rules:
+  - alert: DiskSpaceCritical
+    expr: |
+      (
+        node_filesystem_avail_bytes{mountpoint="/"}
+        / node_filesystem_size_bytes{mountpoint="/"}
+      ) < 0.05
+    for: 1m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Disk < 5% free on {{ $labels.instance }}"
+
+  - alert: InodeExhausted
+    expr: |
+      node_filesystem_files_free{mountpoint="/"} / node_filesystem_files{mountpoint="/"} < 0.05
+    for: 5m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "Inodes < 5% free on {{ $labels.instance }}"
+
+# ============================================================
+# 6. SLO burn rate
+# ============================================================
+- name: rinco.slo.critical
+  interval: 1m
+  rules:
+  - alert: SLOBurnRateFast
+    expr: |
+      (
+        sum(rate(rinco_http_requests_total{status=~"5.."}[1h])) by (service)
+        /
+        sum(rate(rinco_http_requests_total[1h])) by (service)
+      ) > (1 - (0.99 * 0.998))
+    for: 5m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "SLO burn rate > 14.4x on {{ $labels.service }}"
+      description: "Service {{ $labels.service }} is consuming error budget 14x faster than sustainable."
+
+  - alert: SLOBurnRateVeryFast
+    expr: |
+      (
+        sum(rate(rinco_http_requests_total{status=~"5.."}[5m])) by (service)
+        /
+        sum(rate(rinco_http_requests_total[5m])) by (service)
+      ) > (1 - (0.99 * 0.9))
+    for: 2m
+    labels:
+      severity: P0
+      team: sre
+      page: "true"
+    annotations:
+      summary: "SLO burn rate > 100x on {{ $labels.service }} (acute)"

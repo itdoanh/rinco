@@ -1,19 +1,19 @@
 {
-  "uid": "rinco-overview",
-  "title": "RINCO Overview",
-  "tags": ["rinco", "overview"],
-  "timezone": "browser",
-  "schemaVersion": 39,
-  "version": 1,
-  "refresh": "30s",
-  "time": { "from": "now-6h", "to": "now" },
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
   "panels": [
     {
       "id": 1,
-      "title": "Request Rate (req/s)",
+      "title": "System-wide Request Rate (req/s)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" } },
       "targets": [
         {
           "expr": "sum(rate(rinco_http_requests_total[5m])) by (service)",
@@ -23,27 +23,41 @@
     },
     {
       "id": 2,
-      "title": "Error Rate (%)",
+      "title": "System-wide Error Rate (%)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1, "color": "yellow" },
+              { "value": 5, "color": "red" }
+            ]
+          }
+        }
+      },
       "targets": [
         {
-          "expr": "sum(rate(rinco_http_requests_total{status=~\"5..\"}[5m])) by (service) / sum(rate(rinco_http_requests_total[5m])) by (service) * 100",
+          "expr": "(sum(rate(rinco_http_requests_total{status=~\"5..\"}[5m])) by (service) / sum(rate(rinco_http_requests_total[5m])) by (service)) * 100",
           "legendFormat": "{{service}}"
         }
       ]
     },
     {
       "id": 3,
-      "title": "Latency P99 (ms)",
+      "title": "P99 Latency by Service (ms)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
       "targets": [
         {
-          "expr": "histogram_quantile(0.99, sum(rate(rinco_http_request_duration_seconds_bucket[5m])) by (service, route, le)) * 1000",
-          "legendFormat": "{{service}}/{{route}}"
+          "expr": "histogram_quantile(0.99, sum(rate(rinco_http_request_duration_seconds_bucket[5m])) by (service, le)) * 1000",
+          "legendFormat": "{{service}}"
         }
       ]
     },
@@ -52,12 +66,125 @@
       "title": "Active Tenants",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        { "expr": "rinco_active_tenants" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Active Alerts",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1, "color": "yellow" },
+              { "value": 5, "color": "red" }
+            ]
+          }
+        }
+      },
       "targets": [
         {
-          "expr": "rinco_active_tenants"
+          "expr": "sum(ALERTS{alertstate=\"firing\"})"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Audit Log Writes / sec",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        {
+          "expr": "sum(rate(audit_records_total[5m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Rate-Limit Blocks / min",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "expr": "sum(increase(rate_limit_blocked_total[1m])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "SLO Burn Rate (1h)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "expr": "sum(rate(rinco_http_requests_total{status=~\"5..\"}[1h])) by (service) / sum(rate(rinco_http_requests_total[1h])) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "DB Connections (Postgres + Scylla)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "expr": "sum(pg_stat_activity_count) by (instance)",
+          "legendFormat": "postgres-{{instance}}"
+        },
+        {
+          "expr": "sum(scylla_client_connections) by (instance)",
+          "legendFormat": "scylla-{{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "OTel Traces Ingested / sec",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        {
+          "expr": "sum(rate(otelcol_otelcol_receiver_accepted_spans[5m]))",
+          "legendFormat": "spans/s"
+        },
+        {
+          "expr": "sum(rate(otelcol_otelcol_receiver_accepted_metric_points[5m]))",
+          "legendFormat": "metrics/s"
         }
       ]
     }
-  ]
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["rinco", "overview", "system"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RINCO — System Overview",
+  "uid": "rinco-overview",
+  "version": 2,
+  "weekStart": ""
 }

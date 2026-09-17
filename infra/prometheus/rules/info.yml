@@ -1,0 +1,240 @@
+# ============================================================
+# RINCO WS-E — Info (P2/P3) alert rules
+# ============================================================
+# P2 alerts Slack #ops-info; P3 are silent trend indicators
+# surfaced only via dashboards.  These are informational:
+# drift, cost, capacity-planning signals.
+
+groups:
+
+# ============================================================
+# 1. AI drift and degradation
+# ============================================================
+- name: rinco.ai.info
+  interval: 5m
+  rules:
+  - alert: LeadScoringScoreRegression
+    expr: |
+      avg_over_time(lead_scoring_ensemble_score[1h])
+      < 0.25
+    for: 30m
+    labels:
+      severity: P2
+      service: lead-scoring
+    annotations:
+      summary: "Mean lead score dropped below 25 (potential data drift)"
+
+  - alert: LeadScoringDistributionDrift
+    expr: |
+      abs(
+        avg_over_time(lead_scoring_ensemble_score[1h])
+        - avg_over_time(lead_scoring_ensemble_score[24h] offset 7d)
+      ) > 0.1
+    for: 30m
+    labels:
+      severity: P2
+      service: lead-scoring
+    annotations:
+      summary: "Lead score distribution drifted > 0.1 vs. last week"
+
+  - alert: AISRERCAHighLatency
+    expr: |
+      histogram_quantile(0.95, sum(rate(ai_sre_analysis_latency_seconds_bucket[5m])) by (le))
+      > 3
+    for: 5m
+    labels:
+      severity: P2
+      service: ai-sre
+    annotations:
+      summary: "AI SRE RCA p95 > 3s (target < 3s)"
+
+  - alert: AISREActiveAnomaliesHigh
+    expr: rinco_ai_sre_active_anomalies > 8
+    for: 5m
+    labels:
+      severity: P2
+      service: ai-sre
+    annotations:
+      summary: "More than 8 active anomalies detected"
+
+  - alert: RAGChatLatencyP99High
+    expr: |
+      histogram_quantile(0.99, sum(rate(rag_chat_latency_seconds_bucket[5m])) by (le)) > 5
+    for: 5m
+    labels:
+      severity: P2
+      service: rag-chatbot
+    annotations:
+      summary: "RAG chat p99 latency > 5s"
+
+  - alert: STTTranscriptionLatencyHigh
+    expr: |
+      histogram_quantile(0.95, sum(rate(transcribe_latency_seconds_bucket[5m])) by (le, language)) > 30
+    for: 5m
+    labels:
+      severity: P2
+      service: stt
+    annotations:
+      summary: "STT p95 transcription latency > 30s for {{ $labels.language }}"
+
+  - alert: STTNoRequestsIn30m
+    expr: rate(transcribe_requests_total[10m]) == 0
+    for: 30m
+    labels:
+      severity: P3
+      service: stt
+    annotations:
+      summary: "STT has received no requests in 30m"
+
+  - alert: RAGChatEmbedderMissing
+    expr: rag_chat_requests_total == 0
+    for: 10m
+    labels:
+      severity: P3
+      service: rag-chatbot
+    annotations:
+      summary: "RAG chat 0 requests in 10m (embedder may be down)"
+
+# ============================================================
+# 2. Cost & capacity planning
+# ============================================================
+- name: rinco.cost.info
+  interval: 5m
+  rules:
+  - alert: AIInferenceCostSpike
+    expr: |
+      sum(increase(ai_inference_cost_usd_total[1h])) > 50
+    for: 0m
+    labels:
+      severity: P2
+      team: finops
+    annotations:
+      summary: "AI inference cost > $50/hr (review tenant {{ $labels.tenant_id }})"
+
+  - alert: AIRequestVolumeTenantAnomaly
+    expr: |
+      sum by (tenant_id) (rate(ai_inference_requests_total[1h])) > 1000
+    for: 30m
+    labels:
+      severity: P2
+      team: finops
+    annotations:
+      summary: "Tenant {{ $labels.tenant_id }} consuming > 1000 AI req/s"
+
+  - alert: BandwidthEgressHigh
+    expr: |
+      rate(node_network_transmit_bytes_total{device="eth0"}[5m]) > 500 * 1024 * 1024
+    for: 15m
+    labels:
+      severity: P2
+      team: finops
+    annotations:
+      summary: "Egress > 500 MB/s on {{ $labels.instance }}"
+
+  - alert: StorageGrowthProjected
+    expr: |
+      predict_linear(rinco_storage_used_bytes[6h], 24*3600) > 1.5 * rinco_storage_quota_bytes
+    for: 1h
+    labels:
+      severity: P2
+      team: finops
+    annotations:
+      summary: "Storage projected to exceed quota in 24h"
+
+  - alert: SessionsPerTenantHigh
+    expr: |
+      max by (tenant_id) (rinco_active_sessions) > 10000
+    for: 15m
+    labels:
+      severity: P2
+      team: finops
+    annotations:
+      summary: "Tenant {{ $labels.tenant_id }} > 10k active sessions (capacity)"
+
+# ============================================================
+# 3. Drift detection (data + model)
+# ============================================================
+- name: rinco.drift.info
+  interval: 5m
+  rules:
+  - alert: FeatureDrift
+    expr: |
+      rinco_feature_drift_score > 0.3
+    for: 30m
+    labels:
+      severity: P2
+      service: lead-scoring
+    annotations:
+      summary: "Feature drift score > 0.3 for {{ $labels.feature }}"
+
+  - alert: ChatTopicDistributionShift
+    expr: |
+      abs(
+        avg_over_time(rinco_chat_topic_entropy[1h])
+        - avg_over_time(rinco_chat_topic_entropy[24h] offset 7d)
+      ) > 0.5
+    for: 1h
+    labels:
+      severity: P3
+      service: chat-engine
+    annotations:
+      summary: "Chat topic entropy shifted > 0.5 vs. last week"
+
+  - alert: ConversionRateAnomaly
+    expr: |
+      abs(
+        avg_over_time(rinco_crm_conversion_rate[1h])
+        - avg_over_time(rinco_crm_conversion_rate[24h] offset 7d)
+      ) > 0.1
+    for: 1h
+    labels:
+      severity: P3
+      service: crm
+    annotations:
+      summary: "Conversion rate shifted > 10% vs. last week"
+
+# ============================================================
+# 4. Operational / informational
+# ============================================================
+- name: rinco.ops.info
+  interval: 5m
+  rules:
+  - alert: PostgresConnectionsGrowing
+    expr: |
+      deriv(pg_stat_activity_count[30m]) > 5
+    for: 30m
+    labels:
+      severity: P3
+      team: sre
+    annotations:
+      summary: "Postgres connections growing > 5/min on {{ $labels.instance }}"
+
+  - alert: ClusterAutoscalerScaleUpPending
+    expr: |
+      kube_cluster_autoscaler_buffer_underprovisioned > 0
+    for: 10m
+    labels:
+      severity: P3
+      team: sre
+    annotations:
+      summary: "Cluster has under-provisioned buffer > 0"
+
+  - alert: CertExpiringSoon
+    expr: |
+      (ssl_cert_not_after - time()) / 86400 < 14
+    for: 1h
+    labels:
+      severity: P3
+      team: sre
+    annotations:
+      summary: "TLS cert expires in < 14d ({{ $labels.instance }})"
+
+  - alert: AuditLogLag
+    expr: |
+      time() - rinco_audit_log_last_ts > 300
+    for: 5m
+    labels:
+      severity: P3
+      team: sre
+    annotations:
+      summary: "Audit log lag > 5m (sink issue?)"
