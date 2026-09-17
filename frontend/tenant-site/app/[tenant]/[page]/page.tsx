@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import type { Metadata } from "next";
 import { tenantApi } from "@/lib/api";
 import { PageRenderer } from "@/components/renderer/PageRenderer";
 import { getMockPage, getMockTenant } from "@/lib/mock-data";
@@ -8,37 +9,50 @@ interface PageProps {
   params: Promise<{ tenant: string; page: string }>;
 }
 
+async function loadSubpage(
+  tenantSlug: string,
+  pageSlug: string,
+): Promise<{ tenant: Tenant | null; page: Page | null }> {
+  const [tenant, page] = await Promise.all([
+    tenantApi.getTenant(tenantSlug),
+    tenantApi.getPage(tenantSlug, pageSlug),
+  ]);
+  return {
+    tenant: tenant ?? getMockTenant(tenantSlug) ?? null,
+    page: page ?? getMockPage(tenantSlug, pageSlug) ?? null,
+  };
+}
+
 export default async function TenantSubPage({ params }: PageProps) {
   const { tenant: tenantSlug, page: pageSlug } = await params;
+  const { tenant, page } = await loadSubpage(tenantSlug, pageSlug);
 
-  let tenant: Tenant | undefined;
-  let page: Page | undefined;
-
-  try {
-    const [tenantResult, pageResult] = await Promise.all([
-      tenantApi.getTenant(tenantSlug),
-      tenantApi.getPage(tenantSlug, pageSlug),
-    ]);
-    tenant = tenantResult;
-    page = pageResult ?? undefined;
-  } catch {
-    tenant = getMockTenant(tenantSlug);
-    page = getMockPage(tenantSlug, pageSlug);
-  }
-
-  if (!tenant || !page) {
-    notFound();
-  }
+  if (!tenant || !page) notFound();
 
   return <PageRenderer page={page} tenant={tenant} />;
 }
 
-export async function generateMetadata({ params }: PageProps) {
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tenant: tenantSlug, page: pageSlug } = await params;
-  const tenant = getMockTenant(tenantSlug);
-  const page = getMockPage(tenantSlug, pageSlug);
+
+  let tenant = await tenantApi.getTenant(tenantSlug).catch(() => null);
+  let page = await tenantApi.getPage(tenantSlug, pageSlug).catch(() => null);
+  if (!tenant) tenant = getMockTenant(tenantSlug) ?? null;
+  if (!page) page = getMockPage(tenantSlug, pageSlug) ?? null;
+
+  const seo = page?.seo;
+  const tenantName = tenant?.name ?? tenantSlug;
   return {
-    title: page?.title ?? `${pageSlug} - ${tenant?.name ?? tenantSlug} | RINCO`,
-    description: page?.description ?? `${pageSlug} of ${tenant?.name ?? tenantSlug}`,
+    title: seo?.title ?? page?.title ?? `${pageSlug} - ${tenantName} | RINCO`,
+    description: seo?.description ?? page?.description ?? `${pageSlug} of ${tenantName}`,
+    openGraph: {
+      title: seo?.title ?? page?.title ?? `${pageSlug} - ${tenantName}`,
+      description: seo?.description ?? page?.description ?? undefined,
+      images: seo?.image ? [{ url: seo.image }] : undefined,
+      type: "website",
+    },
+    alternates: {
+      canonical: `/${tenantSlug}/${pageSlug}`,
+    },
   };
 }

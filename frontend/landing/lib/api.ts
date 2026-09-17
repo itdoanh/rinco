@@ -1,4 +1,15 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8085";
+/**
+ * Landing API client.
+ *
+ * - Pages: landing:8086
+ * - Leads: lead:8085
+ * - CAPI tracking: meta-capi:8098
+ */
+import { httpUrl } from "@rinco/ui";
+
+const LANDING_API = httpUrl("landing");
+const LEAD_API = httpUrl("lead");
+const META_CAPI_API = httpUrl("meta-capi");
 
 interface FetchOptions extends RequestInit {
   tenantSlug?: string;
@@ -9,7 +20,7 @@ class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public data?: unknown
+    public data?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -18,13 +29,11 @@ class ApiError extends Error {
 
 async function fetchWithTimeout(
   url: string,
-  options: RequestInit & { timeout?: number }
+  options: RequestInit & { timeout?: number },
 ): Promise<Response> {
   const { timeout = 30000, ...fetchOptions } = options;
-  
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
-
   try {
     const response = await fetch(url, {
       ...fetchOptions,
@@ -36,92 +45,79 @@ async function fetchWithTimeout(
   }
 }
 
-export async function apiClient<T>(
+async function request<T>(
+  baseUrl: string,
   endpoint: string,
-  options: FetchOptions = {}
+  options: FetchOptions = {},
 ): Promise<T> {
-  const {
-    tenantSlug,
-    headers = {},
-    ...fetchOptions
-  } = options;
-
+  const { tenantSlug, headers = {}, ...fetchOptions } = options;
   const requestHeaders: Record<string, string> = {
     "Content-Type": "application/json",
+    Accept: "application/json",
     ...(headers as Record<string, string>),
   };
-
-  if (tenantSlug) {
-    requestHeaders["X-Tenant-Slug"] = tenantSlug;
-  }
-
-  const url = `${API_BASE_URL}${endpoint}`;
+  if (tenantSlug) requestHeaders["X-Tenant-Slug"] = tenantSlug;
+  const url = `${baseUrl}${endpoint}`;
 
   try {
     const response = await fetchWithTimeout(url, {
       ...fetchOptions,
       headers: requestHeaders,
     });
-
     const data = await response.json().catch(() => null);
-
     if (!response.ok) {
       throw new ApiError(
-        data?.message || "An error occurred",
+        (data as { message?: string } | null)?.message || `HTTP ${response.status}`,
         response.status,
-        data
+        data,
       );
     }
-
     return data as T;
   } catch (error) {
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    
+    if (error instanceof ApiError) throw error;
     if (error instanceof Error && error.name === "AbortError") {
       throw new ApiError("Request timeout", 408);
     }
-    
     throw new ApiError(
       error instanceof Error ? error.message : "Network error",
-      0
+      0,
     );
   }
 }
 
-// API methods
 export const api = {
-  // Lead endpoints
+  /** Submit lead form to lead-service */
   submitLead: (data: Record<string, unknown>, tenantSlug?: string) =>
-    apiClient("/api/leads", {
+    request(LANDING_API, "/v1/leads", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, tenantSlug }),
       tenantSlug,
     }),
 
-  // Page endpoints
+  /** Get CMS page from landing-service */
   getPage: (tenantSlug: string, pageSlug: string) =>
-    apiClient(`/landing/pages/${tenantSlug}/${pageSlug}`, {
+    request<{ data?: unknown } | unknown>(LANDING_API, `/v1/landing/pages/${tenantSlug}/${pageSlug}`, {
       tenantSlug,
     }),
 
-  // Tenant endpoints
+  /** Get tenant metadata */
   getTenant: (tenantSlug: string) =>
-    apiClient(`/tenants/${tenantSlug}`),
+    request(LANDING_API, `/v1/landing/tenants/${tenantSlug}`, { tenantSlug }),
 
-  // Tracking endpoints
-  trackEvent: (event: Record<string, unknown>) =>
-    apiClient("/api/track", {
+  /** Track client-side event (analytics) */
+  trackEvent: (event: Record<string, unknown>, tenantSlug?: string) =>
+    request(LEAD_API, "/v1/track", {
       method: "POST",
       body: JSON.stringify(event),
+      tenantSlug,
     }),
 
-  // CAPI endpoints
-  sendCapiEvent: (event: Record<string, unknown>) =>
-    apiClient("/api/capi", {
+  /** Send server-side CAPI conversion to meta-capi:8098 */
+  sendCapiEvent: (event: Record<string, unknown>, tenantSlug?: string) =>
+    request(META_CAPI_API, "/v1/capi/events", {
       method: "POST",
       body: JSON.stringify(event),
+      tenantSlug,
     }),
 };
 

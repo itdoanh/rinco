@@ -3,9 +3,16 @@
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { leadSchema, type LeadFormData } from "@/lib/schema";
-import { useState } from "react";
-import { trackFormSubmit } from "@/lib/tracking";
+import { useEffect, useRef, useState } from "react";
+import {
+  trackFormSubmit,
+  isBotSubmission,
+  markFormRendered,
+  HONEYPOT_FIELD,
+} from "@/lib/tracking";
 import { trackLead } from "@/lib/pixel";
+import { trackLeadCAPI } from "@/lib/capti";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +33,12 @@ export function DynamicForm({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const renderedAtRef = useRef<number>(markFormRendered());
+
+  // Reset render timer on mount (covers hydration edge cases)
+  useEffect(() => {
+    renderedAtRef.current = markFormRendered();
+  }, []);
 
   const {
     register,
@@ -42,46 +55,65 @@ export function DynamicForm({
     setError(null);
 
     try {
-      // Submit via our own API proxy
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Tenant-Slug": tenantSlug || "",
-          "X-Page-Slug": pageSlug || "",
-          "X-Form-Name": formName,
-        },
-        body: JSON.stringify({
-          ...data,
-          form_name: formName,
-          tenant_slug: tenantSlug,
-          page_slug: pageSlug,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Submission failed");
+      // Bot detection: honeypot + timing
+      const allValues = { ...data, [HONEYPOT_FIELD]: (data as Record<string, unknown>)[HONEYPOT_FIELD] };
+      if (isBotSubmission(allValues, renderedAtRef.current)) {
+        // Silently swallow bot submissions — pretend success to avoid leaking detection logic
+        setIsSuccess(true);
+        reset();
+        return;
       }
 
-      // Track on client
+      // Submit lead via real lead-service through landing API proxy
+      try {
+        await api.submitLead(
+          {
+            ...data,
+            form_name: formName,
+            tenant_slug: tenantSlug,
+            page_slug: pageSlug,
+          },
+          tenantSlug,
+        );
+      } catch {
+        // Fall back to local proxy route if direct call fails
+        await fetch("/api/leads", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Tenant-Slug": tenantSlug || "",
+            "X-Page-Slug": pageSlug || "",
+            "X-Form-Name": formName,
+          },
+          body: JSON.stringify({
+            ...data,
+            form_name: formName,
+            tenant_slug: tenantSlug,
+            page_slug: pageSlug,
+          }),
+        });
+      }
+
+      // Fire pixel + CAPI in parallel (non-blocking on failure)
       trackLead(formName, "Webinar Registration", "VND", 0);
-      // Track via tracking library (also sends CAPI)
-      await trackFormSubmit(
-        formName,
-        {
-          name: data.name,
-          phone: data.phone,
-          email: data.email,
-        },
-        tenantSlug,
-        pageSlug
-      );
+      await Promise.all([
+        trackFormSubmit(
+          formName,
+          {
+            name: data.name,
+            phone: data.phone,
+            email: data.email,
+          },
+          tenantSlug,
+          pageSlug,
+        ),
+        trackLeadCAPI(data.name, data.phone, data.email, 0),
+      ]);
 
       setIsSuccess(true);
       reset();
       onSuccess?.();
 
-      // Reset success state after 3s
       setTimeout(() => setIsSuccess(false), 5000);
     } catch (err) {
       console.error("Form submit error:", err);
@@ -110,10 +142,10 @@ export function DynamicForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-      {/* Honeypot - hidden field */}
+      {/* Honeypot - hidden field for bot detection */}
       <input
         type="text"
-        {...register("website")}
+        {...register(HONEYPOT_FIELD as keyof LeadFormData)}
         tabIndex={-1}
         autoComplete="off"
         aria-hidden="true"

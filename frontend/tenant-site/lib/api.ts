@@ -1,15 +1,16 @@
 /**
  * Tenant site API client.
  *
- * Provides typed wrappers around the tenant-site BFF (port 8082).
- * Every call resolves tenant context from middleware (x-tenant-slug)
- * and gracefully falls back to local mock data on network failure so
- * the page still renders during demo / offline development.
+ * Resolves CMS pages from landing:8086 and tenant metadata from tenant:8082.
+ * Falls back to local mock data on network failure so the page still renders
+ * during demo / offline development.
  */
 import type { Page, Tenant } from "./schema";
 import { getMockPage, getMockTenant } from "./mock-data";
+import { httpUrl } from "@rinco/ui";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+const TENANT_API = httpUrl("tenant");
+const LANDING_API = httpUrl("landing");
 
 interface FetchOptions extends RequestInit {
   tenantSlug?: string;
@@ -26,50 +27,39 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiClient<T = unknown>(
+async function request<T>(
+  baseUrl: string,
   endpoint: string,
   options: FetchOptions = {},
-): Promise<T> {
+): Promise<T | null> {
   const { tenantSlug, headers = {}, ...fetchOptions } = options;
-
   const requestHeaders: Record<string, string> = {
     "Content-Type": "application/json",
+    Accept: "application/json",
     ...(headers as Record<string, string>),
   };
-
-  if (tenantSlug) {
-    requestHeaders["X-Tenant-Slug"] = tenantSlug;
-  }
-
-  const url = `${API_BASE_URL}${endpoint}`;
+  if (tenantSlug) requestHeaders["X-Tenant-Slug"] = tenantSlug;
 
   try {
-    const response = await fetch(url, {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 8000);
+    const res = await fetch(`${baseUrl}${endpoint}`, {
       ...fetchOptions,
       headers: requestHeaders,
+      signal: ctrl.signal,
     });
-
-    const data = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new ApiError(
-        (data as { message?: string } | null)?.message || "An error occurred",
-        response.status,
-        data,
-      );
+    clearTimeout(t);
+    if (!res.ok) {
+      throw new ApiError(`HTTP ${res.status}`, res.status);
     }
-
-    return data as T;
-  } catch (error) {
-    if (error instanceof ApiError) throw error;
-    throw new ApiError(
-      error instanceof Error ? error.message : "Network error",
-      0,
-    );
+    const data = (await res.json().catch(() => null)) as T | null;
+    return data ?? null;
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError(err instanceof Error ? err.message : "Network error", 0);
   }
 }
 
-// --- Types ---
 export type TenantBranding = {
   primary: string;
   secondary: string;
@@ -79,17 +69,15 @@ export type TenantBranding = {
 };
 
 export type TenantFull = Tenant;
-
 export type TenantPageData = Page;
 
 export const tenantApi = {
   getTenant: async (tenantSlug: string): Promise<Tenant> => {
     try {
-      const result = await apiClient<Tenant>(
-        `/tenants/${tenantSlug}`,
-        { tenantSlug },
-      );
-      return (result as Tenant | null) ?? (getMockTenant(tenantSlug) as Tenant);
+      const result = await request<Tenant>(TENANT_API, `/v1/tenants/${tenantSlug}`, {
+        tenantSlug,
+      });
+      return result ?? (getMockTenant(tenantSlug) as Tenant);
     } catch {
       return getMockTenant(tenantSlug) as Tenant;
     }
@@ -97,12 +85,15 @@ export const tenantApi = {
 
   getTenantPages: async (tenantSlug: string): Promise<Page[]> => {
     try {
-      const result = await apiClient<Page[]>(
-        `/landing/pages/${tenantSlug}`,
+      const result = await request<{ data?: Page[] } | Page[]>(
+        LANDING_API,
+        `/v1/landing/pages/${tenantSlug}`,
         { tenantSlug },
       );
+      const pages = Array.isArray(result) ? result : result?.data ?? [];
+      if (pages.length > 0) return pages;
       const fallback = getMockTenant(tenantSlug);
-      return result ?? fallback?.pages ?? [];
+      return fallback?.pages ?? [];
     } catch {
       const fallback = getMockTenant(tenantSlug);
       return fallback?.pages ?? [];
@@ -114,21 +105,31 @@ export const tenantApi = {
     pageSlug: string,
   ): Promise<Page | null> => {
     try {
-      const result = await apiClient<Page>(
-        `/landing/pages/${tenantSlug}/${pageSlug}`,
+      const result = await request<{ data?: Page } | Page>(
+        LANDING_API,
+        `/v1/landing/pages/${tenantSlug}/${pageSlug}`,
         { tenantSlug },
       );
-      return result ?? getMockPage(tenantSlug, pageSlug) ?? null;
+      const page = (result as { data?: Page } | null)?.data ?? (result as Page | null);
+      return page ?? getMockPage(tenantSlug, pageSlug) ?? null;
     } catch {
       return getMockPage(tenantSlug, pageSlug) ?? null;
     }
   },
 
+  /** Submits lead via Next.js rewrite (`/api/leads` → lead:8085). */
   submitLead: async (data: Record<string, unknown>, tenantSlug: string) => {
-    return apiClient("/api/leads", {
+    const res = await fetch("/api/leads", {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-Slug": tenantSlug,
+      },
       body: JSON.stringify(data),
-      tenantSlug,
     });
+    if (!res.ok) {
+      throw new ApiError(`HTTP ${res.status}`, res.status);
+    }
+    return res.json().catch(() => ({}));
   },
 };

@@ -4,9 +4,20 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useMeetingStore, type Participant } from "@/lib/store";
 import { getUserMedia, createPeerConnection, addTracksToConnection } from "@/lib/webrtc";
 import { SignalingClient, type SignalingMessage } from "@/lib/signaling";
+import { wsUrl } from "@rinco/ui";
 
 // chat-engine WebSocket API (port 8101) for meeting signaling.
-const SIGNALING_URL = process.env.NEXT_PUBLIC_SIGNALING_URL || "ws://localhost:8101";
+function getSignalingUrl(): string {
+  const env = process.env.NEXT_PUBLIC_SIGNALING_URL;
+  if (env) return env;
+  try {
+    return wsUrl("chat-engine");
+  } catch {
+    return "ws://localhost:8101";
+  }
+}
+
+const SIGNALING_URL = getSignalingUrl();
 
 interface UseWebRTCOptions {
   roomId: string;

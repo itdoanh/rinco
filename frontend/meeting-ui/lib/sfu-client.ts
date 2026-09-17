@@ -182,11 +182,16 @@ export class SfuClient {
   }
 }
 
-/** Build the default SFU URL from env or fall back to localhost dev. */
+/** Build the default SFU URL from env or services registry. */
 export function defaultSfuUrl(roomId: string, userId: string): string {
-  const base =
-    (typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_SFU_URL
-      : undefined) ?? "ws://localhost:8105";
+  let base: string;
+  try {
+    // Dynamic require to avoid SSR issues with shared ui package
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { wsUrl } = require("@rinco/ui") as { wsUrl?: (svc: string) => string };
+    base = wsUrl?.("webrtc-sfu") ?? process.env.NEXT_PUBLIC_SFU_URL ?? "ws://localhost:8102";
+  } catch {
+    base = process.env.NEXT_PUBLIC_SFU_URL ?? "ws://localhost:8102";
+  }
   return `${base.replace(/\/$/, "")}/v1/ws?room_id=${encodeURIComponent(roomId)}&user_id=${encodeURIComponent(userId)}`;
 }

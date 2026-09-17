@@ -144,3 +144,32 @@ export function saveUTMToStorage(utm: Record<string, string>): void {
     // Ignore storage errors
   }
 }
+
+/**
+ * Honeypot field name — bots tend to fill URL inputs.
+ * MUST match the hidden field name in the form.
+ */
+export const HONEYPOT_FIELD = "website_url";
+
+/** Minimum elapsed time (ms) before a form submission is considered human. */
+export const MIN_FORM_FILL_MS = 1500;
+
+/**
+ * Returns true if the form payload looks like a bot submission.
+ * Checks: (1) honeypot field has any value, (2) submitted too quickly.
+ */
+export function isBotSubmission(
+  formData: Record<string, unknown>,
+  renderedAt: number,
+): boolean {
+  const honeypot = formData[HONEYPOT_FIELD];
+  if (typeof honeypot === "string" && honeypot.trim().length > 0) return true;
+  const elapsedMs = Date.now() - renderedAt;
+  if (elapsedMs < MIN_FORM_FILL_MS) return true;
+  return false;
+}
+
+/** Record the render time for a form — call from useEffect on mount. */
+export function markFormRendered(): number {
+  return Date.now();
+}

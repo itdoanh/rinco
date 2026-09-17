@@ -5,7 +5,9 @@ import { useSearchParams } from "next/navigation";
 import { VideoGrid } from "@/components/video/VideoGrid";
 import { ControlBar } from "@/components/controls/ControlBar";
 import { RoomJoin } from "@/components/meeting/RoomJoin";
+import { Chat } from "@/components/meeting/Chat";
 import { useWebRTC } from "@/hooks/useWebRTC";
+import { useChat } from "@/hooks/useChat";
 import { useMeetingStore } from "@/lib/store";
 
 interface PageProps {
@@ -18,6 +20,7 @@ function MeetingContent({ roomId }: { roomId: string }) {
   const [userName, setUserName] = useState<string | null>(
     nameParam.trim() ? nameParam : null,
   );
+  const [chatOpen, setChatOpen] = useState(false);
 
   // Resolve initial userName from session storage if available (set by RoomJoin).
   useEffect(() => {
@@ -34,7 +37,8 @@ function MeetingContent({ roomId }: { roomId: string }) {
   const userId = `user-${Date.now()}`;
 
   const { isConnecting, error } = useWebRTC({ roomId, userId, userName });
-  const { isConnected, isRecording } = useMeetingStore();
+  const chat = useChat({ roomId, userId, userName });
+  const { isConnected, isRecording, chatMessages } = useMeetingStore();
 
   if (isConnecting) {
     return (
@@ -102,8 +106,26 @@ function MeetingContent({ roomId }: { roomId: string }) {
         <VideoGrid />
       </div>
 
+      {/* Chat panel (slide-in) */}
+      {chatOpen && (
+        <div className="absolute right-0 top-14 bottom-16 w-full max-w-sm z-30 shadow-2xl">
+          <Chat
+            messages={chatMessages.map((m) => ({
+              id: m.id,
+              senderId: m.senderId,
+              senderName: m.senderName,
+              content: m.content,
+              timestamp: m.timestamp instanceof Date ? m.timestamp.getTime() : m.timestamp,
+            }))}
+            currentUserId={userId}
+            onSend={(text) => chat.send(text)}
+            onClose={() => setChatOpen(false)}
+          />
+        </div>
+      )}
+
       {/* Control bar */}
-      <ControlBar />
+      <ControlBar onToggleChat={() => setChatOpen((v) => !v)} chatOpen={chatOpen} />
     </div>
   );
 }

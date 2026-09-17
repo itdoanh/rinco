@@ -30,7 +30,12 @@ import { ChatPanel } from "./ChatPanel";
 import { ParticipantList } from "./ParticipantList";
 import { cn } from "@/lib/utils";
 
-export function ControlBar() {
+export interface ControlBarProps {
+  onToggleChat?: () => void;
+  chatOpen?: boolean;
+}
+
+export function ControlBar({ onToggleChat, chatOpen }: ControlBarProps = {}) {
   const {
     isMuted,
     isVideoOn,
@@ -162,16 +167,29 @@ export function ControlBar() {
           {/* Right: Additional controls */}
           <div className="flex items-center gap-2">
             {/* Chat */}
-            <Dialog open={showChat} onOpenChange={setShowChat}>
-              <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" className="rounded-full">
-                  <MessageSquare className="w-5 h-5" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-md h-[80vh] p-0">
-                <ChatPanel onClose={() => setShowChat(false)} />
-              </DialogContent>
-            </Dialog>
+            {onToggleChat ? (
+              <Button
+                variant={chatOpen ? "secondary" : "ghost"}
+                size="icon"
+                className="rounded-full"
+                onClick={onToggleChat}
+                aria-label="Toggle chat"
+                aria-pressed={chatOpen}
+              >
+                <MessageSquare className="w-5 h-5" />
+              </Button>
+            ) : (
+              <Dialog open={showChat} onOpenChange={setShowChat}>
+                <DialogTrigger asChild>
+                  <Button variant="ghost" size="icon" className="rounded-full">
+                    <MessageSquare className="w-5 h-5" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-md h-[80vh] p-0">
+                  <ChatPanel onClose={() => setShowChat(false)} />
+                </DialogContent>
+              </Dialog>
+            )}
 
             {/* Participants */}
             <Dialog open={showParticipants} onOpenChange={setShowParticipants}>

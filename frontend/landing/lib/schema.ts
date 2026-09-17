@@ -5,7 +5,9 @@ export const leadSchema = z.object({
   phone: z.string().min(10, "Số điện thoại không hợp lệ").max(15),
   email: z.string().email("Email không hợp lệ").optional().or(z.literal("")),
   channel: z.enum(["zalo", "phone"]).optional(),
-  website: z.string().optional(), // honeypot
+  // Honeypot fields — bots fill these, real users never see them.
+  website: z.string().optional(),
+  website_url: z.string().optional(),
   tenant_slug: z.string().optional(),
   page_slug: z.string().optional(),
   utm_source: z.string().optional(),

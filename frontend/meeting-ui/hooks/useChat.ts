@@ -1,136 +1,96 @@
+/**
+ * React hook for the in-meeting chat transport.
+ *
+ * Mounts a `ChatClient` WebSocket to chat-engine:8101 and pipes
+ * incoming messages into the global meeting store.
+ */
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import type { ChatMessage } from "@/lib/types";
+import { useEffect, useRef } from "react";
+import { ChatClient, type ChatServerMessage } from "@/lib/chat-client";
+import { useMeetingStore } from "@/lib/store";
 
-/**
- * In-meeting chat hook.
- *
- * Connects to the chat-engine WebSocket (``ws://localhost:8094`` by
- * default — set ``NEXT_PUBLIC_CHAT_WS_URL`` to override) and exposes
- * the message list + a ``sendMessage`` helper.
- *
- * The connection is opened lazily on the first ``sendMessage`` call
- * and on the first effect run.  In a real deployment the chat engine
- * would be authenticated via a JWT — for the moment we accept any
- * ``userId``.
- */
 export interface UseChatOptions {
   roomId: string;
   userId: string;
   userName: string;
-  /** Override the WebSocket URL (defaults to NEXT_PUBLIC_CHAT_WS_URL or ws://localhost:8094). */
-  url?: string;
+  enabled?: boolean;
 }
 
-export function useChat({ roomId, userId, userName, url }: UseChatOptions) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isConnected, setIsConnected] = useState(false);
-  const wsRef = useRef<WebSocket | null>(null);
+interface IncomingMessage {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  content: string;
+  timestamp: number;
+}
 
-  const wsUrl =
-    url ??
-    (typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_CHAT_WS_URL
-      : undefined) ??
-    "ws://localhost:8094";
+function asIncomingMessage(m: unknown): IncomingMessage | null {
+  if (!m || typeof m !== "object") return null;
+  const o = m as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.sender_id !== "string") return null;
+  if (typeof o.sender_name !== "string" || typeof o.content !== "string") return null;
+  return {
+    id: o.id,
+    sender_id: o.sender_id,
+    sender_name: o.sender_name,
+    content: o.content,
+    timestamp: typeof o.timestamp === "number" ? o.timestamp : Date.now(),
+  };
+}
+
+export function useChat({ roomId, userId, userName, enabled = true }: UseChatOptions) {
+  const clientRef = useRef<ChatClient | null>(null);
+  const addChatMessage = useMeetingStore((s) => s.addChatMessage);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!roomId) return;
+    if (!enabled || !roomId || !userId) return;
 
-    let cancelled = false;
-    let socket: WebSocket | null = null;
-    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const connect = (): void => {
-      try {
-        socket = new WebSocket(`${wsUrl}/ws/${roomId}?user_id=${userId}`);
-      } catch {
-        return;
-      }
-      wsRef.current = socket;
-
-      socket.onopen = () => {
-        if (cancelled) return;
-        setIsConnected(true);
-      };
-
-      socket.onmessage = (event) => {
-        if (cancelled) return;
-        try {
-          const data = JSON.parse(event.data) as
-            | ChatMessage
-            | { type?: string; message?: ChatMessage };
-          const message: ChatMessage | undefined =
-            "senderId" in data
-              ? data
-              : (data as { message?: ChatMessage }).message;
-          if (message && message.id) {
-            setMessages((prev) =>
-              prev.some((m) => m.id === message.id) ? prev : [...prev, message],
-            );
+    const client = new ChatClient({
+      roomId,
+      userId,
+      userName,
+      onMessage: (msg: ChatServerMessage) => {
+        if (msg.type === "message") {
+          const m = asIncomingMessage(msg);
+          if (m) {
+            addChatMessage({
+              id: m.id,
+              senderId: m.sender_id,
+              senderName: m.sender_name,
+              content: m.content,
+              timestamp: new Date(m.timestamp),
+            });
           }
-        } catch {
-          /* ignore malformed payloads */
+        } else if (msg.type === "history") {
+          for (const raw of msg.messages) {
+            const m = asIncomingMessage(raw);
+            if (m) {
+              addChatMessage({
+                id: m.id,
+                senderId: m.sender_id,
+                senderName: m.sender_name,
+                content: m.content,
+                timestamp: new Date(m.timestamp),
+              });
+            }
+          }
         }
-      };
-
-      socket.onclose = () => {
-        if (cancelled) return;
-        setIsConnected(false);
-        // Auto-reconnect after 2s — chat is best-effort during a meeting.
-        reconnectTimer = setTimeout(connect, 2000);
-      };
-
-      socket.onerror = () => {
-        try {
-          socket?.close();
-        } catch {
-          /* ignore */
-        }
-      };
-    };
-
-    connect();
+      },
+      onError: (err) => console.warn("[chat] ws error", err),
+    });
+    clientRef.current = client;
+    client.connect();
 
     return () => {
-      cancelled = true;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      try {
-        socket?.close();
-      } catch {
-        /* ignore */
-      }
-      wsRef.current = null;
-      setIsConnected(false);
+      client.leave();
+      clientRef.current = null;
     };
-  }, [roomId, userId, wsUrl]);
+  }, [roomId, userId, userName, enabled, addChatMessage]);
 
-  const sendMessage = useCallback(
-    (text: string) => {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      const message: ChatMessage = {
-        id:
-          typeof crypto !== "undefined" && "randomUUID" in crypto
-            ? crypto.randomUUID()
-            : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        senderId: userId,
-        senderName: userName,
-        content: trimmed,
-        timestamp: Date.now(),
-      };
-      // Optimistic echo so the local sender sees their own message immediately.
-      setMessages((prev) =>
-        prev.some((m) => m.id === message.id) ? prev : [...prev, message],
-      );
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify(message));
-      }
-    },
-    [userId, userName],
-  );
+  const send = (content: string): void => {
+    clientRef.current?.sendMessage(content);
+  };
 
-  return { messages, sendMessage, isConnected };
+  return { send };
 }
