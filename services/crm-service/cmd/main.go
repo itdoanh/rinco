@@ -230,6 +230,10 @@ func migrationsList() []migrationFile {
 		{"0008_users_tree", migration0008},
 		{"0009_invite_links", migration0009},
 		{"0010_rls", migration0010},
+		{"0011_lead_pipeline", migration0011},
+		{"0012_workflows", migration0012},
+		{"0013_audit_log", migration0013},
+		{"0014_notifications", migration0014},
 	}
 }
 
@@ -332,6 +336,55 @@ func newEcho(srv *server, h *crmhandler.Server) *echo.Echo {
 	rpc.POST("/CreateActivity", h.CreateActivity)
 	rpc.POST("/MoveSubtree", h.MoveSubtree)
 	rpc.POST("/GetUserTree", h.GetUserTree)
+
+	// Leads (new in loop 203)
+	v1.POST("/leads", h.CreateLead)
+	v1.GET("/leads", h.ListLeads)
+	v1.GET("/leads/:id", h.GetLead)
+	v1.PUT("/leads/:id", h.UpdateLead)
+	v1.DELETE("/leads/:id", h.DeleteLead)
+	v1.POST("/leads/:id/assign", h.AssignLead)
+	v1.POST("/leads/:id/stage", h.MoveLeadStage)
+	v1.POST("/leads/:id/convert", h.ConvertLead)
+	v1.POST("/leads/bulk", h.BulkLeadImport)
+
+	// Pipelines
+	v1.POST("/pipelines", h.CreatePipeline)
+	v1.GET("/pipelines", h.ListPipelines)
+	v1.GET("/pipelines/:id", h.GetPipeline)
+
+	// Workflows
+	v1.POST("/workflows", h.CreateWorkflow)
+	v1.GET("/workflows", h.ListWorkflows)
+	v1.GET("/workflows/:id", h.GetWorkflow)
+	v1.PUT("/workflows/:id", h.UpdateWorkflow)
+	v1.DELETE("/workflows/:id", h.DeleteWorkflow)
+	v1.POST("/workflows/:id/trigger", h.TriggerWorkflow)
+
+	// Notifications
+	v1.POST("/notifications/broadcast", h.BroadcastNotification)
+	v1.GET("/notifications/inbox", h.NotificationInbox)
+	v1.PATCH("/notifications/:id/read", h.MarkNotificationRead)
+	v1.POST("/notifications/:id/dismiss", h.DismissNotification)
+
+	// Audit
+	v1.GET("/audit", h.ListAudit)
+
+	// Sessions
+	v1.GET("/sessions", h.ListSessions)
+	v1.POST("/sessions/:id/revoke", h.RevokeSession)
+
+	// Tags update/delete
+	v1.PUT("/tags/:id", h.UpdateTag)
+	v1.DELETE("/tags/:id", h.DeleteTag)
+
+	// Custom Fields update/delete
+	v1.PUT("/custom-fields/:id", h.UpdateCustomField)
+	v1.DELETE("/custom-fields/:id", h.DeleteCustomField)
+
+	// User promote/demote (sibling of move)
+	tree.PUT("/:tenant_id/users/:id/promote", h.PromoteUser)
+	tree.PUT("/:tenant_id/users/:id/demote", h.DemoteUser)
 
 	return e
 }
@@ -787,4 +840,431 @@ BEGIN
     REFRESH MATERIALIZED VIEW CONCURRENTLY users_with_depth;
 END;
 $$ LANGUAGE plpgsql;
+`
+
+// =============================================================================
+// Migration 0011 (Lead pipeline)
+// =============================================================================
+const migration0011 = `
+CREATE TABLE IF NOT EXISTS pipelines (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    is_default BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_pipelines_tenant ON pipelines(tenant_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_pipelines_default ON pipelines(tenant_id) WHERE is_default = true AND deleted_at IS NULL;
+ALTER TABLE pipelines ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pipelines_tenant_isolation ON pipelines;
+CREATE POLICY pipelines_tenant_isolation ON pipelines
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            current_setting('app.is_admin', true) = 'true'
+            OR EXISTS (
+                SELECT 1 FROM users
+                WHERE id = current_setting('app.current_user_id', true)::UUID
+                AND tenant_id = pipelines.tenant_id
+            )
+        )
+    );
+
+CREATE TABLE IF NOT EXISTS pipeline_stages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    pipeline_id UUID NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL,
+    color TEXT DEFAULT '#6366f1',
+    position INT NOT NULL DEFAULT 0,
+    probability INT NOT NULL DEFAULT 50 CHECK (probability BETWEEN 0 AND 100),
+    sla_hours INT,
+    is_won BOOLEAN DEFAULT false,
+    is_lost BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (pipeline_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_stages_pipeline ON pipeline_stages(pipeline_id, position);
+ALTER TABLE pipeline_stages ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS pipeline_stages_tenant_isolation ON pipeline_stages;
+CREATE POLICY pipeline_stages_tenant_isolation ON pipeline_stages
+    FOR ALL
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+CREATE TABLE IF NOT EXISTS leads (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    pipeline_id UUID REFERENCES pipelines(id) ON DELETE SET NULL,
+    current_stage_id UUID REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+    owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    converted_contact_id UUID,
+    converted_deal_id UUID,
+    full_name TEXT,
+    email TEXT,
+    phone TEXT,
+    company_name TEXT,
+    source TEXT,
+    source_detail TEXT,
+    utm JSONB DEFAULT '{}'::jsonb,
+    fbclid TEXT,
+    fbp TEXT,
+    fbc TEXT,
+    ip_address INET,
+    user_agent TEXT,
+    score DECIMAL(5,2),
+    estimated_value DECIMAL(15,2),
+    currency TEXT DEFAULT 'VND',
+    status TEXT NOT NULL DEFAULT 'NEW' CHECK (status IN (
+        'NEW', 'CONTACTED', 'QUALIFIED', 'PROPOSAL', 'WON', 'LOST', 'ARCHIVED'
+    )),
+    lost_reason TEXT,
+    custom_fields JSONB DEFAULT '{}'::jsonb,
+    tags TEXT[] DEFAULT '{}',
+    next_followup_at TIMESTAMPTZ,
+    last_contacted_at TIMESTAMPTZ,
+    converted_at TIMESTAMPTZ,
+    assigned_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_leads_tenant_status ON leads(tenant_id, status) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_tenant_owner ON leads(tenant_id, owner_user_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_tenant_stage ON leads(tenant_id, current_stage_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_score ON leads(tenant_id, score DESC) WHERE score IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_followup ON leads(tenant_id, next_followup_at) WHERE next_followup_at IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_fbclid ON leads(tenant_id, fbclid) WHERE fbclid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(tenant_id, email) WHERE email IS NOT NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_leads_custom_fields ON leads USING GIN(custom_fields);
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS leads_tenant_isolation ON leads;
+CREATE POLICY leads_tenant_isolation ON leads
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            current_setting('app.is_admin', true) = 'true'
+            OR owner_user_id = current_setting('app.current_user_id', true)::UUID
+            OR owner_user_id IN (
+                SELECT id FROM users
+                WHERE tenant_id = leads.tenant_id
+                AND deleted_at IS NULL
+                AND path <@ get_user_subtree_path(current_setting('app.current_user_id', true)::UUID)
+            )
+        )
+    );
+
+CREATE TABLE IF NOT EXISTS lead_stage_history (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    lead_id UUID NOT NULL REFERENCES leads(id) ON DELETE CASCADE,
+    from_stage_id UUID REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+    to_stage_id UUID REFERENCES pipeline_stages(id) ON DELETE SET NULL,
+    changed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    notes TEXT,
+    changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lead_stage_history_lead ON lead_stage_history(lead_id, changed_at DESC);
+ALTER TABLE lead_stage_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lead_stage_history_tenant_isolation ON lead_stage_history;
+CREATE POLICY lead_stage_history_tenant_isolation ON lead_stage_history
+    FOR ALL
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+CREATE TABLE IF NOT EXISTS lead_assignment_rules (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    strategy TEXT NOT NULL DEFAULT 'round_robin' CHECK (strategy IN (
+        'round_robin', 'least_loaded', 'skill_match', 'manual'
+    )),
+    target_role TEXT,
+    source_filter JSONB DEFAULT '{}'::jsonb,
+    min_score DECIMAL(5,2),
+    is_active BOOLEAN DEFAULT true,
+    last_assigned_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    total_assigned INT DEFAULT 0,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_lead_assign_rules_active ON lead_assignment_rules(tenant_id) WHERE is_active = true;
+ALTER TABLE lead_assignment_rules ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS lead_assignment_rules_tenant_isolation ON lead_assignment_rules;
+CREATE POLICY lead_assignment_rules_tenant_isolation ON lead_assignment_rules
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND current_setting('app.is_admin', true) = 'true'
+    );
+
+CREATE OR REPLACE FUNCTION seed_default_pipeline_for_tenant(p_tenant UUID)
+RETURNS void AS $$
+DECLARE
+    pid UUID;
+BEGIN
+    IF EXISTS (SELECT 1 FROM pipelines WHERE tenant_id = p_tenant AND deleted_at IS NULL) THEN
+        RETURN;
+    END IF;
+    INSERT INTO pipelines (tenant_id, name, description, is_default)
+    VALUES (p_tenant, 'Default Sales Pipeline', 'Default 7-stage sales pipeline', true)
+    RETURNING id INTO pid;
+
+    INSERT INTO pipeline_stages (pipeline_id, tenant_id, name, code, color, position, probability, is_won, is_lost) VALUES
+        (pid, p_tenant, 'New',         'NEW',         '#3b82f6', 1, 10, false, false),
+        (pid, p_tenant, 'Contacted',   'CONTACTED',   '#06b6d4', 2, 25, false, false),
+        (pid, p_tenant, 'Qualified',   'QUALIFIED',   '#10b981', 3, 50, false, false),
+        (pid, p_tenant, 'Proposal',    'PROPOSAL',    '#f59e0b', 4, 70, false, false),
+        (pid, p_tenant, 'Negotiation', 'NEGOTIATION', '#f97316', 5, 85, false, false),
+        (pid, p_tenant, 'Won',         'WON',         '#22c55e', 6, 100, true,  false),
+        (pid, p_tenant, 'Lost',        'LOST',        '#ef4444', 7, 0,   false, true);
+END;
+$$ LANGUAGE plpgsql;
+
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS lead_id UUID REFERENCES leads(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_activities_lead ON activities(tenant_id, lead_id) WHERE lead_id IS NOT NULL;
+`
+
+// =============================================================================
+// Migration 0012 (Workflows)
+// =============================================================================
+const migration0012 = `
+CREATE TABLE IF NOT EXISTS workflows (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    trigger_type TEXT NOT NULL CHECK (trigger_type IN (
+        'stage_change', 'field_change', 'time_based', 'manual', 'lead_created', 'lead_assigned'
+    )),
+    trigger_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    conditions JSONB NOT NULL DEFAULT '{}'::jsonb,
+    actions JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_active BOOLEAN DEFAULT true,
+    run_count INT DEFAULT 0,
+    last_run_at TIMESTAMPTZ,
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_workflows_tenant_active ON workflows(tenant_id) WHERE is_active = true AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_workflows_trigger ON workflows(tenant_id, trigger_type) WHERE is_active = true AND deleted_at IS NULL;
+ALTER TABLE workflows ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS workflows_tenant_isolation ON workflows;
+CREATE POLICY workflows_tenant_isolation ON workflows
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            current_setting('app.is_admin', true) = 'true'
+            OR EXISTS (
+                SELECT 1 FROM users
+                WHERE id = current_setting('app.current_user_id', true)::UUID
+                AND tenant_id = workflows.tenant_id
+                AND deleted_at IS NULL
+                AND role IN ('owner', 'admin', 'manager')
+            )
+        )
+    );
+
+CREATE TABLE IF NOT EXISTS workflow_executions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    workflow_id UUID NOT NULL REFERENCES workflows(id) ON DELETE CASCADE,
+    entity_type TEXT NOT NULL,
+    entity_id UUID NOT NULL,
+    triggered_by TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'success' CHECK (status IN ('success', 'failed', 'partial', 'skipped')),
+    inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+    actions_executed JSONB NOT NULL DEFAULT '[]'::jsonb,
+    error TEXT,
+    execution_ms INT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_exec_workflow ON workflow_executions(workflow_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workflow_exec_entity ON workflow_executions(entity_type, entity_id);
+ALTER TABLE workflow_executions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS workflow_exec_tenant_isolation ON workflow_executions;
+CREATE POLICY workflow_exec_tenant_isolation ON workflow_executions
+    FOR ALL
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+`
+
+// =============================================================================
+// Migration 0013 (Audit log + sessions)
+// =============================================================================
+const migration0013 = `
+CREATE TABLE IF NOT EXISTS audit_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    actor_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    actor_email TEXT,
+    action TEXT NOT NULL,
+    target_type TEXT,
+    target_id UUID,
+    old_value JSONB,
+    new_value JSONB,
+    ip_address INET,
+    user_agent TEXT,
+    trace_id TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_actor ON audit_log(tenant_id, actor_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_action ON audit_log(tenant_id, action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_target ON audit_log(target_type, target_id);
+CREATE INDEX IF NOT EXISTS idx_audit_trace ON audit_log(trace_id) WHERE trace_id IS NOT NULL;
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS audit_log_tenant_isolation ON audit_log;
+CREATE POLICY audit_log_tenant_isolation ON audit_log
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            current_setting('app.is_admin', true) = 'true'
+            OR actor_id = current_setting('app.current_user_id', true)::UUID
+            OR EXISTS (
+                SELECT 1 FROM users
+                WHERE id = current_setting('app.current_user_id', true)::UUID
+                AND tenant_id = audit_log.tenant_id
+                AND role IN ('owner', 'admin', 'manager')
+                AND deleted_at IS NULL
+            )
+        )
+    );
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    token_id TEXT UNIQUE NOT NULL,
+    device_fingerprint TEXT,
+    ip_address INET,
+    user_agent TEXT,
+    login_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_active_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked BOOLEAN DEFAULT false,
+    revoked_at TIMESTAMPTZ,
+    revoked_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(user_id) WHERE NOT revoked;
+ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS user_sessions_tenant_isolation ON user_sessions;
+CREATE POLICY user_sessions_tenant_isolation ON user_sessions
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            user_id = current_setting('app.current_user_id', true)::UUID
+            OR current_setting('app.is_admin', true) = 'true'
+            OR EXISTS (
+                SELECT 1 FROM users
+                WHERE id = current_setting('app.current_user_id', true)::UUID
+                AND tenant_id = user_sessions.tenant_id
+                AND role IN ('owner', 'admin')
+                AND deleted_at IS NULL
+            )
+        )
+    );
+`
+
+// =============================================================================
+// Migration 0014 (Notifications + departments)
+// =============================================================================
+const migration0014 = `
+CREATE TABLE IF NOT EXISTS departments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    leader_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    parent_department_id UUID REFERENCES departments(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ,
+    UNIQUE (tenant_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_departments_tenant ON departments(tenant_id) WHERE deleted_at IS NULL;
+ALTER TABLE departments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS departments_tenant_isolation ON departments;
+CREATE POLICY departments_tenant_isolation ON departments
+    FOR ALL
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+CREATE TABLE IF NOT EXISTS department_members (
+    department_id UUID NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    role TEXT DEFAULT 'member' CHECK (role IN ('leader', 'member')),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (department_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dept_members_user ON department_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_dept_members_tenant ON department_members(tenant_id);
+ALTER TABLE department_members ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS department_members_tenant_isolation ON department_members;
+CREATE POLICY department_members_tenant_isolation ON department_members
+    FOR ALL
+    USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    sender_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    type TEXT NOT NULL CHECK (type IN (
+        'broadcast', 'mention', 'lead_assigned', 'task_due',
+        'workflow', 'invite', 'system'
+    )),
+    title TEXT NOT NULL,
+    body TEXT,
+    link TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    is_read BOOLEAN DEFAULT false,
+    read_at TIMESTAMPTZ,
+    priority TEXT NOT NULL DEFAULT 'NORMAL' CHECK (priority IN ('LOW','NORMAL','HIGH','URGENT')),
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_notif_user_inbox ON notifications(user_id, is_read, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notif_tenant_priority ON notifications(tenant_id, priority, created_at);
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notifications_tenant_isolation ON notifications;
+CREATE POLICY notifications_tenant_isolation ON notifications
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND (
+            user_id = current_setting('app.current_user_id', true)::UUID
+            OR current_setting('app.is_admin', true) = 'true'
+        )
+    );
+
+CREATE TABLE IF NOT EXISTS notification_preferences (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL,
+    email_enabled BOOLEAN DEFAULT true,
+    push_enabled BOOLEAN DEFAULT true,
+    inapp_enabled BOOLEAN DEFAULT true,
+    quiet_hours_start TIME,
+    quiet_hours_end TIME,
+    digest_mode TEXT DEFAULT 'off' CHECK (digest_mode IN ('off','daily','weekly')),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+ALTER TABLE notification_preferences ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS notif_prefs_tenant_isolation ON notification_preferences;
+CREATE POLICY notif_prefs_tenant_isolation ON notification_preferences
+    FOR ALL
+    USING (
+        tenant_id = current_setting('app.current_tenant_id', true)::UUID
+        AND user_id = current_setting('app.current_user_id', true)::UUID
+    );
 `
