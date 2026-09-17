@@ -28,6 +28,7 @@ export interface Tenant {
     maxLeads?: number;
     features?: string[];
   };
+  pages?: Page[];
 }
 
 export interface Block {
