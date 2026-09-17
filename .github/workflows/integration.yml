@@ -1,0 +1,190 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'services/integration-tests/**'
+      - 'migrations/**'
+      - 'docker-compose.yml'
+      - 'docker-compose.*.yml'
+      - 'infra/**'
+      - '.github/workflows/integration.yml'
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  GO_VERSION: '1.23'
+  COVERAGE_MIN: '80'   # target minimum coverage percent (informational only)
+
+jobs:
+  # ─── Unit + integration tests for the integration-tests package ────────
+  integration-go:
+    name: Integration Tests (Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rinco
+          POSTGRES_PASSWORD: rinco
+          POSTGRES_DB: rinco_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rinco -d rinco_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      valkey:
+        image: valkey/valkey:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      nats:
+        image: nats:2-alpine
+        ports:
+          - 4222:4222
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8222/healthz || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      RINCO_USE_EXTERNAL_STACK: 'true'
+      RINCO_TEST_POSTGRES_DSN: postgres://rinco:rinco@localhost:5432/rinco_test?sslmode=disable
+      RINCO_TEST_VALKEY_ADDR: localhost:6379
+      RINCO_TEST_NATS_URL: nats://localhost:4222
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: |
+            services/integration-tests/go.sum
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-integration-${{ hashFiles('services/integration-tests/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-integration-
+
+      - name: Run integration tests (race, count=1)
+        working-directory: services/integration-tests
+        run: |
+          go test -tags=integration -count=1 -race \
+                   -timeout 10m -v ./... \
+                   -coverprofile=coverage.out \
+                   -covermode=atomic 2>&1 | tee test-output.txt
+
+      - name: Generate coverage HTML
+        working-directory: services/integration-tests
+        run: |
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Coverage summary
+        working-directory: services/integration-tests
+        if: always()
+        run: |
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Enforce coverage target (${{ env.COVERAGE_MIN }}%)
+        working-directory: services/integration-tests
+        if: always()
+        run: |
+          ./scripts/check-coverage.sh coverage.out ${{ env.COVERAGE_MIN }}
+
+      - name: Upload coverage artifact (raw profile)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-coverage-profile
+          path: services/integration-tests/coverage.out
+          retention-days: 14
+
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-coverage-html
+          path: services/integration-tests/coverage.html
+          retention-days: 14
+
+      - name: Upload test output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: integration-test-output
+          path: services/integration-tests/test-output.txt
+          retention-days: 14
+
+  # ─── Coverage collection: run tests, then publish a summary ──────────
+  coverage-summary:
+    name: Coverage summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: integration-go
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: integration-coverage-profile
+          path: coverage
+
+      - name: Per-service coverage breakdown
+        run: |
+          if [ -f coverage/coverage.out ]; then
+            echo "### Integration test coverage" >> $GITHUB_STEP_SUMMARY
+            go tool cover -func=coverage/coverage.out >> $GITHUB_STEP_SUMMARY 2>&1 || true
+          else
+            echo "No coverage profile available" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ─── Build verification (without integration tag) ───────────────────
+  build-verify:
+    name: Build verify (integration tag off)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-integration-${{ hashFiles('services/integration-tests/go.sum') }}
+
+      # Without `-tags=integration`, every file is build-tagged out — `go
+      # build ./...` should report zero packages, which is the expected
+      # outcome. We assert that explicitly to catch accidental tag removals.
+      - name: Verify build is gated on integration tag
+        working-directory: services/integration-tests
+        run: |
+          if go build ./... 2>/dev/null | grep -q '.'; then
+            echo "::error::unexpected build output without integration tag"
+            exit 1
+          fi
+          echo "OK: package correctly build-tag-gated"

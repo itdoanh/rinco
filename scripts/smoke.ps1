@@ -8,12 +8,16 @@
 #   pwsh scripts/smoke.ps1                 # localhost
 #   $env:BASE='http://staging'; pwsh scripts/smoke.ps1
 #   pwsh scripts/smoke.ps1 -Strict         # non-2xx is fatal
+#   pwsh scripts/smoke.ps1 -Json           # emit JSON
+#   pwsh scripts/smoke.ps1 -Only go        # only Go services
 # ============================================
 [CmdletBinding()]
 param(
-    [string]$Base   = 'http://localhost',
-    [int]$TimeoutSec = 3,
-    [switch]$Strict
+    [string]$Base       = 'http://localhost',
+    [int]$TimeoutSec    = 3,
+    [switch]$Strict,
+    [switch]$Json,
+    [string]$Only       = ''
 )
 
 $ErrorActionPreference = 'Continue'
@@ -47,6 +51,8 @@ $Checks = @(
 
 function Probe {
     param($Check)
+    if ($Only -and $Only -ne $Check.Kind) { return $null }
+
     $url = "$Base`:$($Check.Port)$($Check.Path)"
     try {
         $r = Invoke-WebRequest -Uri $url -TimeoutSec $TimeoutSec -UseBasicParsing -ErrorAction Stop
@@ -57,8 +63,10 @@ function Probe {
     }
 
     if ($code -ge 200 -and $code -lt 300) {
-        Write-Host ("[OK] {0,-26} {1,-10} :{2}  {3}" -f $Check.Name, $Check.Kind, $Check.Port, $code) -ForegroundColor Green
-        return 'ok'
+        if (-not $Json) {
+            Write-Host ("[OK] {0,-26} {1,-10} :{2}  {3}" -f $Check.Name, $Check.Kind, $Check.Port, $code) -ForegroundColor Green
+        }
+        return @{ Status = 'ok'; Http = $code }
     }
     if ($code -eq 0 -and $Check.Kind -eq 'frontend') {
         # Some frontend apps don't ship /health; fall back to root.
@@ -66,43 +74,78 @@ function Probe {
         try {
             $r = Invoke-WebRequest -Uri $rootUrl -TimeoutSec $TimeoutSec -UseBasicParsing -ErrorAction Stop
             if ($r.StatusCode -ge 200 -and $r.StatusCode -lt 300) {
-                Write-Host ("[OK] {0,-26} {1,-10} :{2}  {3} (root)" -f $Check.Name, $Check.Kind, $Check.Port, $r.StatusCode) -ForegroundColor Green
-                return 'ok'
+                if (-not $Json) {
+                    Write-Host ("[OK] {0,-26} {1,-10} :{2}  {3} (root)" -f $Check.Name, $Check.Kind, $Check.Port, $r.StatusCode) -ForegroundColor Green
+                }
+                return @{ Status = 'ok'; Http = $r.StatusCode; Probed = 'root' }
             }
         } catch {}
     }
     if ($code -eq 0) {
-        Write-Host ("[--] {0,-26} {1,-10} :{2}  unreachable" -f $Check.Name, $Check.Kind, $Check.Port) -ForegroundColor Red
-        return 'fail'
+        if (-not $Json) {
+            Write-Host ("[--] {0,-26} {1,-10} :{2}  unreachable" -f $Check.Name, $Check.Kind, $Check.Port) -ForegroundColor Red
+        }
+        return @{ Status = 'fail'; Http = 0; Error = 'unreachable' }
     }
-    Write-Host ("[!]  {0,-26} {1,-10} :{2}  HTTP {3}" -f $Check.Name, $Check.Kind, $Check.Port, $code) -ForegroundColor Yellow
-    return 'degraded'
+    if (-not $Json) {
+        Write-Host ("[!]  {0,-26} {1,-10} :{2}  HTTP {3}" -f $Check.Name, $Check.Kind, $Check.Port, $code) -ForegroundColor Yellow
+    }
+    return @{ Status = 'degraded'; Http = $code }
 }
 
-Write-Host ("{0,-26} {1,-10} {2,-6}  {3}" -f "service", "kind", "port", "code")
-Write-Host ("{0,-26} {1,-10} {2,-6}  {3}" -f "--------------------------", "----------", "------", "----")
+if (-not $Json) {
+    Write-Host ("{0,-26} {1,-10} {2,-6}  {3}" -f "service", "kind", "port", "code")
+    Write-Host ("{0,-26} {1,-10} {2,-6}  {3}" -f "--------------------------", "----------", "------", "----")
+}
 
 $total = 0; $ok = 0; $degraded = 0; $failed = 0
 $failedNames = @()
+$results = @()
 
 foreach ($c in $Checks) {
-    $total++
     $r = Probe -Check $c
-    switch ($r) {
+    if ($null -eq $r) { continue }
+    $total++
+    switch ($r.Status) {
         'ok'       { $ok++ }
         'degraded' { $degraded++; $failedNames += $c.Name }
         'fail'     { $failed++;   $failedNames += $c.Name }
     }
+    if ($Json) {
+        $results += [ordered]@{
+            name   = $c.Name
+            kind   = $c.Kind
+            port   = $c.Port
+            status = $r.Status
+            http   = $r.Http
+            probed = if ($r.Probed) { $r.Probed } else { 'health' }
+        }
+    }
 }
 
-Write-Host ""
-Write-Host ("Summary: {0} total, {1} healthy, {2} degraded, {3} failed" -f $total, $ok, $degraded, $failed)
-
-if ($failed -gt 0) {
+if ($Json) {
+    $doc = [ordered]@{
+        summary = [ordered]@{
+            total    = $total
+            healthy  = $ok
+            degraded = $degraded
+            failed   = $failed
+        }
+        results = $results
+    }
+    $doc | ConvertTo-Json -Depth 6
+} else {
     Write-Host ""
-    Write-Host "Failed services:" -ForegroundColor Red
-    foreach ($n in $failedNames) { Write-Host "  - $n" }
-    exit 1
+    Write-Host ("Summary: {0} total, {1} healthy, {2} degraded, {3} failed" -f $total, $ok, $degraded, $failed)
+
+    if ($failed -gt 0) {
+        Write-Host ""
+        Write-Host "Failed services:" -ForegroundColor Red
+        foreach ($n in $failedNames) { Write-Host "  - $n" }
+        exit 1
+    }
 }
+
+if ($failed -gt 0) { exit 1 }
 if ($degraded -gt 0 -and $Strict) { exit 2 }
 exit 0

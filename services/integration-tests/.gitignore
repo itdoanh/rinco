@@ -1,0 +1,9 @@
+# Integration test artifacts
+coverage.out
+coverage.html
+test-output.txt
+cov.out
+cov
+*.cover
+.idea/
+*.test
