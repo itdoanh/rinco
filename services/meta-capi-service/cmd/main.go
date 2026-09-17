@@ -56,12 +56,23 @@ func main() {
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 		AllowOrigins: []string{"*"},
 		AllowMethods: []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, "X-Tenant-ID"},
+		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, "X-Tenant-ID", "X-Signature", "X-HMAC-Timestamp"},
 	}))
 
 	// Health
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok", "service": "meta-capi-service"})
+	})
+	e.GET("/healthz", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok", "service": "meta-capi-service"})
+	})
+	e.GET("/readyz", func(c echo.Context) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := pool.Ping(ctx); err != nil {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{"status": "db_unreachable", "error": err.Error()})
+		}
+		return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
 	})
 
 	// Tenant routes (require X-Tenant-ID)
@@ -75,12 +86,36 @@ func main() {
 		}
 	})
 
-	// CAPI endpoints
+	// CAPI endpoints (legacy paths)
 	tenant.GET("/capi/status", server.GetCAPIStatus)
 	tenant.POST("/capi/events", server.SendEvent)
+	tenant.GET("/capi/events", server.ListEvents)
+	tenant.GET("/capi/stats", server.GetCAPIStats)
 
-	// CRM bridge (receives events from CRM service)
+	// CRM bridge (receives events from CRM/NATS)
 	e.POST("/bridge/crm", server.CRMBridge)
+
+	// V1 namespace — canonical REST surface
+	v1 := e.Group("/v1")
+	v1.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if c.Request().Header.Get("X-Tenant-ID") == "" {
+				return c.JSON(http.StatusUnauthorized, map[string]string{"error": "X-Tenant-ID required"})
+			}
+			return next(c)
+		}
+	})
+
+	// Forward lead + purchase events to FB CAPI
+	v1.POST("/capi/lead", server.SendLeadEvent)
+	v1.POST("/capi/purchase", server.SendPurchase)
+
+	// Debug / observability
+	v1.GET("/capi/events", server.ListEvents)
+	v1.GET("/capi/stats", server.GetCAPIStats)
+
+	// CRM bridge under /v1 as well
+	v1.POST("/capi/bridge/crm", server.CRMBridge)
 
 	// Admin routes
 	admin := e.Group("/admin", func(next echo.HandlerFunc) echo.HandlerFunc {

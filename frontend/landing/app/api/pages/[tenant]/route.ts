@@ -6,9 +6,8 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ tenant: string }> }
 ) {
+  const { tenant } = await params;
   try {
-    const { tenant } = await params;
-
     // Try to fetch from landing service
     const response = await fetch(
       `${LANDING_SERVICE_URL}/api/pages/${tenant}/default`,

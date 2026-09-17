@@ -159,7 +159,7 @@ export function BlockRenderer({
             return (
               <PricingTable
                 key={id}
-                data={data}
+                data={data as unknown as Parameters<typeof PricingTable>[0]["data"]}
                 onCtaClick={handleCtaClick}
               />
             );
@@ -206,7 +206,7 @@ export function renderBlock(
     case "form":
       return <FormBlock key={Math.random()} {...props} />;
     case "pricing_table":
-      return <PricingTable key={Math.random()} {...props} />;
+      return <PricingTable key={Math.random()} {...(props as unknown as Parameters<typeof PricingTable>[0])} />;
     default:
       return null;
   }

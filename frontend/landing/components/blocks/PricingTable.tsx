@@ -9,6 +9,7 @@ import { Check } from 'lucide-react';
 interface PricingTableProps {
   data: PricingBlockData;
   className?: string;
+  onCtaClick?: () => void;
 }
 
 export function PricingTable({ data, className }: PricingTableProps) {

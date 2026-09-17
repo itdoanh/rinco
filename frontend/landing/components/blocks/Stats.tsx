@@ -10,6 +10,7 @@ interface StatsProps {
     }>;
     style?: string;
   };
+  onCtaClick?: () => void;
 }
 
 export function Stats({ data }: StatsProps) {

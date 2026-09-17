@@ -14,6 +14,7 @@ interface FAQProps {
     items?: FAQ[];
     style?: string;
   };
+  onCtaClick?: () => void;
 }
 
 export function FAQSection({ data }: FAQProps) {
@@ -105,5 +106,5 @@ export function FAQSection({ data }: FAQProps) {
   );
 }
 
-export { FAQ as FAQSectionAlias }
+export type { FAQ as FAQSectionAlias }
 export default FAQSection;

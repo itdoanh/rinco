@@ -17,6 +17,7 @@ interface TestimonialSectionProps {
     testimonials?: Testimonial[];
     style?: string;
   };
+  onCtaClick?: () => void;
 }
 
 export function TestimonialSection({ data }: TestimonialSectionProps) {

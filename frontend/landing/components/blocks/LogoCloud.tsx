@@ -8,6 +8,7 @@ interface LogoCloudProps {
     logos?: Array<{ name: string; image?: string }>;
     speed?: number;
   };
+  onCtaClick?: () => void;
 }
 
 export function LogoCloud({ data }: LogoCloudProps) {

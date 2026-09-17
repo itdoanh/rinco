@@ -22,9 +22,12 @@ interface FormBlockProps {
   };
   tenantSlug?: string;
   pageSlug?: string;
+  tenantId?: string;
+  pageId?: string;
+  onCtaClick?: () => void;
 }
 
-export function FormBlock({ data, tenantSlug, pageSlug }: FormBlockProps) {
+export function FormBlock({ data, tenantSlug, pageSlug, onCtaClick }: FormBlockProps) {
   const [channel, setChannel] = useState<"zalo" | "phone" | "">("");
   const [step, setStep] = useState(1);
 

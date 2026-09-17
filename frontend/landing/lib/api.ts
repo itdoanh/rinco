@@ -46,9 +46,9 @@ export async function apiClient<T>(
     ...fetchOptions
   } = options;
 
-  const requestHeaders: HeadersInit = {
+  const requestHeaders: Record<string, string> = {
     "Content-Type": "application/json",
-    ...headers,
+    ...(headers as Record<string, string>),
   };
 
   if (tenantSlug) {

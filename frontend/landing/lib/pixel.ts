@@ -165,8 +165,8 @@ export function trackCustomEvent(
 export function _resetPixelForTests(): void {
   pixelReady = false;
   if (IS_BROWSER) {
-    delete window.fbq;
-    delete window._fbq;
+    (window as unknown as { fbq: unknown }).fbq = undefined;
+    (window as unknown as { _fbq: unknown })._fbq = undefined;
   }
 }
 
