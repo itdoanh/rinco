@@ -1,147 +1,219 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# ============================================================
+# RINCO dev orchestration script (Loop WS-A)
+# ============================================================
+# Brings up the full local stack:
+#   1. infra compose (postgres + scylla + clickhouse + mongo + valkey + ...)
+#   2. waits for DBs to be healthy
+#   3. runs SQL migrations + multi-DB seed
+#   4. starts 17 backend services in background (logs/<svc>.log)
+#   5. starts 4 frontend apps in background (logs/<fe>.log)
+#   6. prints a status table
+#
+# Idempotent: re-running starts any container that was stopped.
+# Stop with: scripts/stop-all.sh
+# ============================================================
+set -uo pipefail
 
-# ===========================================
-# RINCO Development Environment Setup Script
-# ===========================================
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-echo "🚀 Starting RINCO Development Environment..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+INFRA_DIR="${PROJECT_ROOT}/infra"
+LOG_DIR="${PROJECT_ROOT}/logs"
+PIDS_DIR="${PROJECT_ROOT}/.dev/pids"
 
-# Check if Docker is running
-if ! command -v docker &> /dev/null; then
-    echo "❌ Docker is not installed. Please install Docker first."
-    exit 1
-fi
+mkdir -p "${LOG_DIR}" "${PIDS_DIR}"
 
-if ! docker info &> /dev/null; then
-    echo "❌ Docker is not running. Please start Docker first."
-    exit 1
-fi
-
-# Check if docker-compose is available
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-    echo "❌ Docker Compose is not installed. Please install Docker Compose first."
-    exit 1
-fi
-
-# Use docker compose if available, otherwise docker-compose
-if docker compose version &> /dev/null; then
-    COMPOSE_CMD="docker compose"
-else
-    COMPOSE_CMD="docker-compose"
-fi
-
-# Navigate to project root
-cd "$(dirname "$0")/.."
-
-# Create .env file if it doesn't exist
-if [ ! -f .env ]; then
-    echo "📝 Creating .env file from .env.example..."
-    if [ -f .env.example ]; then
-        cp .env.example .env
-        echo "⚠️  Please update .env file with your configuration."
+# ---- Compose command ----------------------------------------------------
+get_compose_cmd() {
+    if docker compose version &>/dev/null; then
+        echo "docker compose"
+    elif command -v docker-compose &>/dev/null; then
+        echo "docker-compose"
     else
-        echo "⚠️  No .env.example found. Creating default .env..."
-        cat > .env << 'EOF'
-# Development Environment Variables
-NODE_ENV=development
-
-# Auth Service
-AUTH_HTTP_ADDR=:8081
-AUTH_DATABASE_URL=postgres://postgres:password@localhost:5432/auth
-AUTH_VALKEY_URL=redis://localhost:6379
-
-# Tenant Service
-TENANT_HTTP_ADDR=:8082
-TENANT_DATABASE_URL=postgres://postgres:password@localhost:5432/tenant
-
-# Lead Service
-LEAD_HTTP_ADDR=:8085
-LEAD_DATABASE_URL=postgres://postgres:password@localhost:5432/lead
-
-# CRM Service
-CRM_HTTP_ADDR=:8083
-CRM_DATABASE_URL=postgres://postgres:password@localhost:5432/crm
-
-# Landing Service
-LANDING_HTTP_ADDR=:8086
-LANDING_DATABASE_URL=postgres://postgres:password@localhost:5432/landing
-
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8080
-EOF
+        echo "docker compose"
     fi
+}
+COMPOSE_CMD=$(get_compose_cmd)
+
+# ---- .env bootstrap -----------------------------------------------------
+ENV_FILE="${PROJECT_ROOT}/.env"
+if [ ! -f "$ENV_FILE" ]; then
+    echo -e "${YELLOW}[env]${NC} creating default .env"
+    cat > "$ENV_FILE" <<'EOF'
+POSTGRES_PASSWORD=rinco_dev_password
+CLICKHOUSE_PASSWORD=rinco_dev_password
+VALKEY_PASSWORD=rinco_dev_password
+MONGO_PASSWORD=rinco_dev_password
+MINIO_ROOT_PASSWORD=rinco_dev_password
+PASETO_KEY_CURRENT=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+PASETO_KEY_PREVIOUS=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+ADMIN_API_KEY=dev_admin_key_change_me
+MEILI_MASTER_KEY=masterKey
+EOF
 fi
 
-# Start infrastructure services
-echo "🔧 Starting infrastructure services (Postgres, Redis, NATS)..."
-$COMPOSE_CMD -f infra/docker-compose.services.yml up -d
+# ---- Service definitions (canonical port table) -------------------------
+# Format: NAME|REPO_DIR|HEALTH_PATH|RESOURCE
+SERVICES=(
+    "auth-service|services/auth-service|http://localhost:8081/health|go"
+    "tenant-service|services/tenant-service|http://localhost:8082/health|go"
+    "crm-service|services/crm-service|http://localhost:8083/health|go"
+    "dynamic-model-service|services/dynamic-model-service|http://localhost:8084/health|go"
+    "lead-service|services/lead-service|http://localhost:8085/health|go"
+    "landing-service|services/landing-service|http://localhost:8086/health|go"
+    "email-service|services/email-service|http://localhost:8087/health|go"
+    "notification-service|services/notification-service|http://localhost:8088/health|go"
+    "billing-service|services/billing-service|http://localhost:8095/health|go"
+    "observability-service|services/observability-service|http://localhost:8096/health|go"
+    "search-service|services/search-service|http://localhost:8097/health|go"
+    "meta-capi-service|services/meta-capi-service|http://localhost:8098/health|go"
+    "analytics-service|services/analytics-service|http://localhost:8099/health|go"
+    "ai-sre|services/ai-sre|http://localhost:8090/health|python"
+    "lead-scoring|services/lead-scoring|http://localhost:8091/health|python"
+    "rag-chatbot|services/rag-chatbot|http://localhost:8092/health|python"
+    "stt-service|services/stt-service|http://localhost:8094/health|python"
+    "recording-service|services/recording-service|http://localhost:8093/health|rust"
+    "chat-engine|services/chat-engine|http://localhost:8101/health|rust"
+    "webrtc-sfu|services/webrtc-sfu|http://localhost:8102/health|rust"
+)
 
-# Wait for services to be ready
-echo "⏳ Waiting for services to be ready..."
-sleep 10
+FRONTENDS=(
+    "landing|frontend/landing|http://localhost:3000/health"
+    "admin-portal|frontend/admin-portal|http://localhost:3001/health"
+    "tenant-site|frontend/tenant-site|http://localhost:3002/health"
+    "meeting-ui|frontend/meeting-ui|http://localhost:3003/health"
+)
 
-# Check if services are healthy
-for service in postgres redis nats; do
-    echo "Checking $service..."
-    until $COMPOSE_CMD -f infra/docker-compose.services.yml exec -T $service ping -c 1 &> /dev/null 2>&1 || nc -z localhost $(docker inspect --format='{{range $p, $c := .NetworkSettings.Ports}}{{range $k, $v := $c}}{{index $v "HostPort"}}{{end}}{{end}}' $($COMPOSE_CMD -f infra/docker-compose.services.yml ps -q $service) 2>/dev/null); do
+# ---- Helpers ------------------------------------------------------------
+say()   { printf "${BLUE}[%s]${NC} %s\n" "$(date +%H:%M:%S)" "$1"; }
+ok()    { printf "${GREEN}[OK]${NC} %s\n" "$1"; }
+warn()  { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
+err()   { printf "${RED}[FAIL]${NC} %s\n" "$1"; }
+
+wait_for() {
+    # wait_for <url> <label> <max_seconds>
+    local url="$1" label="$2" max="${3:-120}" waited=0
+    while [ $waited -lt $max ]; do
+        if curl -fsS -o /dev/null --max-time 2 "$url"; then
+            return 0
+        fi
         sleep 2
+        waited=$((waited + 2))
     done
-    echo "✓ $service is ready"
+    return 1
+}
+
+# ---- 1. Docker network --------------------------------------------------
+say "creating rinco-network if missing"
+docker network inspect rinco-network &>/dev/null || \
+    docker network create --driver bridge --subnet=172.25.0.0/16 rinco-network
+
+# ---- 2. Infra compose ---------------------------------------------------
+say "starting infrastructure stack (postgres + scylla + clickhouse + ...)"
+cd "$INFRA_DIR"
+$COMPOSE_CMD -f docker-compose.yml up -d
+
+# ---- 3. Wait for DBs ----------------------------------------------------
+say "waiting for Postgres + Valkey + NATS healthchecks..."
+for i in {1..60}; do
+    if docker exec rinco-postgres pg_isready -U rinco &>/dev/null && \
+       docker exec rinco-valkey valkey-cli ping &>/dev/null && \
+       docker exec rinco-nats nats-server --version &>/dev/null; then
+        ok "infra healthy"
+        break
+    fi
+    sleep 5
 done
 
-# Run migrations
-echo "🔄 Running database migrations..."
-./scripts/migrate.sh
+# ---- 4. Migrations + seed ----------------------------------------------
+say "running migrations"
+if [ -x "${PROJECT_ROOT}/scripts/migrate.sh" ]; then
+    bash "${PROJECT_ROOT}/scripts/migrate.sh" || warn "migrate.sh failed (continuing)"
+else
+    warn "scripts/migrate.sh missing — skipping"
+fi
 
-# Seed data if needed
-echo "📊 Seeding database..."
-$COMPOSE_CMD -f infra/docker-compose.services.yml exec -T postgres psql -U postgres -d auth -c "SELECT 1" &> /dev/null && echo "✓ Database seeded"
+say "seeding databases"
+if [ -x "${PROJECT_ROOT}/scripts/seed-all.sh" ]; then
+    bash "${PROJECT_ROOT}/scripts/seed-all.sh" || warn "seed-all.sh failed (continuing)"
+elif [ -f "${PROJECT_ROOT}/scripts/seed-all.ps1" ]; then
+    warn "found scripts/seed-all.ps1 — please run it once on Windows hosts"
+else
+    warn "no seed script found — skipping"
+fi
 
-# Start all services
-echo "🚀 Starting all services..."
-$COMPOSE_CMD -f infra/docker-compose.services.yml up -d
+# ---- 5. Services compose ------------------------------------------------
+say "starting backend services via docker compose"
+$COMPOSE_CMD -f docker-compose.services.yml up -d
 
-# Start all 4 frontend dev servers
-echo "🎨 Starting frontend development servers..."
+# ---- 6. Wait for services ----------------------------------------------
+say "waiting for backend /health endpoints..."
+for entry in "${SERVICES[@]}"; do
+    IFS='|' read -r name dir url lang <<< "$entry"
+    if wait_for "$url" "$name" 60; then
+        ok "$name ($lang) → $url"
+    else
+        warn "$name not healthy within 60s — see logs/$name.log if local"
+    fi
+done
 
-# Start landing
-cd frontend/landing
-npm run dev -p 3000 &
-LANDING_PID=$!
-cd ../..
+# ---- 7. Frontends (local dev servers) ----------------------------------
+say "starting 4 frontend dev servers (Bun) — each in background"
+for entry in "${FRONTENDS[@]}"; do
+    IFS='|' read -r name dir url <<< "$entry"
+    log="${LOG_DIR}/${name}.log"
+    pidf="${PIDS_DIR}/${name}.pid"
+    cd "${PROJECT_ROOT}/${dir}"
+    if [ ! -d node_modules ] && [ ! -d .bun ]; then
+        warn "$name: node_modules missing — run 'bun install' in $dir first"
+        continue
+    fi
+    if [ -f package.json ]; then
+        # Use Bun when available, fall back to npm.
+        if command -v bun &>/dev/null; then
+            nohup bun run dev >>"$log" 2>&1 &
+        else
+            nohup npm run dev >>"$log" 2>&1 &
+        fi
+        echo $! >"$pidf"
+        ok "$name started (pid $(cat "$pidf")) → $log"
+    else
+        warn "$name: no package.json"
+    fi
+done
+cd "$PROJECT_ROOT"
 
-# Start admin portal
-cd frontend/admin-portal
-npm run dev -p 3001 &
-ADMIN_PID=$!
-cd ../..
+# ---- 8. Status table ----------------------------------------------------
+say "status summary"
+printf "\n%-22s %-8s %-44s\n" "service" "lang" "url"
+printf '%-22s %-8s %-44s\n' "----------------------" "------" "--------------------------------------------"
+for entry in "${SERVICES[@]}"; do
+    IFS='|' read -r name dir url lang <<< "$entry"
+    if curl -fsS -o /dev/null --max-time 2 "$url"; then
+        printf "${GREEN}✓${NC} %-20s %-8s %s\n" "$name" "$lang" "$url"
+    else
+        printf "${RED}✗${NC} %-20s %-8s %s\n" "$name" "$lang" "$url"
+    fi
+done
+printf '\n%-22s %-44s\n' "frontend" "url"
+printf '%-22s %-44s\n' "----------------------" "--------------------------------------------"
+for entry in "${FRONTENDS[@]}"; do
+    IFS='|' read -r name dir url <<< "$entry"
+    pidf="${PIDS_DIR}/${name}.pid"
+    if [ -f "$pidf" ] && kill -0 "$(cat "$pidf")" 2>/dev/null; then
+        printf "${GREEN}✓${NC} %-20s %s\n" "$name" "$url"
+    else
+        printf "${RED}✗${NC} %-20s %s\n" "$name" "$url"
+    fi
+done
 
-# Start tenant-site
-cd frontend/tenant-site
-npm run dev -p 3002 &
-TENANT_PID=$!
-cd ../..
-
-# Start meeting-ui
-cd frontend/meeting-ui
-npm run dev -p 3003 &
-MEETING_PID=$!
-cd ../..
-
-echo ""
-echo "✅ Development environment is ready!"
-echo ""
-echo "Services:"
-echo "  - Landing Page:  http://localhost:3000"
-echo "  - Admin Portal:  http://localhost:3001"
-echo "  - Tenant Site:   http://localhost:3002"
-echo "  - Meeting UI:    http://localhost:3003"
-echo "  - Auth Service:  http://localhost:8081"
-echo "  - Postgres:      localhost:5432"
-echo "  - Valkey:        localhost:6379"
-echo ""
-echo "Press Ctrl+C to stop all services."
-
-# Wait for all background processes
-wait $LANDING_PID $ADMIN_PID $TENANT_PID $MEETING_PID 2>/dev/null || true
+printf "\n"
+ok "dev stack up. tail logs with: tail -f ${LOG_DIR}/<service>.log"
+ok "stop everything with: scripts/stop-all.sh"
