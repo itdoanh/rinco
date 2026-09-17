@@ -4,7 +4,6 @@
 //! still compiles on machines without libssl. When the feature is disabled the
 //! adapter returns `ChatError::Scylla("driver disabled")` from every call.
 
-use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::api::types::{Channel, Device, Message, Reaction};
@@ -16,6 +15,7 @@ mod imp {
     use scylla::client::session::Session;
     use scylla::statement::prepared::PreparedStatement;
     use scylla::value::CqlTimestamp;
+    use std::sync::Arc;
 
     pub struct Inner {
         pub session: Arc<Session>,
@@ -44,12 +44,15 @@ mod imp {
 }
 
 #[cfg(feature = "scylla-driver")]
-use imp::*;
+use imp::{Inner, PreparedSet};
 
 /// ScyllaDB adapter. Cheap to clone (Arc inside).
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ScyllaStore {
-    inner: Option<Arc<Inner>>,
+    #[cfg(feature = "scylla-driver")]
+    inner: Option<std::sync::Arc<Inner>>,
+    /// Marker used to keep the type Send/Sync even when the driver is disabled.
+    _private: (),
 }
 
 impl ScyllaStore {
@@ -140,17 +143,18 @@ impl ScyllaStore {
                 .map_err(|e| ChatError::Scylla(e.to_string()))?,
         };
         Ok(Self {
-            inner: Some(Arc::new(Inner {
-                session: Arc::new(session),
+            inner: Some(std::sync::Arc::new(Inner {
+                session: std::sync::Arc::new(session),
                 prepared,
             })),
+            _private: (),
         })
     }
 
     /// Stub constructor for environments where the driver is disabled.
     #[cfg(not(feature = "scylla-driver"))]
     pub async fn connect(_contact_points: &[String], _keyspace: &str) -> ChatResult<Self> {
-        Ok(Self { inner: None })
+        Ok(Self::default())
     }
 
     /// Run idempotent DDL that creates the keyspace and tables.
@@ -168,21 +172,22 @@ impl ScyllaStore {
                     .map_err(|e| ChatError::Scylla(e.to_string()))?;
             }
         }
+        let _ = self; // suppress unused warning
         Ok(())
     }
 
+    #[cfg(feature = "scylla-driver")]
     fn inner(&self) -> ChatResult<&Inner> {
-        #[cfg(feature = "scylla-driver")]
-        {
-            self.inner
-                .as_ref()
-                .map(|a| a.as_ref())
-                .ok_or_else(|| ChatError::Scylla("driver disabled".into()))
-        }
-        #[cfg(not(feature = "scylla-driver"))]
-        {
-            Err(ChatError::Scylla("driver disabled".into()))
-        }
+        self.inner
+            .as_ref()
+            .map(|a| a.as_ref())
+            .ok_or_else(|| ChatError::Scylla("driver disabled".into()))
+    }
+
+    #[cfg(not(feature = "scylla-driver"))]
+    #[allow(dead_code)]
+    fn inner(&self) -> ChatResult<&Inner> {
+        Err(ChatError::Scylla("driver disabled".into()))
     }
 
     // ============================================================
@@ -217,6 +222,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = m;
         Ok(())
     }
 
@@ -239,6 +245,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = m;
         Ok(())
     }
 
@@ -326,6 +333,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = c;
         Ok(())
     }
 
@@ -374,6 +382,7 @@ impl ScyllaStore {
                 }));
             }
         }
+        let _ = channel_id;
         Ok(None)
     }
 
@@ -387,6 +396,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (channel_id, member);
         Ok(())
     }
 
@@ -400,6 +410,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (channel_id, member);
         Ok(())
     }
 
@@ -409,6 +420,7 @@ impl ScyllaStore {
         {
             let _ = user_id;
         }
+        let _ = user_id;
         Ok(vec![])
     }
 
@@ -429,6 +441,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (channel_id, ts);
         Ok(())
     }
 
@@ -459,6 +472,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = d;
         Ok(())
     }
 
@@ -494,6 +508,7 @@ impl ScyllaStore {
                 }));
             }
         }
+        let _ = (user_id, device_id);
         Ok(None)
     }
 
@@ -515,6 +530,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (user_id, device_id, prekey);
         Ok(())
     }
 
@@ -536,6 +552,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (user_id, device_id, keys);
         Ok(())
     }
 
@@ -568,6 +585,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (channel_id, msg_id, user_id, device_id);
         Ok(())
     }
 
@@ -590,6 +608,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = r;
         Ok(())
     }
 
@@ -660,6 +679,7 @@ impl ScyllaStore {
                 .await
                 .map_err(|e| ChatError::Scylla(e.to_string()))?;
         }
+        let _ = (msg_id, s3_key, mime, size, encrypted_dek, encrypted_size, thumbnail_url);
         Ok(())
     }
 

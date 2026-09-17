@@ -25,7 +25,7 @@ pub async fn register_device(
     let device = Device {
         user_id,
         device_id,
-        identity_pub: identity.public().to_bytes(),
+        identity_pub: identity.public_bytes(),
         signed_prekey: signed.public_bytes(),
         signed_prekey_sig: signed.signature().to_vec(),
         one_time_prekeys: one_time.iter().map(|k| k.public_bytes()).collect(),

@@ -21,6 +21,8 @@ export interface ChatMessage {
 
 interface MeetingState {
   roomId: string | null;
+  userId: string;
+  userName: string;
   localStream: MediaStream | null;
   participants: Participant[];
   chatMessages: ChatMessage[];
@@ -32,6 +34,7 @@ interface MeetingState {
 
   // Actions
   setRoomId: (id: string) => void;
+  setUser: (userId: string, userName: string) => void;
   setLocalStream: (stream: MediaStream | null) => void;
   addParticipant: (participant: Participant) => void;
   removeParticipant: (id: string) => void;
@@ -65,6 +68,8 @@ export function stopMediaStream(stream: MediaStream | null): void {
 
 export const useMeetingStore = create<MeetingState>((set, get) => ({
   roomId: null,
+  userId: "",
+  userName: "Guest",
   localStream: null,
   participants: [],
   chatMessages: [],
@@ -75,6 +80,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   isConnected: false,
 
   setRoomId: (id) => set({ roomId: id }),
+
+  setUser: (userId, userName) => set({ userId, userName }),
 
   setLocalStream: (stream) => set({ localStream: stream }),
 

@@ -26,6 +26,15 @@ def build_router(service: RecordingService) -> APIRouter:
             active_recordings=len(service.processes),
         )
 
+    @router.get("/healthz", response_model=HealthResponse)
+    def healthz() -> HealthResponse:
+        return HealthResponse(
+            status="healthy",
+            bucket=service.storage.bucket,
+            active_recordings=len(service.processes),
+            version="0.3.0",
+        )
+
     @router.post("/v1/recordings/start", response_model=RecordingMetadata, status_code=201)
     def start_recording(req: StartRecordingRequest) -> RecordingMetadata:
         return service.start(req)

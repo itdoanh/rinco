@@ -17,18 +17,23 @@ pub struct TelemetryGuard {
 
 /// Build a `tracing` subscriber that writes JSON to stdout and forwards spans
 /// to the configured OTLP collector. Also installs a Prometheus recorder.
+///
+/// OTel OTLP export is best-effort: if the collector endpoint is unreachable
+/// at startup we log a warning and continue with stdout-only tracing. This
+/// keeps the service bootable in environments where the collector is not yet
+/// ready (e.g. local dev or smoke tests).
 pub fn init(service_name: &str, otlp_endpoint: &str) -> ChatResult<TelemetryGuard> {
     global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
-    let exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(otlp_endpoint)
-        .build()
-        .map_err(|e| crate::error::ChatError::Other(anyhow::anyhow!(e)))?;
-
-    let provider = opentelemetry_sdk::trace::TracerProvider::builder()
-        .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_config(
+    // Try to install OTLP exporter. If it fails, fall back to a no-op tracer.
+    let provider_res = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(otlp_endpoint),
+        )
+        .with_trace_config(
             TraceConfig::default()
                 .with_sampler(Sampler::ParentBased(Box::new(Sampler::AlwaysOn)))
                 .with_resource(Resource::new(vec![KeyValue::new(
@@ -36,7 +41,25 @@ pub fn init(service_name: &str, otlp_endpoint: &str) -> ChatResult<TelemetryGuar
                     service_name.to_string(),
                 )])),
         )
-        .build();
+        .install_batch(opentelemetry_sdk::runtime::Tokio);
+
+    let provider = match provider_res {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "otlp exporter failed to initialise; running with stdout tracing only");
+            // Build a minimal provider so we can still attach a tracer.
+            opentelemetry_sdk::trace::TracerProvider::builder()
+                .with_config(
+                    TraceConfig::default()
+                        .with_sampler(Sampler::ParentBased(Box::new(Sampler::AlwaysOn)))
+                        .with_resource(Resource::new(vec![KeyValue::new(
+                            "service.name",
+                            service_name.to_string(),
+                        )])),
+                )
+                .build()
+        }
+    };
 
     let tracer = provider.tracer(service_name.to_string());
     let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);

@@ -21,6 +21,7 @@ use crate::error::ChatResult;
 #[derive(Clone)]
 pub struct RedisStore {
     conn: Arc<tokio::sync::Mutex<ConnectionManager>>,
+    url: String,
 }
 
 impl RedisStore {
@@ -30,7 +31,12 @@ impl RedisStore {
         let manager = client.get_connection_manager().await?;
         Ok(Self {
             conn: Arc::new(tokio::sync::Mutex::new(manager)),
+            url: url.to_string(),
         })
+    }
+
+    fn url(&self) -> &str {
+        &self.url
     }
 
     async fn conn(&self) -> ConnectionManager {
@@ -164,9 +170,23 @@ impl RedisStore {
     pub async fn subscribe(
         &self,
         channels: &[&str],
-    ) -> ChatResult<redis::streams::Stream> {
+    ) -> ChatResult<redis::aio::PubSubStream> {
         let mut c = self.conn().await;
-        let stream = c.subscribe(channels).await?;
-        Ok(stream)
+        // `subscribe` on a multiplexed connection consumes the connection for
+        // pub/sub use only; we therefore obtain a dedicated connection from
+        // the underlying client. The returned `PubSubStream` is itself the
+        // message stream — no `into_on()` needed.
+        let client = redis::Client::open(self.url().as_str())
+            .map_err(|e| crate::error::ChatError::Valkey(e.to_string()))?;
+        let conn = client
+            .get_async_connection()
+            .await
+            .map_err(|e| crate::error::ChatError::Valkey(e.to_string()))?;
+        let mut pubsub = conn.into_pubsub();
+        pubsub
+            .subscribe(channels)
+            .await
+            .map_err(|e| crate::error::ChatError::Valkey(e.to_string()))?;
+        Ok(pubsub)
     }
 }

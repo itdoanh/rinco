@@ -1,19 +1,36 @@
 "use client";
 
-import { Suspense, use } from "react";
+import { Suspense, use, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { VideoGrid } from "@/components/video/VideoGrid";
 import { ControlBar } from "@/components/controls/ControlBar";
+import { RoomJoin } from "@/components/meeting/RoomJoin";
 import { useWebRTC } from "@/hooks/useWebRTC";
 import { useMeetingStore } from "@/lib/store";
 
 interface PageProps {
-  params: Promise<{ room_id: string }> | { room_id: string };
+  params: Promise<{ room_id: string }>;
 }
 
 function MeetingContent({ roomId }: { roomId: string }) {
   const searchParams = useSearchParams();
-  const userName = searchParams.get("name") || "Guest";
+  const nameParam = searchParams.get("name") || "";
+  const [userName, setUserName] = useState<string | null>(
+    nameParam.trim() ? nameParam : null,
+  );
+
+  // Resolve initial userName from session storage if available (set by RoomJoin).
+  useEffect(() => {
+    if (userName) return;
+    if (typeof window === "undefined") return;
+    const stored = sessionStorage.getItem("meeting_name");
+    if (stored && stored.trim()) setUserName(stored);
+  }, [userName]);
+
+  if (!userName) {
+    return <RoomJoin roomId={roomId} onJoined={(n) => setUserName(n)} />;
+  }
+
   const userId = `user-${Date.now()}`;
 
   const { isConnecting, error } = useWebRTC({ roomId, userId, userName });
@@ -92,12 +109,7 @@ function MeetingContent({ roomId }: { roomId: string }) {
 }
 
 export default function MeetingPage({ params }: PageProps) {
-  // Handle both Promise and sync params (Next.js 15 vs 14 API)
-  const resolvedParams = params instanceof Promise
-    ? use(params)
-    : params;
-
-  const roomId = resolvedParams.room_id;
+  const { room_id: roomId } = use(params);
 
   return (
     <Suspense

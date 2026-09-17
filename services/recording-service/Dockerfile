@@ -1,13 +1,30 @@
-FROM rust:1.81-alpine AS builder
-WORKDIR /app
-RUN apk add --no-cache musl-dev pkgconfig openssl-dev
-COPY services/recording-service/Cargo.toml services/recording-service/Cargo.lock* ./
-COPY services/recording-service/src ./src
-RUN cargo build --release
+# =============================================================================
+# Recording Service (Python FastAPI) Dockerfile
+# =============================================================================
+FROM python:3.11-slim
 
-FROM alpine:3.19
-RUN apk add --no-cache ca-certificates libgcc
 WORKDIR /app
-COPY --from=builder /app/target/release/recording-service /app/recording-service
-EXPOSE 8096
-ENTRYPOINT ["/app/recording-service"]
+
+# Install system dependencies for FFmpeg
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first for caching
+COPY services/recording-service/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY services/recording-service/app/ ./app/
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV LOG_LEVEL=INFO
+ENV HOST=0.0.0.0
+ENV PORT=8093
+
+EXPOSE 8093
+
+# Run with uvicorn
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8093"]

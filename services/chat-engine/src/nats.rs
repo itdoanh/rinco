@@ -10,6 +10,7 @@
 //! - `rinco.chat.presence.changed`  – user online/offline
 
 use async_nats::Client;
+use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -40,10 +41,17 @@ impl NatsClient {
         Ok(Self { client })
     }
 
+    fn encode<T: Serialize>(payload: &T) -> ChatResult<Bytes> {
+        let bytes = serde_json::to_vec(payload)
+            .map_err(|e| crate::error::ChatError::InvalidRequest(e.to_string()))?;
+        Ok(Bytes::from(bytes))
+    }
+
     /// Publish a chat-event subject.
     pub async fn publish_message_sent(&self, payload: &serde_json::Value) -> ChatResult<()> {
+        let body = Self::encode(payload)?;
         self.client
-            .publish("rinco.chat.message.sent", serde_json::to_vec(payload)?)
+            .publish("rinco.chat.message.sent", body)
             .await
             .map_err(|e| crate::error::ChatError::Nats(e.to_string()))?;
         Ok(())
@@ -51,8 +59,9 @@ impl NatsClient {
 
     /// Publish a presence-changed subject.
     pub async fn publish_presence(&self, payload: &serde_json::Value) -> ChatResult<()> {
+        let body = Self::encode(payload)?;
         self.client
-            .publish("rinco.chat.presence.changed", serde_json::to_vec(payload)?)
+            .publish("rinco.chat.presence.changed", body)
             .await
             .map_err(|e| crate::error::ChatError::Nats(e.to_string()))?;
         Ok(())
@@ -65,7 +74,7 @@ impl NatsClient {
     ) -> ChatResult<async_nats::Subscriber> {
         let sub = self
             .client
-            .subscribe(subject)
+            .subscribe(subject.to_string())
             .await
             .map_err(|e| crate::error::ChatError::Nats(e.to_string()))?;
         Ok(sub)
@@ -73,11 +82,9 @@ impl NatsClient {
 
     /// Push a notification request to the notification service.
     pub async fn request_notification(&self, req: &NotificationRequest) -> ChatResult<()> {
+        let body = Self::encode(req)?;
         self.client
-            .publish(
-                "rinco.notifications.requested",
-                serde_json::to_vec(req)?,
-            )
+            .publish("rinco.notifications.requested".to_string(), body)
             .await
             .map_err(|e| crate::error::ChatError::Nats(e.to_string()))?;
         Ok(())

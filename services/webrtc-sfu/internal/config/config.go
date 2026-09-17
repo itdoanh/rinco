@@ -28,8 +28,8 @@ type Config struct {
 // FromEnv builds a Config from the process environment.
 func FromEnv() Config {
 	return Config{
-		HTTPAddr:         getenv("SFU_HTTP_ADDR", ":8090"),
-		RTCAddr:          getenv("SFU_RTC_ADDR", ":8091"),
+		HTTPAddr:         getenv("SFU_HTTP_ADDR", ":8105"),
+		RTCAddr:          getenv("SFU_RTC_ADDR", ":8106"),
 		NATSURL:          getenv("SFU_NATS_URL", ""),
 		ICEServers:       splitCSV(getenv("SFU_ICE_SERVERS", "stun:stun.l.google.com:19302")),
 		MaxParticipants:  getenvInt("SFU_MAX_PARTICIPANTS", 50),

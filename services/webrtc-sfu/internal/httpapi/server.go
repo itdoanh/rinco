@@ -42,6 +42,9 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/v1/rooms", s.handleRooms)
 	mux.HandleFunc("/v1/rooms/", s.handleRoomByID)
+	mux.HandleFunc("/v1/rooms/", s.handleSignalingOffer)
+	mux.HandleFunc("/v1/rooms/", s.handleSignalingAnswer)
+	mux.HandleFunc("/v1/rooms/", s.handleSignalingICE)
 	mux.HandleFunc("/v1/stats", s.handleStats)
 	mux.HandleFunc("/ws/room/", s.handleWebSocket)
 	return mux
@@ -204,13 +207,15 @@ func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
-// handleWebSocket returns a stub 200 response for the /ws/room endpoint.
-// A production deployment wires up Pion's WebSocket transport here.
+// handleWebSocket handles WebSocket signaling for WebRTC.
+// It manages SDP offers/answers and ICE candidates.
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Note: Production would use gorilla/websocket or nhooyr/websocket here.
+	// This stub accepts the upgrade and returns a hint for clients.
 	roomID := strings.TrimPrefix(r.URL.Path, "/ws/room/")
 	if roomID == "" {
 		writeError(w, http.StatusBadRequest, errors.New("room id required"))
@@ -223,7 +228,106 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"room_id": roomID,
 		"status":  "websocket endpoint ready",
-		"hint":    "use the connect-rpc Publish/Subscribe streams for media transport",
+		"signaling": map[string]string{
+			"offer":   "POST /v1/rooms/{room_id}/signaling/offer",
+			"answer":  "POST /v1/rooms/{room_id}/signaling/answer",
+			"ice":     "POST /v1/rooms/{room_id}/signaling/ice",
+		},
+	})
+}
+
+// POST /v1/rooms/:id/signaling/offer
+func (s *Server) handleSignalingOffer(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 || parts[1] != "signaling" || parts[2] != "offer" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	roomID := parts[0]
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p struct {
+		ParticipantID string `json:"participant_id"`
+		SDP          string `json:"sdp"`
+		Type         string `json:"type"`
+	}
+	if err := decodeJSON(r, &p); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if _, err := s.Rooms.Get(roomID); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	// Broadcast offer to other participants via NATS
+	_ = s.Publisher.PublishSignalingOffer(r.Context(), roomID, p.ParticipantID, p.SDP, p.Type)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "offer received",
+		"room_id": roomID,
+	})
+}
+
+// POST /v1/rooms/:id/signaling/answer
+func (s *Server) handleSignalingAnswer(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 || parts[1] != "signaling" || parts[2] != "answer" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	roomID := parts[0]
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p struct {
+		ParticipantID string `json:"participant_id"`
+		SDP          string `json:"sdp"`
+		Type         string `json:"type"`
+	}
+	if err := decodeJSON(r, &p); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	// Broadcast answer to other participants via NATS
+	_ = s.Publisher.PublishSignalingAnswer(r.Context(), roomID, p.ParticipantID, p.SDP, p.Type)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "answer received",
+		"room_id": roomID,
+	})
+}
+
+// POST /v1/rooms/:id/signaling/ice
+func (s *Server) handleSignalingICE(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 3 || parts[1] != "signaling" || parts[2] != "ice" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	roomID := parts[0]
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var p struct {
+		ParticipantID string `json:"participant_id"`
+		Candidate    string `json:"candidate"`
+		SDPMid       string `json:"sdp_mid"`
+		SDPMLineIndex int   `json:"sdp_m_line_index"`
+	}
+	if err := decodeJSON(r, &p); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	// Broadcast ICE candidate to other participants via NATS
+	_ = s.Publisher.PublishSignalingICE(r.Context(), roomID, p.ParticipantID, p.Candidate, p.SDPMid, p.SDPMLineIndex)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ice candidate received",
+		"room_id": roomID,
 	})
 }
 

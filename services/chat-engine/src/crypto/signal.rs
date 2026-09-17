@@ -11,17 +11,13 @@
 //! Post-compromise security: a new ephemeral key is mixed in on every step.
 
 use aes_gcm::{
-    aead::{KeyInit, Payload},
+    aead::{Aead, KeyInit, Payload},
     Aes256Gcm, Nonce as GcmNonce,
 };
-use chacha20poly1305::{
-    aead::Aead,
-    ChaCha20Poly1305, Key as ChaKey, XChaCha20Poly1305, XNonce,
-};
+use chacha20poly1305::{ChaCha20Poly1305, Key as ChaKey, XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use rand::{CryptoRng, RngCore};
 use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use uuid::Uuid;
 use x25519_dalek::{PublicKey as XPublic, StaticSecret as XSecret};
 use zeroize::Zeroize;
@@ -33,10 +29,19 @@ use crate::error::{ChatError, ChatResult};
 // =============================================================
 
 /// Long-term identity key pair (X25519) + stable `registration_id`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct IdentityKeyPair {
     secret: XSecret,
     pub registration_id: u32,
+}
+
+impl std::fmt::Debug for IdentityKeyPair {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IdentityKeyPair")
+            .field("registration_id", &self.registration_id)
+            .field("public_fingerprint", &hex::encode(self.fingerprint()))
+            .finish_non_exhaustive()
+    }
 }
 
 impl IdentityKeyPair {
@@ -50,7 +55,7 @@ impl IdentityKeyPair {
         }
     }
 
-    /// Return the public key as raw bytes.
+    /// Return the public key.
     pub fn public(&self) -> XPublic {
         XPublic::from(&self.secret)
     }
@@ -60,8 +65,8 @@ impl IdentityKeyPair {
         self.public().to_bytes().to_vec()
     }
 
-    /// Ed25519-style fingerprint (SHA-256 of the public key, truncated to 16
-    /// bytes for human display). The full hash is the official fingerprint.
+    /// SHA-256 fingerprint of the public key, truncated to 16 bytes for
+    /// display. The full 32-byte hash is the official fingerprint.
     pub fn fingerprint(&self) -> [u8; 32] {
         use sha2::Digest;
         let mut h = Sha256::new();
@@ -81,15 +86,25 @@ impl IdentityKeyPair {
 // Signed PreKey
 // =============================================================
 
-/// Signed prekey, rotated weekly. The signature is normally produced with
-/// Ed25519; here we approximate it with HMAC-SHA-256 to avoid pulling another
-/// crate into the no-default build.
-#[derive(Debug, Clone)]
+/// Signed prekey, rotated weekly. The signature is approximated with
+/// HMAC-SHA-256 to avoid pulling another crypto crate into the no-default
+/// build; a production deployment would swap in Ed25519.
+#[derive(Clone)]
 pub struct SignedPreKey {
     pub id: u32,
     pub created_at: u64,
     secret: XSecret,
     signature: [u8; 32],
+}
+
+impl std::fmt::Debug for SignedPreKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SignedPreKey")
+            .field("id", &self.id)
+            .field("created_at", &self.created_at)
+            .field("public_fingerprint", &hex::encode(self.public_bytes()))
+            .finish_non_exhaustive()
+    }
 }
 
 impl SignedPreKey {
@@ -120,23 +135,29 @@ impl SignedPreKey {
 
 fn sign_with_identity(identity: &IdentityKeyPair, data: &[u8], out: &mut [u8; 32]) {
     use hmac::{Hmac, Mac};
-    use sha2::Digest;
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(identity.public().as_bytes())
         .expect("HMAC accepts any key length");
     mac.update(data);
     let result = mac.finalize().into_bytes();
     out.copy_from_slice(&result);
-    let _ = Sha256::new(); // keep digest import alive in release builds
 }
 
 // =============================================================
 // One-time prekey
 // =============================================================
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OneTimePreKey {
     secret: XSecret,
     pub id: u32,
+}
+
+impl std::fmt::Debug for OneTimePreKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OneTimePreKey")
+            .field("id", &self.id)
+            .finish_non_exhaustive()
+    }
 }
 
 impl OneTimePreKey {
@@ -168,15 +189,18 @@ pub struct InitialSecrets {
 
 /// Perform the X3DH key agreement as the *initiator* (Alice) using the
 /// recipient's prekey bundle + her own ephemeral key.
-pub fn x3dh_initiator(
+pub fn x3dh_initiator<'a>(
     identity: &IdentityKeyPair,
-    bundle: &PreKeyBundleRef,
+    bundle: &PreKeyBundleRef<'a>,
     ephemeral: &XSecret,
 ) -> ChatResult<InitialSecrets> {
-    let dh1 = dh(identity.secret.clone(), bundle.signed_prekey);
-    let dh2 = dh(identity.secret.clone(), bundle.one_time_prekey.unwrap_or(bundle.identity));
-    let dh3 = dh(ephemeral.clone(), bundle.signed_prekey);
-    let dh4 = dh(ephemeral.clone(), bundle.identity);
+    let dh1 = dh(&identity.secret, &XPublic::from(bundle.signed_prekey));
+    let dh2 = dh(
+        &identity.secret,
+        &XPublic::from(bundle.one_time_prekey.unwrap_or(bundle.identity)),
+    );
+    let dh3 = dh(ephemeral, &XPublic::from(bundle.signed_prekey));
+    let dh4 = dh(ephemeral, &XPublic::from(bundle.identity));
 
     let mut ikm = Vec::with_capacity(4 * 32);
     ikm.extend_from_slice(&dh1);
@@ -202,18 +226,17 @@ pub fn x3dh_responder(
     remote_identity: [u8; 32],
     remote_ephemeral: [u8; 32],
 ) -> ChatResult<InitialSecrets> {
-    let signed = XPublic::from(signed_prekey.secret.clone());
-    let sp_pub = signed.to_bytes();
+    let sp_pub = XPublic::from(&signed_prekey.secret).to_bytes();
 
     let remote_identity_pub = XPublic::from(remote_identity);
     let remote_ephemeral_pub = XPublic::from(remote_ephemeral);
 
-    let dh1 = dh(signed_prekey.secret.clone(), remote_identity_pub);
+    let dh1 = dh(&signed_prekey.secret, &remote_identity_pub);
     let dh2 = match one_time_prekey {
-        Some(otpk) => dh(otpk.secret.clone(), remote_identity_pub),
-        None => dh(signed_prekey.secret.clone(), remote_identity_pub),
+        Some(otpk) => dh(&otpk.secret, &remote_identity_pub),
+        None => dh(&signed_prekey.secret, &remote_identity_pub),
     };
-    let dh3 = dh(identity.secret.clone(), remote_ephemeral_pub);
+    let dh3 = dh(&identity.secret, &remote_ephemeral_pub);
 
     let _ = sp_pub; // (kept for signature checks in higher layer)
 
@@ -240,8 +263,8 @@ pub struct PreKeyBundleRef<'a> {
     pub _lifetime: std::marker::PhantomData<&'a ()>,
 }
 
-fn dh(secret: XSecret, peer: XPublic) -> [u8; 32] {
-    let shared = secret.diffie_hellman(&peer);
+fn dh(secret: &XSecret, peer: &XPublic) -> [u8; 32] {
+    let shared = secret.diffie_hellman(peer);
     *shared.as_bytes()
 }
 
@@ -285,9 +308,9 @@ impl RatchetState {
     /// Ratchet forward: derive a new sending chain key.
     pub fn ratchet_send(&mut self, new_ephemeral: &XSecret) {
         let new_pub = XPublic::from(new_ephemeral).to_bytes();
-        let shared = new_ephemeral.diffie_hellman(&XPublic::from(
-            self.peer_ratchet_pub.unwrap_or([0u8; 32]),
-        ));
+        let peer_bytes = self.peer_ratchet_pub.unwrap_or([0u8; 32]);
+        let peer_pub = XPublic::from(peer_bytes);
+        let shared = new_ephemeral.diffie_hellman(&peer_pub);
         let hk = Hkdf::<Sha256>::new(None, shared.as_bytes());
         let mut root = [0u8; 32];
         let mut chain = [0u8; 32];
@@ -316,20 +339,22 @@ impl RatchetState {
 /// ciphertext envelope (nonce || tag is appended by the AEAD).
 pub fn encrypt_message(message_key: &[u8; 32], plaintext: &[u8], ad: &[u8]) -> ChatResult<Vec<u8>> {
     let cipher = ChaCha20Poly1305::new(ChaKey::from_slice(message_key));
-    let nonce = derive_nonce(message_key);
+    let nonce_bytes = derive_nonce(message_key);
+    let nonce = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
     let payload = Payload { msg: plaintext, aad: ad };
     cipher
-        .encrypt(&nonce, payload)
+        .encrypt(nonce, payload)
         .map_err(|e| ChatError::Crypto(e.to_string()))
 }
 
 /// Decrypt with a message key. Returns `Crypto` error on tag mismatch.
 pub fn decrypt_message(message_key: &[u8; 32], ciphertext: &[u8], ad: &[u8]) -> ChatResult<Vec<u8>> {
     let cipher = ChaCha20Poly1305::new(ChaKey::from_slice(message_key));
-    let nonce = derive_nonce(message_key);
+    let nonce_bytes = derive_nonce(message_key);
+    let nonce = chacha20poly1305::Nonce::from_slice(&nonce_bytes);
     let payload = Payload { msg: ciphertext, aad: ad };
     cipher
-        .decrypt(&nonce, payload)
+        .decrypt(nonce, payload)
         .map_err(|e| ChatError::Crypto(e.to_string()))
 }
 
@@ -382,12 +407,12 @@ fn derive_nonce(message_key: &[u8; 32]) -> [u8; 12] {
 // =============================================================
 
 /// True iff `received` is strictly greater than `last_seen` and within the
-/// acceptable window. Constant-time to avoid side-channels.
+/// acceptable window.
 pub fn monotonic_within_window(received: u64, last_seen: u64, max_drift: u64) -> bool {
     let diff = received.wrapping_sub(last_seen);
     let in_window = diff <= max_drift;
     let monotonic = diff != 0 && diff != u64::MAX;
-    bool::from(in_window.ct_eq(&true)) && monotonic
+    in_window && monotonic
 }
 
 // =============================================================

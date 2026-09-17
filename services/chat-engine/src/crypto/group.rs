@@ -4,7 +4,7 @@
 //! re-distributed via pairwise Signal sessions established with `x3dh_*`.
 
 use chacha20poly1305::{
-    aead::{Aead, Payload},
+    aead::{Aead, KeyInit, Payload},
     Key as ChaKey, XChaCha20Poly1305, XNonce,
 };
 use rand::RngCore;
@@ -93,7 +93,7 @@ impl Group {
         let ct = cipher
             .encrypt(
                 XNonce::from_slice(&nonce),
-                chacha20poly1305::aead::Payload { msg: plaintext, aad: &[] },
+                Payload { msg: plaintext, aad: &[] },
             )
             .map_err(|e| ChatError::Crypto(e.to_string()))?;
         Ok(GroupCiphertext {

@@ -187,6 +187,6 @@ export function defaultSfuUrl(roomId: string, userId: string): string {
   const base =
     (typeof process !== "undefined"
       ? process.env.NEXT_PUBLIC_SFU_URL
-      : undefined) ?? "ws://localhost:8095";
+      : undefined) ?? "ws://localhost:8105";
   return `${base.replace(/\/$/, "")}/v1/ws?room_id=${encodeURIComponent(roomId)}&user_id=${encodeURIComponent(userId)}`;
 }

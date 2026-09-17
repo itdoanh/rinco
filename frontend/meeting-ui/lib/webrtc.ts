@@ -134,12 +134,13 @@ export async function getUserMedia(
 export async function getDisplayMedia(
   options: { audio?: boolean; cursor?: "always" | "motion" | "never" } = {},
 ): Promise<MediaStream> {
-  return navigator.mediaDevices.getDisplayMedia({
-    video: {
-      cursor: options.cursor ?? "always",
-    },
+  const constraints: MediaStreamConstraints = {
+    video: options.cursor
+      ? ({ cursor: options.cursor } as unknown as MediaTrackConstraints)
+      : true,
     audio: options.audio ?? false,
-  });
+  };
+  return navigator.mediaDevices.getDisplayMedia(constraints);
 }
 
 /**
@@ -181,17 +182,18 @@ export function createAudioAnalyzer(
   const fftSize = options.fftSize ?? 256;
   const threshold = options.speakingThreshold ?? 30;
 
-  const AudioContextCtor: typeof AudioContext =
-    (globalThis as unknown as { AudioContext?: typeof AudioContext })
-      .AudioContext ??
+  const audioContextCtorOrFallback:
+    | typeof AudioContext
+    | undefined = (globalThis as unknown as { AudioContext?: typeof AudioContext })
+    .AudioContext ??
     (globalThis as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext;
+    .webkitAudioContext;
 
-  if (!AudioContextCtor) {
+  if (!audioContextCtorOrFallback) {
     throw new Error("AudioContext not supported in this runtime");
   }
 
-  const audioContext = new AudioContextCtor();
+  const audioContext = new audioContextCtorOrFallback();
   const source = audioContext.createMediaStreamSource(stream);
   const analyser = audioContext.createAnalyser();
   analyser.fftSize = fftSize;

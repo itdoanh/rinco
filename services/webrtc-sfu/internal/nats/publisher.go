@@ -27,6 +27,10 @@ type Publisher interface {
 	PublishParticipantLeft(ctx context.Context, roomID, userID string) error
 	PublishRecordingStart(ctx context.Context, roomID string) error
 	PublishRecordingStop(ctx context.Context, roomID string) error
+	// Signaling methods for WebRTC negotiation
+	PublishSignalingOffer(ctx context.Context, roomID, participantID, sdp, sdpType string) error
+	PublishSignalingAnswer(ctx context.Context, roomID, participantID, sdp, sdpType string) error
+	PublishSignalingICE(ctx context.Context, roomID, participantID, candidate, sdpMid string, sdpMLineIndex int) error
 	Close()
 }
 
@@ -76,6 +80,22 @@ func (n *natsPublisher) PublishRecordingStart(ctx context.Context, roomID string
 }
 func (n *natsPublisher) PublishRecordingStop(ctx context.Context, roomID string) error {
 	return n.publish(ctx, "recording.stop", map[string]string{"room_id": roomID})
+}
+func (n *natsPublisher) PublishSignalingOffer(ctx context.Context, roomID, participantID, sdp, sdpType string) error {
+	return n.publish(ctx, "sfu.signaling.offer", map[string]string{
+		"room_id": roomID, "participant_id": participantID, "sdp": sdp, "type": sdpType,
+	})
+}
+func (n *natsPublisher) PublishSignalingAnswer(ctx context.Context, roomID, participantID, sdp, sdpType string) error {
+	return n.publish(ctx, "sfu.signaling.answer", map[string]string{
+		"room_id": roomID, "participant_id": participantID, "sdp": sdp, "type": sdpType,
+	})
+}
+func (n *natsPublisher) PublishSignalingICE(ctx context.Context, roomID, participantID, candidate, sdpMid string, sdpMLineIndex int) error {
+	return n.publish(ctx, "sfu.signaling.ice", map[string]any{
+		"room_id": roomID, "participant_id": participantID, "candidate": candidate,
+		"sdp_mid": sdpMid, "sdp_m_line_index": sdpMLineIndex,
+	})
 }
 func (n *natsPublisher) Close() {
 	if n.conn != nil {
@@ -128,6 +148,22 @@ func (l *localBus) PublishRecordingStart(ctx context.Context, roomID string) err
 }
 func (l *localBus) PublishRecordingStop(ctx context.Context, roomID string) error {
 	return l.publish(ctx, "recording.stop", map[string]string{"room_id": roomID})
+}
+func (l *localBus) PublishSignalingOffer(ctx context.Context, roomID, participantID, sdp, sdpType string) error {
+	return l.publish(ctx, "sfu.signaling.offer", map[string]string{
+		"room_id": roomID, "participant_id": participantID, "sdp": sdp, "type": sdpType,
+	})
+}
+func (l *localBus) PublishSignalingAnswer(ctx context.Context, roomID, participantID, sdp, sdpType string) error {
+	return l.publish(ctx, "sfu.signaling.answer", map[string]string{
+		"room_id": roomID, "participant_id": participantID, "sdp": sdp, "type": sdpType,
+	})
+}
+func (l *localBus) PublishSignalingICE(ctx context.Context, roomID, participantID, candidate, sdpMid string, sdpMLineIndex int) error {
+	return l.publish(ctx, "sfu.signaling.ice", map[string]any{
+		"room_id": roomID, "participant_id": participantID, "candidate": candidate,
+		"sdp_m_id": sdpMid, "sdp_m_line_index": sdpMLineIndex,
+	})
 }
 func (l *localBus) Close() {}
 

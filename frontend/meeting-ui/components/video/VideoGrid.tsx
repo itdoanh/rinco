@@ -1,12 +1,12 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef } from "react";
 import { useMeetingStore } from "@/lib/store";
 import { VideoTile } from "../video/VideoTile";
 import { cn } from "@/lib/utils";
 
 export function VideoGrid() {
-  const { participants, localStream, isSpeaking } = useMeetingStore();
+  const { participants, localStream } = useMeetingStore();
   const gridRef = useRef<HTMLDivElement>(null);
 
   // Calculate grid layout based on participant count

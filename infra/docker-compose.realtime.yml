@@ -1,0 +1,108 @@
+# =============================================================================
+# RINCO Real-Time Services Docker Compose
+# =============================================================================
+# Chat Engine, WebRTC SFU, Recording Service
+# =============================================================================
+
+version: '3.9'
+
+services:
+  # ========================================================================
+  # CHAT ENGINE (Go) - Port 8101/8102
+  # ========================================================================
+  chat-engine:
+    build:
+      context: .
+      dockerfile: services/chat-engine/Dockerfile
+    container_name: rinco-chat-engine
+    restart: unless-stopped
+    environment:
+      - CHAT_HTTP_ADDR=:8101
+      - CHAT_RPC_ADDR=:8102
+      - CHAT_SCYLLA_URL=scylla:9042
+      - CHAT_SCYLLA_KEYSPACE=rinco_chat
+      - CHAT_VALKEY_URL=valkey:6379
+      - CHAT_NATS_URL=nats://nats:4222
+      - CHAT_IN_MEMORY_MODE=false
+    ports:
+      - "8101:8101"  # HTTP/REST
+      - "8102:8102"  # Connect-RPC
+    depends_on:
+      - scylla
+      - valkey
+      - nats
+    networks:
+      - rinco-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8101/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ========================================================================
+  # WEBRTC SFU - Port 8105/8106
+  # ========================================================================
+  webrtc-sfu:
+    build:
+      context: .
+      dockerfile: services/webrtc-sfu/Dockerfile
+    container_name: rinco-webrtc-sfu
+    restart: unless-stopped
+    environment:
+      - SFU_HTTP_ADDR=:8105
+      - SFU_RTC_ADDR=:8106
+      - SFU_NATS_URL=nats://nats:4222
+      - SFU_ICE_SERVERS=stun:stun.l.google.com:19302
+      - SFU_MAX_PARTICIPANTS=50
+      - SFU_MAX_ROOMS=1000
+      - SFU_RECORDING_HOOK_URL=http://recording-service:8093/v1/recordings/start
+    ports:
+      - "8105:8105"  # HTTP/REST
+      - "8106:8106"  # Connect-RPC
+    depends_on:
+      - nats
+    networks:
+      - rinco-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8105/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ========================================================================
+  # RECORDING SERVICE (Python FastAPI) - Port 8093
+  # ========================================================================
+  recording-service:
+    build:
+      context: .
+      dockerfile: services/recording-service/Dockerfile
+    container_name: rinco-recording-service
+    restart: unless-stopped
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8093
+      - MINIO_HOST=minio:9000
+      - MINIO_USER=${MINIO_ROOT_USER:-rinco}
+      - MINIO_PASSWORD=${MINIO_PASSWORD:-rinco_dev_password}
+      - MINIO_SECURE=false
+      - RECORDINGS_BUCKET=rinco-recordings
+      - STT_URL=http://stt-service:8097/v1/transcribe
+      - FFMPEG_BIN=ffmpeg
+      - MAX_RECORDING_SECONDS=14400
+    ports:
+      - "8093:8093"
+    volumes:
+      - /tmp/recordings:/tmp
+    depends_on:
+      - minio
+    networks:
+      - rinco-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8093/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  rinco-network:
+    external: true

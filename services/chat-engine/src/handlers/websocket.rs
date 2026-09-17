@@ -100,7 +100,7 @@ pub async fn handle_socket(socket: WebSocket, ctx: Arc<AppContext>, user_id: Uui
     // Subscribe to per-user events.
     let sub_user = format!("user:{}", user_id);
     let mut user_sub = match ctx.redis.subscribe(&[sub_user.as_str()]).await {
-        Ok(s) => s.into_on(),
+        Ok(s) => s,
         Err(e) => {
             warn!(error = %e, "redis subscribe failed");
             return;

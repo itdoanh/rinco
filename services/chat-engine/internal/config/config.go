@@ -34,8 +34,8 @@ type Config struct {
 // FromEnv builds a Config from the process environment.
 func FromEnv() Config {
 	return Config{
-		HTTPAddr:           getenv("CHAT_HTTP_ADDR", ":8080"),
-		ConnectRPCAddr:     getenv("CHAT_RPC_ADDR", ":8082"),
+		HTTPAddr:           getenv("CHAT_HTTP_ADDR", ":8101"),
+		ConnectRPCAddr:     getenv("CHAT_RPC_ADDR", ":8102"),
 		ScyllaURL:          splitCSV(getenv("CHAT_SCYLLA_URL", "")),
 		ScyllaKeyspace:     getenv("CHAT_SCYLLA_KEYSPACE", "rinco_chat"),
 		ValkeyURL:          getenv("CHAT_VALKEY_URL", ""),

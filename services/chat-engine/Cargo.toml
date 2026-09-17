@@ -15,11 +15,13 @@ name = "chat_engine"
 path = "src/lib.rs"
 
 [features]
-default = ["scylla-driver"]
+default = []
 # GPU/CPU code path switches (always compile both, choose at runtime)
 gpu = []
 # Optional native OpenCV binding (off by default; CPU compositor fallback used)
 opencv = []
+# Enable ScyllaDB driver (off by default; chat-engine will fall back to in-memory mode).
+scylla-driver = ["dep:scylla"]
 
 [dependencies]
 # Async runtime
