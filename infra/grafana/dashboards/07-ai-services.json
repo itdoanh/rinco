@@ -118,6 +118,67 @@
           "legendFormat": "p99"
         }
       ]
+    },
+    {
+      "id": 9,
+      "title": "AI Inference Cost ($/hr)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+      "targets": [
+        {
+          "expr": "sum(rate(ai_inference_cost_usd_total[1h] * 3600)) by (service)",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Lead Scoring — Score Distribution",
+      "type": "heatmap",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "expr": "sum(increase(lead_scoring_ensemble_score_bucket[5m])) by (le)",
+          "format": "heatmap",
+          "legendFormat": "{{le}}"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "RAG Chat — Embedder / LLM Tokens / sec",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "fieldConfig": { "defaults": { "unit": "ops" } },
+      "targets": [
+        {
+          "expr": "sum(rate(rag_streaming_tokens_total[5m])) by (model)",
+          "legendFormat": "llm-{{model}}"
+        },
+        {
+          "expr": "sum(rate(rag_embedder_tokens_total[5m])) by (model)",
+          "legendFormat": "embed-{{model}}"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "AI SRE — Drift Detector Score",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "expr": "rinco_feature_drift_score",
+          "legendFormat": "{{feature}}"
+        }
+      ]
     }
   ],
   "refresh": "30s",
