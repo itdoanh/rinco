@@ -1046,3 +1046,98 @@ No unhandled panics in non-defer recovery code.
 **Documentation alignment**: **Good** — discrepancies are documented (nhooyr/websocket, PASETO v2 vs v4) and most features are implemented.
 
 **Next actions**: Continue iteration — address remaining frontend mock data, add tests for dynamic-model-service, refactor RLS to use connection-pinned tx pattern, expand frontend E2E coverage.
+
+---
+
+## WS-A Phase — 2026-09-18 (Loop WS-A 001 → 005)
+
+> **Workstream**: WS-A (Backend services consolidation + E2E wiring)
+> **Coordinator**: Cursor WS-A sub-agent
+> **Branch**: `main`
+> **Final commit**: `d4ed531` (Loop WS-A 005: smoke JSON output)
+
+### What was delivered
+
+**1. Port reconciliation (Loop 001)** — commit `ac9e703`
+
+Reconciled the canonical port table between `docs/SERVICES.md`, `docs/MASTER_PLAN.md`, `infra/docker-compose.services.yml`, and every service's own default.  Python services now own 8090-8094 (ai-sre / lead-scoring / rag-chatbot / recording-service / stt-service), Go services 8081-8088 + 8095-8099, Rust services 8101-8102, frontends 3000-3003.
+
+Files touched:
+- `services/billing-service/cmd/main.go` — PORT 8089 → 8095
+- `services/observability-service/internal/platform/platform.go` — OBSERVABILITY_HTTP_ADDR :8089 → :8096
+- `services/search-service/cmd/main.go` — PORT 8087 → 8097
+- `services/meta-capi-service/cmd/main.go` — PORT 8093 → 8098
+- `services/chat-engine/src/config.rs` — 8094 → 8101
+- `services/webrtc-sfu/src/config.rs` — 8095 → 8102
+- `services/recording-service/src/config.rs` — 8096 → 8093 (Rust moves to Python block)
+- `services/recording-service/src/config.rs` — `stt_rpc_url` → `stt-service:8094`
+- `infra/docker-compose.services.yml` — health-checks + container ports updated; meeting-ui SFU URL updated
+- `docs/SERVICES.md` + `docs/MASTER_PLAN.md` — port tables regenerated
+
+**2. Shared PASETO verifier (Loop 002)** — commit `378092b`
+
+`packages/go/auth/verifier.go` is now the single canonical entry-point every Go service uses to verify access tokens minted by auth-service:
+
+- `NewVerifier(currentHex, previousHex, opts...)` + `NewVerifierFromEnv(opts...)`
+- `VerifyAccessToken(tokenString) (*AccessClaims, error)`
+- Optional `WithClockSkew(d)` / `WithIssuer("rinco")`
+- Accepts raw token or `Bearer <tok>` (case-insensitive)
+- Reads `PASETO_KEY_CURRENT` / `PASETO_KEY_PREVIOUS` / `AUTH_CLOCK_SKEW_SECONDS`
+- `AccessClaims { UserID, TenantID, Role, ExpiresAt, IssuedAt, TokenID, Issuer }`
+- Side fix: `KeyRing.Decrypt` now surfaces `ErrExpired` instead of collapsing to `ErrInvalid`
+
+`packages/go/auth/verifier_test.go` — 15 tests, **all PASS** in `go test ./auth/`.
+
+**3. Tenant RLS GUC middleware (Loop 003)** — commit `75b2719`
+
+`packages/go/middleware/tenant_rls.go` exposes:
+
+- `WithTenantRLS(pool, cfg)` echo middleware: per request, resolves tenant from verified claims or `X-Tenant-ID` header, acquires a `*pgxpool.Conn`, runs `SELECT set_config('app.current_tenant_id', $1, false)`, and stashes the connection so downstream `db.WithTx` calls inherit the GUC.
+- `ApplyTenantGUC(ctx, conn, tenantID, isLocal)` for cron / async workers.
+- `TenantGUCStatement(tenantID)` helper.
+- `TenantConn(c)` accessor + `escapeSingleQuote`.
+
+`tenant_rls_test.go` — 10 tests covering defaults, claim-wins, header fallback, nil-conn guards, escape edge cases.
+
+**4. Dev orchestration scripts (Loop 004 → 005)** — commits `190ecc1` (co-shared), `d4ed531`
+
+- `scripts/dev.sh` + `scripts/dev.ps1` — bring up infra, wait for DB health, run migrations + seed, start 20 backend services via docker compose, start 4 frontend dev servers in background with logs to `logs/<fe>.log` and PIDs in `.dev/pids/`. Idempotent re-run.
+- `scripts/smoke.sh` + `scripts/smoke.ps1` — probe `/health` on all 20 backends + 4 frontends; exit codes 0 healthy / 1 unreachable / 2 degraded (`-Strict`).  `JSON=1` (bash) or `-Json` (ps1) emits machine-readable summary; `ONLY=go|python|rust|frontend` (bash) or `-Only` (ps1) filters by language.
+
+**5. Integration tests (co-shared with WS-F, in commit `d4ed531`)**
+
+`services/integration-tests/` now contains a complete testcontainers-based suite:
+
+- `setup_test.go` (17 KB) — boot Postgres + Valkey + NATS via testcontainers-go, open `pgxpool`, mint PASETO tokens, expose `TestEnv` with auto-login + `AssertRBAC` helper.
+- `tenancy_test.go` — `TestTenantsIsolatedFromEachOther`, `TestCrossTenantAttemptRejected`, `TestTenantCreateAndResolve`, `TestDuplicateSlugFails`.
+- `rbac_test.go` — 5 roles (tenant_admin / manager / member / marketing / viewer) with write/read allow/deny matrix.
+- `tree_test.go` — `TestCRMTreeMove`, `TestCRMTreeCycleRejected`, `TestCRMTreeNoSelfParent` against ltree-backed CRM.
+- `workflow_test.go` — rule creation, trigger firing, disabled-doesn't-fire, parallel-fire consistency.
+- Plus bonus: `audit_test.go`, `chat_flow_test.go`, `notifications_test.go`, `scoring_flow_test.go`.
+
+All tests compile cleanly under `-tags=integration` (`go vet` clean).
+
+### Test status
+
+| Suite                            | Result |
+|----------------------------------|--------|
+| `packages/go/auth` (15 new tests)| ✅ PASS |
+| `packages/go/middleware` (10 new)| ✅ PASS |
+| `services/integration-tests` build | ✅ `go vet` clean |
+| Go services build (13)           | ✅ all clean (no port regressions) |
+
+### Definition of Done — WS-A
+
+- [x] Port table canonical across SERVICES.md / MASTER_PLAN.md / docker-compose / Go cmd / Rust config.
+- [x] Single PASETO verifier (`packages/go/auth/verifier.go`) + 15 tests.
+- [x] Tenant RLS GUC middleware (`packages/go/middleware/tenant_rls.go`) + 10 tests.
+- [x] Dev orchestration scripts (sh + ps1) for 17 services + 4 frontends.
+- [x] Smoke test scripts (sh + ps1) with JSON output + per-language filter.
+- [x] Real integration tests using testcontainers-go (postgres + valkey + nats) covering tenancy, RBAC, LTREE, workflows.
+
+### Outstanding (carried into WS-A followups)
+
+- WS-A did NOT touch WS-B territory (`migrations/seed/**`, `seed/external/**`) or WS-C territory (`frontend/**`).
+- WS-A did NOT replace service-local JWT/PASETO handling — services can adopt the new `Verifier` opportunistically; full migration is a separate effort.
+- WS-A did NOT wire `WithTenantRLS` into every service main.go — drop-in adoption is intentionally left to each service owner.
+
