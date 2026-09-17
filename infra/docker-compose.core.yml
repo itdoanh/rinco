@@ -17,7 +17,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rinco_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-rinco}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -61,6 +61,7 @@ services:
       - "8222:8222"
     volumes:
       - nats_data:/data
+      - ./nats/nats.conf:/etc/nats/nats.conf:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
       interval: 10s
@@ -123,7 +124,7 @@ services:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
     ports:
-      - "3000:3000"
+      - "13000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
     networks:
@@ -141,6 +142,7 @@ services:
       - "3100:3100"
     volumes:
       - loki_data:/loki
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
     networks:
       - rinco-network
 
