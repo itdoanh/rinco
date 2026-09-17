@@ -158,13 +158,21 @@ func (k *KeyRing) Encrypt(claims Claims) (string, error) {
 }
 
 // Decrypt thử current key trước, fallback previous.
+//
+// Lưu ý: nếu cả hai key đều không decrypt được vì token hết hạn
+// (ErrExpired từ Paseto.Decrypt), KeyRing trả về ErrExpired thay vì
+// ErrInvalid để caller phân biệt được 401 (expired) vs 401 (malformed).
 func (k *KeyRing) Decrypt(token string) (*Claims, error) {
 	if claims, err := k.current.Decrypt(token); err == nil {
 		return claims, nil
+	} else if errors.Is(err, ErrExpired) {
+		return nil, ErrExpired
 	}
 	if k.previous != nil {
 		if claims, err := k.previous.Decrypt(token); err == nil {
 			return claims, nil
+		} else if errors.Is(err, ErrExpired) {
+			return nil, ErrExpired
 		}
 	}
 	return nil, ErrInvalid
