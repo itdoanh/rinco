@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,167 +24,77 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { LoadingSkeleton, EmptyState, ErrorBoundary } from "@rinco/ui";
 import {
   Users,
   Search,
-  Plus,
+  UserPlus,
   MoreHorizontal,
   ChevronLeft,
   ChevronRight,
   Shield,
   Mail,
   Building2,
-  UserPlus,
-  TreePine,
 } from "lucide-react";
 import { format } from "date-fns";
+import { adminApi, type AdminUser } from "@/lib/admin-api";
 
-const mockUsers = [
-  {
-    id: "u_001",
-    email: "nguyen.van.a@apexfintech.vn",
-    name: "Nguyen Van A",
-    role: "admin",
-    tenant: "Apex Fintech",
-    tenantSlug: "apexfintech",
-    status: "active",
-    lastLogin: "2026-09-17T10:30:00Z",
-    createdAt: "2025-01-15T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_002",
-    email: "tran.thi.b@vietnamrealty.vn",
-    name: "Tran Thi B",
-    role: "manager",
-    tenant: "Vietnam Realty",
-    tenantSlug: "vietnamrealty",
-    status: "active",
-    lastLogin: "2026-09-17T08:15:00Z",
-    createdAt: "2025-03-22T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_003",
-    email: "le.van.c@saigonhealth.vn",
-    name: "Le Van C",
-    role: "user",
-    tenant: "Saigon Health Group",
-    tenantSlug: "saigonhealth",
-    status: "active",
-    lastLogin: "2026-09-16T14:22:00Z",
-    createdAt: "2024-11-08T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_004",
-    email: "pham.thi.d@eduviet.edu.vn",
-    name: "Pham Thi D",
-    role: "user",
-    tenant: "EduViet Academy",
-    tenantSlug: "eduviet",
-    status: "active",
-    lastLogin: "2026-09-15T16:45:00Z",
-    createdAt: "2026-08-30T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_005",
-    email: "hoang.van.e@megashop.vn",
-    name: "Hoang Van E",
-    role: "admin",
-    tenant: "MegaShop Vietnam",
-    tenantSlug: "megashop",
-    status: "active",
-    lastLogin: "2026-09-17T09:00:00Z",
-    createdAt: "2024-06-14T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_006",
-    email: "vu.thi.f@greentech.vn",
-    name: "Vu Thi F",
-    role: "user",
-    tenant: "GreenTech Solutions",
-    tenantSlug: "greentech",
-    status: "pending",
-    lastLogin: null,
-    createdAt: "2026-09-10T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_007",
-    email: "do.van.g@logistics-pro.vn",
-    name: "Do Van G",
-    role: "manager",
-    tenant: "Logistics Pro",
-    tenantSlug: "logistics-pro",
-    status: "active",
-    lastLogin: "2026-09-17T11:20:00Z",
-    createdAt: "2025-09-05T00:00:00Z",
-    avatar: null,
-  },
-  {
-    id: "u_008",
-    email: "bui.thi.h@fintechhub.asia",
-    name: "Bui Thi H",
-    role: "admin",
-    tenant: "Fintech Hub Asia",
-    tenantSlug: "fintech-hub",
-    status: "suspended",
-    lastLogin: "2026-09-10T08:00:00Z",
-    createdAt: "2025-05-18T00:00:00Z",
-    avatar: null,
-  },
-];
-
-const ROLE_META = {
+const ROLE_META: Record<string, { color: string; label: string }> = {
   admin: { color: "bg-purple-100 text-purple-700", label: "Admin" },
   manager: { color: "bg-blue-100 text-blue-700", label: "Manager" },
   user: { color: "bg-gray-100 text-gray-700", label: "User" },
 };
 
-const STATUS_META = {
-  active: { variant: "default" as const, label: "Active" },
-  pending: { variant: "secondary" as const, label: "Pending" },
-  suspended: { variant: "destructive" as const, label: "Suspended" },
+const STATUS_META: Record<string, { variant: "default" | "secondary" | "destructive"; label: string }> = {
+  active: { variant: "default", label: "Active" },
+  pending: { variant: "secondary", label: "Pending" },
+  suspended: { variant: "destructive", label: "Suspended" },
 };
 
-export default function UsersPage() {
+function UsersPageInner() {
+  const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<string>("all");
-  const [tenantFilter, setTenantFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
   const pageSize = 10;
 
-  const tenants = useMemo(
-    () => Array.from(new Set(mockUsers.map((u) => u.tenant))).sort(),
-    [],
-  );
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["users"],
+    queryFn: () => adminApi.getUsers({ limit: 200 }),
+    staleTime: 30_000,
+  });
 
-  const filtered = useMemo(() => {
-    return mockUsers.filter((u) => {
-      const matchSearch =
-        !search ||
-        u.name.toLowerCase().includes(search.toLowerCase()) ||
-        u.email.toLowerCase().includes(search.toLowerCase());
-      const matchRole = roleFilter === "all" || u.role === roleFilter;
-      const matchTenant = tenantFilter === "all" || u.tenantSlug === tenantFilter;
-      const matchStatus = statusFilter === "all" || u.status === statusFilter;
-      return matchSearch && matchRole && matchTenant && matchStatus;
-    });
-  }, [search, roleFilter, tenantFilter, statusFilter]);
+  const inviteMut = useMutation({
+    mutationFn: (p: { email: string; name: string; role: string }) =>
+      adminApi.inviteUser(p),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+  });
+
+  const users: AdminUser[] = data?.data ?? [];
+  const tenants = Array.from(
+    new Set(users.map((u) => u.tenantName ?? u.tenantSlug ?? "").filter(Boolean)),
+  ).sort();
+
+  const filtered = users.filter((u) => {
+    const matchSearch =
+      !search ||
+      (u.fullName ?? u.name ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      u.email.toLowerCase().includes(search.toLowerCase());
+    const matchRole = roleFilter === "all" || u.role === roleFilter;
+    const matchStatus = statusFilter === "all" || u.status === statusFilter;
+    return matchSearch && matchRole && matchStatus;
+  });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paged = filtered.slice((page - 1) * pageSize, page * pageSize);
 
-  const stats = useMemo(() => ({
-    total: mockUsers.length,
-    active: mockUsers.filter((u) => u.status === "active").length,
-    pending: mockUsers.filter((u) => u.status === "pending").length,
-    suspended: mockUsers.filter((u) => u.status === "suspended").length,
-  }), []);
+  const stats = {
+    total: users.length,
+    active: users.filter((u) => u.status === "active").length,
+    pending: users.filter((u) => u.status === "pending").length,
+    suspended: users.filter((u) => u.status === "suspended").length,
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -195,27 +106,75 @@ export default function UsersPage() {
             Users
           </h1>
           <p className="text-muted-foreground mt-1">
-            {stats.total} users · {stats.active} active · {stats.pending} pending · {stats.suspended} suspended
+            {stats.total} users · {stats.active} active · {stats.pending} pending ·{" "}
+            {stats.suspended} suspended
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className="gap-2">
-            <TreePine className="w-4 h-4" />
-            Tree View
-          </Button>
-          <Button className="gap-2">
-            <UserPlus className="w-4 h-4" />
-            Invite User
-          </Button>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <UserPlus className="w-4 h-4" />
+                Invite User
+              </Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Invite user</DialogTitle>
+                <DialogDescription>
+                  Gửi email mời tham gia platform. Người được mời sẽ nhận link đăng ký.
+                </DialogDescription>
+              </DialogHeader>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const form = new FormData(e.currentTarget);
+                  inviteMut.mutate({
+                    email: String(form.get("email") ?? ""),
+                    name: String(form.get("name") ?? ""),
+                    role: String(form.get("role") ?? "user"),
+                  });
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <Label htmlFor="email">Email</Label>
+                  <Input id="email" name="email" type="email" required />
+                </div>
+                <div>
+                  <Label htmlFor="name">Full name</Label>
+                  <Input id="name" name="name" required />
+                </div>
+                <div>
+                  <Label htmlFor="role">Role</Label>
+                  <select
+                    id="role"
+                    name="role"
+                    className="w-full border-2 border-slate-200 bg-white rounded-md px-3 py-2 mt-1 text-sm"
+                    defaultValue="user"
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="manager">Manager</option>
+                    <option value="user">User</option>
+                  </select>
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={inviteMut.isPending}>
+                    {inviteMut.isPending ? "Sending…" : "Send invitation"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard title="Total Users" value={stats.total} icon={Users} color="bg-slate-100 text-slate-700" />
-        <StatCard title="Active" value={stats.active} icon={Shield} color="bg-emerald-100 text-emerald-700" />
-        <StatCard title="Pending" value={stats.pending} icon={Mail} color="bg-amber-100 text-amber-700" />
-        <StatCard title="Suspended" value={stats.suspended} icon={Building2} color="bg-red-100 text-red-700" />
+        <StatCard title="Total Users" value={stats.total} icon={Users} color="bg-slate-100 text-slate-700" loading={isLoading} />
+        <StatCard title="Active" value={stats.active} icon={Shield} color="bg-emerald-100 text-emerald-700" loading={isLoading} />
+        <StatCard title="Pending" value={stats.pending} icon={Mail} color="bg-amber-100 text-amber-700" loading={isLoading} />
+        <StatCard title="Suspended" value={stats.suspended} icon={Building2} color="bg-red-100 text-red-700" loading={isLoading} />
       </div>
 
       {/* Filter bar */}
@@ -242,19 +201,6 @@ export default function UsersPage() {
                 <SelectItem value="user">User</SelectItem>
               </SelectContent>
             </Select>
-            <Select value={tenantFilter} onValueChange={setTenantFilter}>
-              <SelectTrigger className="w-44">
-                <SelectValue placeholder="Tenant" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Tenants</SelectItem>
-                {tenants.map((t) => (
-                  <SelectItem key={t} value={t.toLowerCase().replace(/\s+/g, "-")}>
-                    {t}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-32">
                 <SelectValue placeholder="Status" />
@@ -273,32 +219,49 @@ export default function UsersPage() {
       {/* Table */}
       <Card>
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                  <th className="px-4 py-3 font-medium">User</th>
-                  <th className="px-4 py-3 font-medium">Tenant</th>
-                  <th className="px-4 py-3 font-medium">Role</th>
-                  <th className="px-4 py-3 font-medium">Status</th>
-                  <th className="px-4 py-3 font-medium">Last Login</th>
-                  <th className="px-4 py-3 font-medium">Created</th>
-                  <th className="px-4 py-3 font-medium">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="text-center py-12 text-muted-foreground">
-                      No users match the current filters
-                    </td>
+          {isLoading ? (
+            <div className="p-4">
+              <LoadingSkeleton.Table rows={pageSize} columns={6} />
+            </div>
+          ) : error ? (
+            <div className="p-6">
+              <EmptyState
+                variant="error"
+                title="Không tải được users"
+                description={(error as Error).message}
+              />
+            </div>
+          ) : paged.length === 0 ? (
+            <div className="p-6">
+              <EmptyState
+                variant="search"
+                title="Không có user nào khớp filter"
+                description="Thử bỏ bộ lọc hoặc mời user mới."
+              />
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
+                    <th className="px-4 py-3 font-medium">User</th>
+                    <th className="px-4 py-3 font-medium">Tenant</th>
+                    <th className="px-4 py-3 font-medium">Role</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                    <th className="px-4 py-3 font-medium">Last Login</th>
+                    <th className="px-4 py-3 font-medium">Created</th>
+                    <th className="px-4 py-3 font-medium">Actions</th>
                   </tr>
-                ) : (
-                  paged.map((user) => {
-                    const roleMeta = ROLE_META[user.role as keyof typeof ROLE_META];
-                    const statusMeta = STATUS_META[user.status as keyof typeof STATUS_META];
-                    const initials = user.name.split(" ").map((n) => n[0]).join("").toUpperCase();
-
+                </thead>
+                <tbody>
+                  {paged.map((user) => {
+                    const roleMeta = ROLE_META[user.role] ?? ROLE_META.user;
+                    const statusMeta = STATUS_META[user.status] ?? STATUS_META.pending;
+                    const initials = (user.fullName ?? user.name ?? user.email)
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")
+                      .toUpperCase();
                     return (
                       <tr key={user.id} className="border-b hover:bg-slate-50/60 transition">
                         <td className="px-4 py-3">
@@ -309,20 +272,18 @@ export default function UsersPage() {
                               </AvatarFallback>
                             </Avatar>
                             <div>
-                              <div className="font-semibold">{user.name}</div>
+                              <div className="font-semibold">{user.fullName ?? user.name ?? "—"}</div>
                               <div className="text-xs text-muted-foreground">{user.email}</div>
                             </div>
                           </div>
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant="outline" className="text-xs">
-                            {user.tenant}
+                            {user.tenantName ?? user.tenantSlug ?? "—"}
                           </Badge>
                         </td>
                         <td className="px-4 py-3">
-                          <Badge className={`${roleMeta.color} text-xs`}>
-                            {roleMeta.label}
-                          </Badge>
+                          <Badge className={`${roleMeta.color} text-xs`}>{roleMeta.label}</Badge>
                         </td>
                         <td className="px-4 py-3">
                           <Badge variant={statusMeta.variant} className="text-xs">
@@ -330,8 +291,8 @@ export default function UsersPage() {
                           </Badge>
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">
-                          {user.lastLogin
-                            ? format(new Date(user.lastLogin), "yyyy-MM-dd HH:mm")
+                          {user.lastLoginAt
+                            ? format(new Date(user.lastLoginAt), "yyyy-MM-dd HH:mm")
                             : "Never"}
                         </td>
                         <td className="px-4 py-3 text-xs text-muted-foreground">
@@ -344,11 +305,11 @@ export default function UsersPage() {
                         </td>
                       </tr>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {filtered.length > 0 && (
             <div className="flex items-center justify-between px-4 py-3 border-t">
@@ -386,11 +347,13 @@ function StatCard({
   value,
   icon: Icon,
   color,
+  loading,
 }: {
   title: string;
   value: number;
   icon: typeof Users;
   color: string;
+  loading?: boolean;
 }) {
   return (
     <Card>
@@ -398,11 +361,23 @@ function StatCard({
         <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${color}`}>
           <Icon className="w-5 h-5" />
         </div>
-        <div>
-          <div className="text-2xl font-bold">{value}</div>
+        <div className="flex-1 min-w-0">
+          {loading ? (
+            <LoadingSkeleton className="h-7 w-12" />
+          ) : (
+            <div className="text-2xl font-bold">{value}</div>
+          )}
           <div className="text-xs text-muted-foreground">{title}</div>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+export default function UsersPage() {
+  return (
+    <ErrorBoundary>
+      <UsersPageInner />
+    </ErrorBoundary>
   );
 }

@@ -2,14 +2,14 @@
 // ============================================================
 // Form primitives
 // ============================================================
-export { Button, buttonVariants } from "@/components/ui/button"
-export { Input } from "@/components/ui/input"
-export { Textarea } from "@/components/ui/textarea"
-export { Label } from "@/components/ui/label"
-export { Checkbox } from "@/components/ui/checkbox"
-export { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-export { Switch } from "@/components/ui/switch"
-export { Slider } from "@/components/ui/slider"
+export { Button, buttonVariants } from "./components/ui/button"
+export { Input } from "./components/ui/input"
+export { Textarea } from "./components/ui/textarea"
+export { Label } from "./components/ui/label"
+export { Checkbox } from "./components/ui/checkbox"
+export { RadioGroup, RadioGroupItem } from "./components/ui/radio-group"
+export { Switch } from "./components/ui/switch"
+export { Slider } from "./components/ui/slider"
 
 // ============================================================
 // Layout
@@ -21,15 +21,15 @@ export {
   CardTitle,
   CardDescription,
   CardContent,
-} from "@/components/ui/card"
-export { Separator } from "@/components/ui/separator"
-export { AspectRatio } from "@/components/ui/aspect-ratio"
-export { ScrollArea, ScrollBar } from "@/components/ui/scroll-area"
+} from "./components/ui/card"
+export { Separator } from "./components/ui/separator"
+export { AspectRatio } from "./components/ui/aspect-ratio"
+export { ScrollArea, ScrollBar } from "./components/ui/scroll-area"
 export {
   ResizablePanelGroup,
   ResizablePanel,
   ResizableHandle,
-} from "@/components/ui/resizable"
+} from "./components/ui/resizable"
 
 // ============================================================
 // Overlays
@@ -45,7 +45,7 @@ export {
   DialogFooter,
   DialogTitle,
   DialogDescription,
-} from "@/components/ui/dialog"
+} from "./components/ui/dialog"
 export {
   AlertDialog,
   AlertDialogPortal,
@@ -58,7 +58,7 @@ export {
   AlertDialogDescription,
   AlertDialogAction,
   AlertDialogCancel,
-} from "@/components/ui/alert-dialog"
+} from "./components/ui/alert-dialog"
 export {
   Sheet,
   SheetPortal,
@@ -70,7 +70,7 @@ export {
   SheetFooter,
   SheetTitle,
   SheetDescription,
-} from "@/components/ui/sheet"
+} from "./components/ui/sheet"
 export {
   Drawer,
   DrawerPortal,
@@ -82,24 +82,24 @@ export {
   DrawerFooter,
   DrawerTitle,
   DrawerDescription,
-} from "@/components/ui/drawer"
+} from "./components/ui/drawer"
 export {
   Popover,
   PopoverTrigger,
   PopoverAnchor,
   PopoverContent,
-} from "@/components/ui/popover"
+} from "./components/ui/popover"
 export {
   HoverCard,
   HoverCardTrigger,
   HoverCardContent,
-} from "@/components/ui/hover-card"
+} from "./components/ui/hover-card"
 export {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
   TooltipProvider,
-} from "@/components/ui/tooltip"
+} from "./components/ui/tooltip"
 
 // ============================================================
 // Menus
@@ -113,7 +113,7 @@ export {
   SelectLabel,
   SelectItem,
   SelectSeparator,
-} from "@/components/ui/select"
+} from "./components/ui/select"
 export {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -130,7 +130,7 @@ export {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuRadioGroup,
-} from "@/components/ui/dropdown-menu"
+} from "./components/ui/dropdown-menu"
 export {
   NavigationMenu,
   NavigationMenuList,
@@ -141,7 +141,7 @@ export {
   NavigationMenuIndicator,
   NavigationMenuViewport,
   navigationMenuTriggerStyle,
-} from "@/components/ui/navigation-menu"
+} from "./components/ui/navigation-menu"
 export {
   ContextMenu,
   ContextMenuTrigger,
@@ -158,7 +158,7 @@ export {
   ContextMenuSubContent,
   ContextMenuSubTrigger,
   ContextMenuRadioGroup,
-} from "@/components/ui/context-menu"
+} from "./components/ui/context-menu"
 export {
   Menubar,
   MenubarMenu,
@@ -175,28 +175,28 @@ export {
   MenubarSubTrigger,
   MenubarGroup,
   MenubarShortcut,
-} from "@/components/ui/menubar"
+} from "./components/ui/menubar"
 
 // ============================================================
 // Tabs / Accordion / Collapsible
 // ============================================================
-export { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+export { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/ui/tabs"
 export {
   Accordion,
   AccordionItem,
   AccordionTrigger,
   AccordionContent,
-} from "@/components/ui/accordion"
+} from "./components/ui/accordion"
 export {
   Collapsible,
   CollapsibleTrigger,
   CollapsibleContent,
-} from "@/components/ui/collapsible"
+} from "./components/ui/collapsible"
 
 // ============================================================
 // Data display
 // ============================================================
-export { Badge } from "@/components/ui/badge"
+export { Badge } from "./components/ui/badge"
 export {
   Table,
   TableHeader,
@@ -206,12 +206,12 @@ export {
   TableRow,
   TableCell,
   TableCaption,
-} from "@/components/ui/table"
-export { DataTable } from "@/components/ui/data-table"
-export { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
-export { Progress } from "@/components/ui/progress"
-export { Skeleton } from "@/components/ui/skeleton"
-export { StatCard } from "@/components/ui/stat-card"
+} from "./components/ui/table"
+export { DataTable } from "./components/ui/data-table"
+export { Avatar, AvatarImage, AvatarFallback } from "./components/ui/avatar"
+export { Progress } from "./components/ui/progress"
+export { Skeleton } from "./components/ui/skeleton"
+export { StatCard } from "./components/ui/stat-card"
 export {
   Pagination,
   PaginationContent,
@@ -220,7 +220,7 @@ export {
   PaginationPrevious,
   PaginationNext,
   PaginationEllipsis,
-} from "@/components/ui/pagination"
+} from "./components/ui/pagination"
 export {
   Carousel,
   CarouselContent,
@@ -228,8 +228,8 @@ export {
   CarouselPrevious,
   CarouselNext,
   type CarouselApi,
-} from "@/components/ui/carousel"
-export { Calendar } from "@/components/ui/calendar"
+} from "./components/ui/carousel"
+export { Calendar } from "./components/ui/calendar"
 
 // ============================================================
 // Feedback
@@ -242,11 +242,11 @@ export {
   ToastDescription,
   ToastClose,
   ToastAction,
-} from "@/components/ui/toast"
-export { Toaster } from "@/components/ui/toaster"
-export { useToast } from "@/components/ui/use-toast"
-export { Toaster as SonnerToaster } from "@/components/ui/sonner"
-export { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert"
+} from "./components/ui/toast"
+export { Toaster } from "./components/ui/toaster"
+export { useToast } from "./components/ui/use-toast"
+export { Toaster as SonnerToaster } from "./components/ui/sonner"
+export { Alert, AlertTitle, AlertDescription } from "./components/ui/alert"
 
 // ============================================================
 // Command palette / Search
@@ -261,7 +261,7 @@ export {
   CommandItem,
   CommandShortcut,
   CommandSeparator,
-} from "@/components/ui/command"
+} from "./components/ui/command"
 
 // ============================================================
 // Form (react-hook-form integration)
@@ -275,7 +275,7 @@ export {
   FormDescription,
   FormMessage,
   FormField,
-} from "@/components/ui/form"
+} from "./components/ui/form"
 
 // ============================================================
 // Utilities
@@ -313,11 +313,11 @@ export {
   useApiMutation,
 } from "./hooks"
 
-export { LoadingSkeleton } from "@/components/loading-skeleton"
-export { EmptyState } from "@/components/empty-state"
-export { ErrorBoundary } from "@/components/error-boundary"
+export { LoadingSkeleton } from "./components/loading-skeleton"
+export { EmptyState } from "./components/empty-state"
+export { ErrorBoundary } from "./components/error-boundary"
 export {
   ThemeProvider,
   useTheme,
   ThemeToggle,
-} from "@/components/theme-provider"
+} from "./components/theme-provider"
