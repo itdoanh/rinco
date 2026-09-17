@@ -41,13 +41,58 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/v1/rooms", s.handleRooms)
-	mux.HandleFunc("/v1/rooms/", s.handleRoomByID)
-	mux.HandleFunc("/v1/rooms/", s.handleSignalingOffer)
-	mux.HandleFunc("/v1/rooms/", s.handleSignalingAnswer)
-	mux.HandleFunc("/v1/rooms/", s.handleSignalingICE)
+	mux.HandleFunc("/v1/rooms/", s.handleRoomSubroute)
 	mux.HandleFunc("/v1/stats", s.handleStats)
 	mux.HandleFunc("/ws/room/", s.handleWebSocket)
 	return mux
+}
+
+// handleRoomSubroute dispatches /v1/rooms/<id>/<action> requests.
+func (s *Server) handleRoomSubroute(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	roomID := parts[0]
+
+	switch {
+	case len(parts) == 1:
+		// GET /v1/rooms/{id}, DELETE /v1/rooms/{id}
+		switch r.Method {
+		case http.MethodGet:
+			rm, err := s.Rooms.Get(roomID)
+			if err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, rm)
+		case http.MethodDelete:
+			if err := s.Rooms.Delete(roomID); err != nil {
+				writeError(w, http.StatusNotFound, err)
+				return
+			}
+			_ = s.Publisher.PublishRoomDeleted(r.Context(), roomID)
+			writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	case len(parts) == 2 && parts[1] == "participants":
+		s.handleRoomParticipants(w, r, roomID)
+	case len(parts) == 2 && parts[1] == "join" && r.Method == http.MethodPost:
+		s.handleRoomJoin(w, r, roomID)
+	case len(parts) == 2 && parts[1] == "leave" && r.Method == http.MethodPost:
+		s.handleRoomLeave(w, r, roomID)
+	case len(parts) == 3 && parts[1] == "signaling" && parts[2] == "offer" && r.Method == http.MethodPost:
+		s.handleSignalingOffer(w, r, roomID)
+	case len(parts) == 3 && parts[1] == "signaling" && parts[2] == "answer" && r.Method == http.MethodPost:
+		s.handleSignalingAnswer(w, r, roomID)
+	case len(parts) == 3 && parts[1] == "signaling" && parts[2] == "ice" && r.Method == http.MethodPost:
+		s.handleSignalingICE(w, r, roomID)
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -92,67 +137,16 @@ func (s *Server) handleRooms(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleRoomByID(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
-	parts := strings.Split(path, "/")
-	if len(parts) == 0 || parts[0] == "" {
-		http.Error(w, "not found", http.StatusNotFound)
+func (s *Server) handleRoomParticipants(w http.ResponseWriter, r *http.Request, roomID string) {
+	rm, err := s.Rooms.Get(roomID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	roomID := parts[0]
-	switch {
-	case len(parts) == 1 && r.Method == http.MethodGet:
-		rm, err := s.Rooms.Get(roomID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, rm)
-	case len(parts) == 1 && r.Method == http.MethodDelete:
-		if err := s.Rooms.Delete(roomID); err != nil {
-			writeError(w, http.StatusNotFound, err)
-			return
-		}
-		_ = s.Publisher.PublishRoomDeleted(r.Context(), roomID)
-		writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
-
-	case len(parts) >= 2 && parts[1] == "participants":
-		rm, err := s.Rooms.Get(roomID)
-		if err != nil {
-			writeError(w, http.StatusNotFound, err)
-			return
-		}
-		switch r.Method {
-		case http.MethodGet:
-			writeJSON(w, http.StatusOK, rm.Participants)
-		case http.MethodPost:
-			var p struct {
-				UserID   string            `json:"user_id"`
-				Metadata map[string]string `json:"metadata,omitempty"`
-			}
-			if err := decodeJSON(r, &p); err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
-			participant := types.Participant{
-				ID:       uuid.NewString(),
-				UserID:   p.UserID,
-				JoinedAt: time.Now().UTC(),
-				Metadata: p.Metadata,
-			}
-			if err := s.Rooms.AddParticipant(roomID, participant); err != nil {
-				writeError(w, http.StatusBadRequest, err)
-				return
-			}
-			s.Peers.Register(participant)
-			s.Peers.AddToRoom(roomID, participant.ID)
-			_ = s.Publisher.PublishParticipantJoined(r.Context(), roomID, p.UserID)
-			writeJSON(w, http.StatusCreated, participant)
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-
-	case len(parts) >= 2 && parts[1] == "join" && r.Method == http.MethodPost:
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, rm.Participants)
+	case http.MethodPost:
 		var p struct {
 			UserID   string            `json:"user_id"`
 			Metadata map[string]string `json:"metadata,omitempty"`
@@ -173,33 +167,58 @@ func (s *Server) handleRoomByID(w http.ResponseWriter, r *http.Request) {
 		}
 		s.Peers.Register(participant)
 		s.Peers.AddToRoom(roomID, participant.ID)
-		s.tokenSeq.Add(1)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"participant_id": participant.ID,
-			"token":          uuid.NewString(),
-			"room_id":        roomID,
-		})
-
-	case len(parts) >= 2 && parts[1] == "leave" && r.Method == http.MethodPost:
-		var p struct {
-			ParticipantID string `json:"participant_id"`
-		}
-		if err := decodeJSON(r, &p); err != nil {
-			writeError(w, http.StatusBadRequest, err)
-			return
-		}
-		if err := s.Rooms.RemoveParticipant(roomID, p.ParticipantID); err != nil && !errors.Is(err, room.ErrParticipantNotFound) {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		s.Forwarder.Unsubscribe(roomID, p.ParticipantID)
-		s.Peers.Remove(p.ParticipantID)
-		_ = s.Publisher.PublishParticipantLeft(r.Context(), roomID, p.ParticipantID)
-		writeJSON(w, http.StatusOK, map[string]bool{"left": true})
-
+		_ = s.Publisher.PublishParticipantJoined(r.Context(), roomID, p.UserID)
+		writeJSON(w, http.StatusCreated, participant)
 	default:
-		http.Error(w, "not found", http.StatusNotFound)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *Server) handleRoomJoin(w http.ResponseWriter, r *http.Request, roomID string) {
+	var p struct {
+		UserID   string            `json:"user_id"`
+		Metadata map[string]string `json:"metadata,omitempty"`
+	}
+	if err := decodeJSON(r, &p); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	participant := types.Participant{
+		ID:       uuid.NewString(),
+		UserID:   p.UserID,
+		JoinedAt: time.Now().UTC(),
+		Metadata: p.Metadata,
+	}
+	if err := s.Rooms.AddParticipant(roomID, participant); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	s.Peers.Register(participant)
+	s.Peers.AddToRoom(roomID, participant.ID)
+	s.tokenSeq.Add(1)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"participant_id": participant.ID,
+		"token":          uuid.NewString(),
+		"room_id":        roomID,
+	})
+}
+
+func (s *Server) handleRoomLeave(w http.ResponseWriter, r *http.Request, roomID string) {
+	var p struct {
+		ParticipantID string `json:"participant_id"`
+	}
+	if err := decodeJSON(r, &p); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.Rooms.RemoveParticipant(roomID, p.ParticipantID); err != nil && !errors.Is(err, room.ErrParticipantNotFound) {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.Forwarder.Unsubscribe(roomID, p.ParticipantID)
+	s.Peers.Remove(p.ParticipantID)
+	_ = s.Publisher.PublishParticipantLeft(r.Context(), roomID, p.ParticipantID)
+	writeJSON(w, http.StatusOK, map[string]bool{"left": true})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, _ *http.Request) {
@@ -237,22 +256,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 }
 
 // POST /v1/rooms/:id/signaling/offer
-func (s *Server) handleSignalingOffer(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 3 || parts[1] != "signaling" || parts[2] != "offer" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	roomID := parts[0]
+func (s *Server) handleSignalingOffer(w http.ResponseWriter, r *http.Request, roomID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var p struct {
 		ParticipantID string `json:"participant_id"`
-		SDP          string `json:"sdp"`
-		Type         string `json:"type"`
+		SDP           string `json:"sdp"`
+		Type          string `json:"type"`
 	}
 	if err := decodeJSON(r, &p); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -265,28 +277,21 @@ func (s *Server) handleSignalingOffer(w http.ResponseWriter, r *http.Request) {
 	// Broadcast offer to other participants via NATS
 	_ = s.Publisher.PublishSignalingOffer(r.Context(), roomID, p.ParticipantID, p.SDP, p.Type)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "offer received",
+		"status":  "offer received",
 		"room_id": roomID,
 	})
 }
 
 // POST /v1/rooms/:id/signaling/answer
-func (s *Server) handleSignalingAnswer(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 3 || parts[1] != "signaling" || parts[2] != "answer" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	roomID := parts[0]
+func (s *Server) handleSignalingAnswer(w http.ResponseWriter, r *http.Request, roomID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var p struct {
 		ParticipantID string `json:"participant_id"`
-		SDP          string `json:"sdp"`
-		Type         string `json:"type"`
+		SDP           string `json:"sdp"`
+		Type          string `json:"type"`
 	}
 	if err := decodeJSON(r, &p); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -295,29 +300,22 @@ func (s *Server) handleSignalingAnswer(w http.ResponseWriter, r *http.Request) {
 	// Broadcast answer to other participants via NATS
 	_ = s.Publisher.PublishSignalingAnswer(r.Context(), roomID, p.ParticipantID, p.SDP, p.Type)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "answer received",
+		"status":  "answer received",
 		"room_id": roomID,
 	})
 }
 
 // POST /v1/rooms/:id/signaling/ice
-func (s *Server) handleSignalingICE(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/v1/rooms/")
-	parts := strings.Split(path, "/")
-	if len(parts) < 3 || parts[1] != "signaling" || parts[2] != "ice" {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	roomID := parts[0]
+func (s *Server) handleSignalingICE(w http.ResponseWriter, r *http.Request, roomID string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var p struct {
 		ParticipantID string `json:"participant_id"`
-		Candidate    string `json:"candidate"`
-		SDPMid       string `json:"sdp_mid"`
-		SDPMLineIndex int   `json:"sdp_m_line_index"`
+		Candidate     string `json:"candidate"`
+		SDPMid        string `json:"sdp_mid"`
+		SDPMLineIndex int    `json:"sdp_m_line_index"`
 	}
 	if err := decodeJSON(r, &p); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -326,7 +324,7 @@ func (s *Server) handleSignalingICE(w http.ResponseWriter, r *http.Request) {
 	// Broadcast ICE candidate to other participants via NATS
 	_ = s.Publisher.PublishSignalingICE(r.Context(), roomID, p.ParticipantID, p.Candidate, p.SDPMid, p.SDPMLineIndex)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "ice candidate received",
+		"status":  "ice candidate received",
 		"room_id": roomID,
 	})
 }
