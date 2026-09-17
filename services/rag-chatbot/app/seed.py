@@ -12,10 +12,34 @@ import time
 import uuid
 from typing import Any, Dict, List
 
+# WS-B Loop 9: extended mock data (20+ collections, 100+ docs, 50+ answers)
+try:
+    from app.expansion.seed_extra import (
+        EXTENDED_COLLECTIONS,
+        EXTENDED_DOCUMENTS,
+        EXTENDED_ANSWERS_VI,
+        EXTENDED_ANSWERS_EN,
+        COMBINED_ANSWERS,
+        EXTENDED_KB_TEMPLATES,
+    )
+except ImportError:  # pragma: no cover
+    EXTENDED_COLLECTIONS = []
+    EXTENDED_DOCUMENTS = []
+    EXTENDED_ANSWERS_VI = {}
+    EXTENDED_ANSWERS_EN = {}
+    COMBINED_ANSWERS = {}
+    EXTENDED_KB_TEMPLATES = []
+
 __all__ = [
     "MOCK_COLLECTIONS",
     "MOCK_DOCUMENTS",
     "MOCK_ANSWERS",
+    "EXTENDED_COLLECTIONS",
+    "EXTENDED_DOCUMENTS",
+    "EXTENDED_ANSWERS_VI",
+    "EXTENDED_ANSWERS_EN",
+    "COMBINED_ANSWERS",
+    "EXTENDED_KB_TEMPLATES",
     "initialise_seed_data",
 ]
 

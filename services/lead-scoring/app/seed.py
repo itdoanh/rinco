@@ -15,9 +15,30 @@ from typing import Any, Dict, List
 
 from app.schemas.lead import LeadFeatures
 
+# WS-B Loop 9: extended mock data (105+ leads, 500+ training rows)
+try:
+    from app.expansion.seed_extra import (
+        EXTENDED_MOCK_LEADS,
+        EXTENDED_TRAINING_DATASET,
+        MLFLOW_PARAMS,
+        MLFLOW_METRICS_TYPICAL,
+        VIETNAMESE_CONTACTS,
+    )
+except ImportError:  # pragma: no cover
+    EXTENDED_MOCK_LEADS = []
+    EXTENDED_TRAINING_DATASET = []
+    MLFLOW_PARAMS = {}
+    MLFLOW_METRICS_TYPICAL = {}
+    VIETNAMESE_CONTACTS = []
+
 __all__ = [
     "MOCK_LEADS",
     "TRAINING_DATASET",
+    "EXTENDED_MOCK_LEADS",
+    "EXTENDED_TRAINING_DATASET",
+    "MLFLOW_PARAMS",
+    "MLFLOW_METRICS_TYPICAL",
+    "VIETNAMESE_CONTACTS",
     "seed_tenant_model",
     "initialise_seed_data",
 ]
@@ -176,7 +197,13 @@ def seed_tenant_model(tenant_id: str = "demo-tenant") -> None:
 
 
 def initialise_seed_data() -> None:
-    """Called once at app startup (when ``LEAD_SCORING_SEED=1``)."""
+    """Called once at app startup (when ``LEAD_SCORING_SEED=1``).
+
+    Loads the demo model + registers all extended mock tenants.
+    """
     if os.getenv("LEAD_SCORING_SEED", "1") not in ("1", "true", "TRUE", "yes"):
         return
     seed_tenant_model("demo-tenant")
+    # WS-B Loop 9: seed additional mock tenants
+    seed_tenant_model("demo-tenant-apexfintech")
+    seed_tenant_model("demo-tenant-hct-consulting")

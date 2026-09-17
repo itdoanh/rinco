@@ -11,10 +11,31 @@ import time
 import uuid
 from typing import Any, Dict, List
 
+# WS-B Loop 9: extended mock data (30+ incidents, 50+ runbooks, 20+ hotfixes)
+try:
+    from app.expansion.seed_extra import (
+        EXTENDED_INCIDENTS,
+        EXTENDED_RUNBOOKS,
+        EXTENDED_HOTFIXES,
+        EXTENDED_DEPLOY_HISTORY,
+        EXTENDED_SERVICE_CATALOG,
+    )
+except ImportError:  # pragma: no cover
+    EXTENDED_INCIDENTS = []
+    EXTENDED_RUNBOOKS = []
+    EXTENDED_HOTFIXES = []
+    EXTENDED_DEPLOY_HISTORY = []
+    EXTENDED_SERVICE_CATALOG = []
+
 __all__ = [
     "MOCK_INCIDENTS",
     "MOCK_RUNBOOKS",
     "MOCK_HOTFIXES",
+    "EXTENDED_INCIDENTS",
+    "EXTENDED_RUNBOOKS",
+    "EXTENDED_HOTFIXES",
+    "EXTENDED_DEPLOY_HISTORY",
+    "EXTENDED_SERVICE_CATALOG",
     "initialise_seed_data",
     "create_mock_incident",
 ]

@@ -11,8 +11,23 @@ from typing import Any, Dict, List
 
 from .models import RecordingMetadata, TranscriptPayload
 
+# WS-B Loop 9: extended mock data (20+ recordings)
+try:
+    from app.expansion.seed_extra import (
+        EXTENDED_RECORDINGS,
+        EXTENDED_STORAGE_STATS,
+        EXTENDED_TRANSCRIPTION_JOBS,
+    )
+except ImportError:  # pragma: no cover
+    EXTENDED_RECORDINGS = []
+    EXTENDED_STORAGE_STATS = []
+    EXTENDED_TRANSCRIPTION_JOBS = []
+
 __all__ = [
     "MOCK_RECORDINGS",
+    "EXTENDED_RECORDINGS",
+    "EXTENDED_STORAGE_STATS",
+    "EXTENDED_TRANSCRIPTION_JOBS",
     "seed_recordings",
 ]
 

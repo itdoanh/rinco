@@ -9,10 +9,28 @@ import os
 import uuid
 from typing import Any, Dict, List
 
+# WS-B Loop 9: extended mock data (20+ transcripts across vi/en/ja)
+try:
+    from app.expansion.seed_extra import (
+        EXTENDED_LANGUAGES,
+        EXTENDED_TRANSCRIPTS,
+        EXTENDED_MODELS,
+        EXTENDED_SAMPLE_AUDIO,
+    )
+except ImportError:  # pragma: no cover
+    EXTENDED_LANGUAGES = []
+    EXTENDED_TRANSCRIPTS = []
+    EXTENDED_MODELS = []
+    EXTENDED_SAMPLE_AUDIO = []
+
 __all__ = [
     "MOCK_LANGUAGES",
     "MOCK_SEGMENTS",
     "MOCK_TRANSCRIPT_RESPONSE",
+    "EXTENDED_LANGUAGES",
+    "EXTENDED_TRANSCRIPTS",
+    "EXTENDED_MODELS",
+    "EXTENDED_SAMPLE_AUDIO",
     "initialise_seed_data",
 ]
 
