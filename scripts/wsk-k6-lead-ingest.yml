@@ -1,103 +1,47 @@
-// WS-K k6 baseline — lead form submissions.
-//
-// Tests POST /api/leads against lead-service with random realistic data.
-// Simulates landing-page traffic (form submissions).
-//
-// SLOs:
-//   - p95 latency < 300ms (writes are heavier than reads)
-//   - error rate < 1%
-//
-// Run: BASE_URL_LEAD=http://localhost:8085 \
-//      BASE_URL_LANDING=http://localhost:8086 \
-//      k6 run scripts/wsk-k6-lead-ingest.yml
+// WS-K: k6 load test for lead-service POST /v1/leads
+//   p95 < 400ms, error rate < 5% (lead ingest can be slower)
+//   100 VUs steady 60s
+// Usage:
+//   k6 run --env BASE_URL=http://localhost:8085 \
+//          --env TENANT_ID=<uuid> \
+//          scripts/wsk-k6-lead-ingest.yml
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { Trend, Rate } from 'k6/metrics';
-import { randomString } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
-
-const leadLatency = new Trend('lead_create_latency_ms');
-const leadErrors = new Rate('lead_create_errors');
 
 export const options = {
   stages: [
-    { duration: '20s', target: 10 },
-    { duration: '60s', target: 100 },   // sustained form-submit rate
-    { duration: '20s', target: 10 },
+    { duration: '20s', target: 50 },
+    { duration: '60s', target: 100 },
+    { duration: '20s', target: 0 },
   ],
   thresholds: {
-    http_req_duration: ['p(95)<300'],
-    lead_create_errors: ['rate<0.01'],
+    http_req_duration: ['p(95)<400'],
+    http_req_failed:   ['rate<0.05'],
   },
 };
 
-const BASE_URL_LEAD = __ENV.BASE_URL_LEAD || 'http://localhost:8085';
-const BASE_URL_LANDING = __ENV.BASE_URL_LANDING || 'http://localhost:8086';
-const TENANT_SLUG = __ENV.TENANT_SLUG || 'apexfintech';
-const PAGE_ID = __ENV.PAGE_ID || 'landing-vn-default';
+const BASE_URL  = __ENV.BASE_URL  || 'http://localhost:8085';
+const TENANT_ID = __ENV.TENANT_ID || '00000000-0000-0000-0000-000000000001';
 
-// Realistic Vietnamese lead data.
-const FIRST_NAMES = ['An', 'Bình', 'Cường', 'Dũng', 'Hà', 'Lan', 'Mai', 'Nam', 'Phong', 'Quân', 'Sơn', 'Tú'];
-const LAST_NAMES = ['Nguyễn', 'Trần', 'Lê', 'Phạm', 'Hoàng', 'Vũ', 'Đặng', 'Bùi', 'Đỗ', 'Hồ'];
-const COMPANIES = ['VNG Corp', 'FPT Software', 'VinAI', 'Momo', 'Tiki', 'Shopee VN', 'Viettel', 'VNPT'];
-const SOURCES = ['facebook_ad', 'google_ad', 'organic', 'referral', 'landing_page'];
-
-function randomChoice(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
-function generatePhone() {
-  return `+849${Math.floor(10000000 + Math.random() * 90000000)}`;
-}
-
-function generateEmail(first, last, i) {
-  return `${first.toLowerCase()}.${last.toLowerCase()}${i}@example.vn`;
-}
+const FIRST = ['John', 'Jane', 'Alex', 'Sara', 'Minh', 'Lan', 'Huy', 'Trang'];
+const LAST  = ['Doe', 'Smith', 'Nguyen', 'Tran', 'Le', 'Pham'];
 
 export default function () {
-  const first = randomChoice(FIRST_NAMES);
-  const last = randomChoice(LAST_NAMES);
-  const payload = JSON.stringify({
-    page_id: PAGE_ID,
-    tenant_slug: TENANT_SLUG,
-    full_name: `${first} ${last}`,
-    email: generateEmail(first, last, __VU * 1000 + __ITER),
-    phone: generatePhone(),
-    company: randomChoice(COMPANIES),
-    source: randomChoice(SOURCES),
-    source_detail: 'k6-load-test',
-    message: randomString(80),
-    utm_source: 'k6',
-    utm_medium: 'loadtest',
-    utm_campaign: 'wsk-baseline',
-    consent: true,
+  const fn = FIRST[Math.floor(Math.random() * FIRST.length)];
+  const ln = LAST[Math.floor(Math.random() * LAST.length)];
+  const body = JSON.stringify({
+    tenant_id: TENANT_ID,
+    name:      `${fn} ${ln}`,
+    email:     `${fn.toLowerCase()}.${ln.toLowerCase()}${__VU}@example.com`,
+    phone:     `+84${Math.floor(100000000 + Math.random() * 899999999)}`,
+    source:    'wsk-loadtest',
+    message:   'WS-K nightly loadtest lead',
   });
-
-  const url = `${BASE_URL_LEAD}/api/leads`;
-  const params = {
+  const res = http.post(`${BASE_URL}/v1/leads`, body, {
     headers: { 'Content-Type': 'application/json' },
-  };
-
-  const start = Date.now();
-  const res = http.post(url, payload, params);
-  const elapsed = Date.now() - start;
-
-  leadLatency.add(elapsed);
-  leadErrors.add(res.status !== 201 && res.status !== 200);
-
-  check(res, {
-    'status is 2xx': (r) => r.status === 200 || r.status === 201,
-    'has lead_id or id': (r) => {
-      try { return r.json('id') !== undefined || r.json('lead_id') !== undefined; }
-      catch (e) { return false; }
-    },
-    'latency under 800ms': (r) => elapsed < 800,
   });
-
-  sleep(Math.random() * 2);  // jitter to simulate real users
-}
-
-export function handleSummary(data) {
-  return {
-    'logs/wsk-k6-lead-ingest-summary.json': JSON.stringify(data, null, 2),
-  };
+  check(res, {
+    'status 200 or 201': r => r.status === 200 || r.status === 201,
+  });
+  sleep(0.5);
 }

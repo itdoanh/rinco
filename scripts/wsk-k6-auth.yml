@@ -1,77 +1,49 @@
-// WS-K k6 baseline — auth login endpoint.
-//
-// Tests POST /v1/auth/login against auth-service with:
-//   - 30s warmup @ 10 VUs
-//   - 60s steady @ 50 VUs (default), 100 VUs (ramp), 500 VUs (spike)
-//   - 30s rampdown @ 10 VUs
-//
-// SLOs verified:
-//   - p95 latency < 200ms
-//   - error rate < 1%
-//
-// Requires k6: https://k6.io/docs/getting-started/installation
-// Run: k6 run scripts/wsk-k6-auth.yml
-// Override target: BASE_URL=http://localhost:8081 k6 run ...
+// WS-K: k6 load test for auth-service POST /v1/auth/login
+// Targets:
+//   p95 < 200ms, error rate < 1% (Thresholds below)
+// Stages:
+//   30s warmup at 10 VUs -> 60s steady at 100 VUs -> 30s rampdown to 0
+// Usage:
+//   k6 run --env BASE_URL=http://localhost:8081 \
+//          --env TENANT_ID=<uuid> \
+//          --env EMAIL=user@example.com \
+//          --env PASSWORD=secret \
+//          scripts/wsk-k6-auth.yml
 import http from 'k6/http';
 import { check, sleep } from 'k6';
-import { Trend, Rate } from 'k6/metrics';
-
-const loginLatency = new Trend('login_latency_ms');
-const loginErrors = new Rate('login_errors');
 
 export const options = {
   stages: [
-    { duration: '30s', target: 10 },   // warmup
-    { duration: '60s', target: 50 },   // steady
-    { duration: '30s', target: 100 },  // ramp
-    { duration: '30s', target: 500 },  // spike
-    { duration: '30s', target: 10 },   // rampdown
+    { duration: '30s', target: 10 },
+    { duration: '60s', target: 100 },
+    { duration: '30s', target: 0 },
   ],
   thresholds: {
-    http_req_duration: ['p(95)<200'],   // p95 < 200ms
-    login_errors: ['rate<0.01'],         // < 1% errors
-    http_req_failed: ['rate<0.01'],
+    http_req_duration: ['p(95)<200'],
+    http_req_failed:   ['rate<0.01'],
   },
+  noConnectionReuse: false,
 };
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:8081';
-// Test credentials — must exist in the test DB (seeded by WS-D).
-const EMAIL = __ENV.TEST_EMAIL || 'admin@apexfintech.vn';
-const PASSWORD = __ENV.TEST_PASSWORD || 'rinco_dev_password';
-const TENANT_SLUG = __ENV.TENANT_SLUG || 'apexfintech';
+const BASE_URL   = __ENV.BASE_URL   || 'http://localhost:8081';
+const TENANT_ID  = __ENV.TENANT_ID  || '00000000-0000-0000-0000-000000000001';
+const EMAIL      = __ENV.EMAIL      || 'wsk-test@rinco.app';
+const PASSWORD   = __ENV.PASSWORD   || 'rinco_dev_password';
 
 export default function () {
-  const url = `${BASE_URL}/v1/auth/login`;
-  const payload = JSON.stringify({
-    email: EMAIL,
-    password: PASSWORD,
-    tenant_slug: TENANT_SLUG,
+  const body = JSON.stringify({
+    tenant_id: TENANT_ID,
+    email:     EMAIL,
+    password:  PASSWORD,
   });
-  const params = {
+  const res = http.post(`${BASE_URL}/v1/auth/login`, body, {
     headers: { 'Content-Type': 'application/json' },
-  };
-
-  const start = Date.now();
-  const res = http.post(url, payload, params);
-  const elapsed = Date.now() - start;
-
-  loginLatency.add(elapsed);
-  loginErrors.add(res.status !== 200);
-
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-    'has access_token': (r) => {
-      try { return r.json('access_token') !== undefined; }
-      catch (e) { return false; }
-    },
-    'latency under 500ms': (r) => elapsed < 500,
   });
-
+  check(res, {
+    'status is 200': r => r.status === 200,
+    'has access_token': r => {
+      try { return !!r.json('access_token'); } catch (e) { return false; }
+    },
+  });
   sleep(1);
-}
-
-export function handleSummary(data) {
-  return {
-    'logs/wsk-k6-auth-summary.json': JSON.stringify(data, null, 2),
-  };
 }

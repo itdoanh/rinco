@@ -1,0 +1,100 @@
+WS-K BASELINES — load test expectations
+==========================================
+Date: 2026-09-18 14:30 UTC+7
+
+These are the performance baselines derived from SYSTEM_STATUS.md
+(45% CPU, 48% memory, 28% concurrent WS) and the k6 scripts in
+scripts/wsk-k6-*.yml.
+
+─────────────────────────────────────────────────────────────────────
+Auth login (wsk-k6-auth.yml)
+─────────────────────────────────────────────────────────────────────
+Target:    auth-service @ :8081
+Stages:    30s@10 → 60s@50 → 30s@100 → 30s@500 → 30s@10 VUs
+SLOs:      p95 < 200ms, error rate < 1%
+
+Expected (production):
+  p50:  ~15-30ms (Postgres + Valkey hit + argon2 verify)
+  p95:  ~80-150ms (cold connections)
+  p99:  ~200-300ms (argon2 dominates at ~250ms)
+  Err:  <0.1%
+
+Failure indicators:
+  - p95 > 200ms → check argon2 parameters (memory 64MiB, time 3, par 2)
+  - Err rate > 1% → DB connection pool exhaustion; check pool_size
+  - Spike recovery > 5s → missing HPA; check k8s autoscaling
+
+─────────────────────────────────────────────────────────────────────
+CRM list read (wsk-k6-crm-read.yml)
+─────────────────────────────────────────────────────────────────────
+Target:    crm-service @ :8083
+Endpoint:  GET /api/crm/contacts?page=1&limit=100
+Stages:    30s@10 → 60s@50 → 30s@100 → 30s@500 → 30s@10 VUs
+SLOs:      p95 < 250ms, error rate < 1%
+
+Expected (production):
+  p50:  ~20-50ms (RLS policy overhead)
+  p95:  ~100-200ms (LTREE query + serialization)
+  p99:  ~250-400ms
+  Err:  <0.5%
+
+Failure indicators:
+  - p95 > 250ms → missing index on (tenant_id, deleted_at, created_at)
+  - Err rate > 1% → RLS GUC missing; check WithTenantRLS middleware
+  - Pool exhaustion at 500 VUs → bump pool size
+
+─────────────────────────────────────────────────────────────────────
+Lead ingest (wsk-k6-lead-ingest.yml)
+─────────────────────────────────────────────────────────────────────
+Target:    lead-service @ :8085
+Endpoint:  POST /api/leads
+Stages:    20s@10 → 60s@100 → 20s@10 VUs
+SLOs:      p95 < 300ms, error rate < 1%
+
+Expected (production):
+  p50:  ~30-60ms (insert + UTMs + dedup hash)
+  p95:  ~150-300ms (NATS publish on critical path)
+  p99:  ~400-600ms
+  Err:  <0.3% (dedup collisions are NOT errors)
+
+Failure indicators:
+  - p95 > 300ms → NATS pub latency; check NATS cluster health
+  - Dedup rate > 5% → fingerprint collision or replay issue
+  - Bottleneck: INSERT INTO lead.leads
+
+─────────────────────────────────────────────────────────────────────
+WebSocket chat (wsk-k6-websocket.yml)
+─────────────────────────────────────────────────────────────────────
+Target:    chat-engine @ :8101/v1/ws/:user_id
+Stages:    20s@25 → 60s@50 → 30s@50 → 20s@0 VUs
+SLOs:      WS connect p95 < 500ms, error rate < 5%
+
+Expected (production):
+  Connect p50: ~10-30ms
+  Connect p95: ~100-300ms (TLS handshake if behind LB)
+  Messages/s:  ~500-2000 per pod (5 replicas → 10k-40k total)
+  Err:         <2% (reconnects expected)
+
+⚠️  VULN-001 — current chat-engine accepts user_id from URL.
+   This script does NOT exploit the bug; it uses synthetic UUIDs.
+
+Failure indicators:
+  - Connect p95 > 500ms → TLS termination slow; check LB cert
+  - Reconnect latency > 1s → presence heartbeat broken
+  - Err rate > 5% → server backpressure; check ScyllaDB write rate
+
+─────────────────────────────────────────────────────────────────────
+Cross-cutting SLOs (production)
+─────────────────────────────────────────────────────────────────────
+  Auth:       p99 < 500ms | Err < 0.1%
+  CRM list:   p99 < 600ms | Err < 0.5%
+  Lead write: p99 < 800ms | Err < 0.3%
+  WS connect: p99 < 800ms | Err < 2.0%
+  All APIs:   throughput ≥ 1000 RPS sustained per service
+
+─────────────────────────────────────────────────────────────────────
+Status
+─────────────────────────────────────────────────────────────────────
+Scripts written:  4 (auth, crm-read, lead-ingest, websocket)
+k6 install:       see docs/DEVELOPMENT.md or download from k6.io
+Actual runs:      deferred until Docker-up phase (Phase 6)

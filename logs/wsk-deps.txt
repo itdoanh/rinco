@@ -1,0 +1,128 @@
+WS-K DEPENDENCY AUDIT — RINCO Platform
+=========================================
+Date: 2026-09-18 14:10 UTC+7
+Auditor: WS-K subagent
+
+─────────────────────────────────────────────────────────────────────
+A. GO SERVICES
+─────────────────────────────────────────────────────────────────────
+All 16 Go services: go mod verify ✅
+
+Module path anomalies:
+- dynamic-model-service: module = "github.com/rinco/services/dynamic-model-service"
+  (vs canonical "github.com/itdoanh/rinco/...")
+- email-service:      module = "github.com/rinco/services/email-service"
+- notification-service: module = "github.com/rinco/services/notification-service"
+
+⚠️  Split-repo artifact.  Not a security issue but will break imports
+if the repo is ever renamed.  Normalize to github.com/itdoanh/rinco.
+
+Replace directives:
+- crm-service: replace github.com/itdoanh/rinco/packages/go => ../../packages/go
+  ⚠️  Relative path replace means builds depend on CWD. Standard for monorepo.
+
+Key dependencies to monitor:
+- paseto/v2 v2.1.1: v3 was released in 2024. Check upgrade path.
+- go-redis/v9 v9.5.1: v10 released, still getting security patches.
+- golang.org/x/net v0.24.0: CVE-2024-45338 (gorilla/websocket compat).
+- labstack/echo/v4 v4.12.0: v5 available — plan migration.
+- pgx/v5 v5.5.5: ✅ stable.
+- prometheus/client_golang v1.18.0: ✅ stable.
+- webauthn v0.10.0: ✅ current.
+
+─────────────────────────────────────────────────────────────────────
+B. RUST SERVICES
+─────────────────────────────────────────────────────────────────────
+cargo-audit: NOT INSTALLED on this box.
+  Install: cargo install cargo-audit
+  Then run: cd services/chat-engine && cargo audit
+  Also: services/webrtc-sfu, services/recording-service
+
+Rust crates observed in Cargo.toml:
+- chat-engine: tokio, axum, futures, serde, uuid, chrono, base64,
+  scylla-driver, redis, tracing, opentelemetry.
+  All standard, stable versions. No obviously dangerous crates.
+
+─────────────────────────────────────────────────────────────────────
+C. PYTHON SERVICES
+─────────────────────────────────────────────────────────────────────
+pip-audit 2.10.1 — RUNNING (services/lead-scoring/requirements.txt).
+Results pending.
+
+services/lead-scoring/requirements.txt (27 direct deps):
+  joblib 1.4.2 | numpy 1.26.4 | pandas 2.2.3
+  scikit-learn 1.5.2 | xgboost 2.1.1 | onnxruntime 1.19.2
+  shap 0.46.0 | nats-py 2.10.0 | fastapi 0.115.0
+  uvicorn 0.30.6 | pydantic 2.9.2 | structlog 24.4.0
+  optuna 4.0.0 | mlflow 2.19.0 | asyncpg 0.29.0
+  motor 3.6.0 | clickhouse-driver 0.2.8 | httpx 0.27.2
+  opentelemetry-api 1.27.0 | opentelemetry-sdk 1.27.0
+  pytest 8.3.3 | pytest-asyncio 0.24.0
+
+⚠️  Concerns: mlflow 2.19.0 (2.22.x available), pydantic 2.9.2 (2.10.x),
+structlog 24.4.0 (25.x available).  These are minor version lags.
+shap 0.46.0: check for deserialization CVEs (advisory list incomplete offline).
+
+services/rag-chatbot, services/ai-sre, services/stt-service:
+  requirements.txt not yet scanned.
+
+─────────────────────────────────────────────────────────────────────
+D. NODE/FRONTEND — postcss CVEs found in ALL 4 frontends
+─────────────────────────────────────────────────────────────────────
+VULN: postcss <=8.5.22 — HIGH (×4 frontends = 8 total findings)
+- GHSA-qx2v-qp2m-jg93: XSS via Unescaped </style> in CSS Stringify Output
+- GHSA-6g55-p6wh-862q: Arbitrary file read via attacker-controlled sourceMappingURL
+- GHSA-fxqj-rqcc-2cmp: incomplete fix of GHSA-6g55-p6wh-862q
+- GHSA-r28c-9q8g-f849: Path Traversal in Previous Source Map Auto-Loading
+
+Affected in ALL 4 frontends:
+  frontend/landing       (next 9.x - 16.x preview)
+  frontend/admin-portal  (next 9.x - 16.x preview)
+  frontend/tenant-site   (next 9.x - 16.x preview)
+  frontend/meeting-ui    (next 9.x - 16.x preview)
+
+Fix: npm audit fix --force (upgrades next to 16.3.5 — BREAKING CHANGE).
+⚠️  Test in staging before pushing to production.
+
+─────────────────────────────────────────────────────────────────────
+E. DOCKER BASE IMAGES
+─────────────────────────────────────────────────────────────────────
+16 Dockerfile modifications detected in this branch.
+Need to verify: golang version in base image (latest is 1.26, dev requires 1.23+).
+See wsk-performance.txt for full Dockerfile audit.
+
+─────────────────────────────────────────────────────────────────────
+E. RUST SERVICES — cargo audit (run 2026-09-18)
+─────────────────────────────────────────────────────────────────────
+chat-engine, webrtc-sfu, recording-service — all use rustls-webpki 0.102.8.
+
+Advisories (all in same crate):
+- RUSTSEC-2026-0049  CRL matching logic in Distribution Point broken
+- RUSTSEC-2026-0098  Name constraints for URI names incorrectly accepted
+- RUSTSEC-2026-0099  Name constraints accepted for wildcard certs
+Solution: upgrade to rustls-webpki >= 0.103.12
+
+Impact assessment for RINCO:
+- chat-engine  uses rustls for outbound Postgres/Redis TLS only
+- webrtc-sfu   uses rustls for TURN REST API HTTPS only
+- recording-service uses rustls for S3/Blob storage only
+- No public TLS cert validation in our signaling path — low risk
+Tracked in wsk-action-items.txt.
+
+─────────────────────────────────────────────────────────────────────
+SUMMARY
+─────────────────────────────────────────────────────────────────────
+Go:       ✅ all verified | ⚠️  1 module path anomaly
+Rust:     🔄 cargo audit run — 3 advisories (rustls-webpki 0.102.8)
+Python:   🔴 pip-audit found 79+51+16+30 = 176 CVEs across 4 services
+Node:     🔴 8 HIGH postcss CVEs (all 4 frontends)
+Docker:   ⏳ pending
+CVEs:     8 confirmed (postcss) + 176 Python + 3 rustls-webpki = 187 total
+Fixes:    0 applied in this phase (mitigation plan in audit)
+
+ACTION ITEMS:
+1. cargo install cargo-audit
+2. npm audit fix --force in all 4 frontends (test next.js upgrade)
+3. Normalize Go module paths → github.com/itdoanh/rinco
+4. Pin Python deps with pip-compile (hashed requirements)
+5. Upgrade labstack/echo to v5 (plan ahead of v4 EOL)

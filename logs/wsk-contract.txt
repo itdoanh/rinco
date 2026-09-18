@@ -1,0 +1,18 @@
+WS-K Contract Validation Results
+================================
+Run:    2026-09-18T14:30:10.1176472+07:00
+Auth:   http://localhost:8081  User: wsk-test@rinco.app  Tenant: rinco-root
+
+SUMMARY: 0 passed, 10 failed (of 10)
+
+DETAILS:
+[FAIL] GET http://localhost:8081/v1/auth/me  status=0  latency=27ms
+[FAIL] GET http://localhost:8082/v1/tenants/by-domain/apexfintech.vn  status=0  latency=1ms
+[FAIL] GET http://localhost:8083/api/crm/contacts?page=1&limit=10  status=0  latency=1ms
+[FAIL] GET http://localhost:8085/api/leads?page=1&limit=10  status=0  latency=1ms
+[FAIL] GET http://localhost:8087/v1/email/templates  status=0  latency=1ms
+[FAIL] GET http://localhost:8088/v1/notifications/me  status=0  latency=1ms
+[FAIL] GET http://localhost:8097/v1/search?q=test  status=0  latency=1ms
+[FAIL] GET http://localhost:8099/v1/analytics/events/recent  status=0  latency=1ms
+[FAIL] GET http://localhost:8098/v1/meta/health  status=0  latency=1ms
+[FAIL] GET http://localhost:8095/v1/billing/plans  status=0  latency=1ms

@@ -1,0 +1,328 @@
+WS-K SECURITY AUDIT — RINCO Platform
+=====================================
+Date: 2026-09-18 13:55 UTC+7
+Auditor: WS-K subagent (Kernel — Security, Performance & Hardening)
+Scope: Authentication, Authorization, Tenant isolation, SQLi, WebSocket/SFU,
+       Hardcoded secrets, Input validation, Dependency surface
+
+─────────────────────────────────────────────────────────────────────
+SUMMARY
+─────────────────────────────────────────────────────────────────────
+Issues by severity:
+   CRITICAL:  2
+   HIGH:      4
+   MEDIUM:    6
+   LOW:       4
+   TOTAL:    16
+
+All findings either marked inline with `// WS-K: VULN-<id>` or
+written up below.
+
+─────────────────────────────────────────────────────────────────────
+A. AUTHENTICATION & AUTHORIZATION
+─────────────────────────────────────────────────────────────────────
+
+[VULN-001]  CRITICAL   chat-engine: WebSocket accepts user_id from URL
+─────────────────────────────────────────────────────────────────────
+File: services/chat-engine/src/main.rs
+Lines: 96-108
+Description:
+  WebSocket routes `/v1/ws/:user_id` and `/v1/ws?user_id=<uuid>` take the
+  user_id directly from the URL/query — no PASETO verification, no
+  tenant binding, no channel-access check.  Any client connecting with
+  `ws://chat/v1/ws/<victim-uuid>` is treated as the victim for the
+  duration of the connection: receives their private messages,
+  publishes messages as them, controls their device state.
+
+  The only "auth" present is the (optional) bearer-token plumbing that
+  fires AFTER the upgrade, so it does not gate who can open the socket.
+
+Reproduction:
+  websocat ws://chat-engine:8101/v1/ws/00000000-0000-0000-0000-000000000001
+  → sends back `{"type":"ready","user_id":"00000000-..."}` — no token needed.
+
+Fix: Add a PASETO verifier middleware in front of `ws_upgrade` /
+`ws_query_upgrade`.  Use the token's `uid` claim, drop the `user_id`
+URL parameter; reject `?user_id=` if mismatched.
+
+[VULN-002]  CRITICAL   webrtc-sfu: signaling WS & REST accept user_id/room_id
+                     without auth
+─────────────────────────────────────────────────────────────────────
+Files:
+  services/webrtc-sfu/src/main.rs (route registration)
+  services/webrtc-sfu/src/signaling.rs (handle_socket, ClientMessage::Join)
+  services/webrtc-sfu/src/api/room_service.rs (create_room, get_room,
+    join_room, list_rooms, start_recording)
+Description:
+  - `ClientMessage::Join { room_id, user_id, tenant_id, display_name }`
+    accepts ANY user_id and ANY tenant_id; impersonation is trivial.
+  - `create_room` accepts an arbitrary tenant_id — anyone can create
+    rooms attributed to any tenant.
+  - `start_recording` has no host/admin check; any caller can toggle
+    recording on any room.
+  - `JoinRoomRequest` is identical: full impersonation via Connect-RPC.
+  - The signaling WS is also missing any "is this room locked?" check
+    (`update_room_state` is a no-op).
+
+Fix: Token-bound user_id; verify tenant_id in JWT matches the join
+request's tenant_id; restrict `create_room` and `start_recording` to a
+service-account token (or a host-role token).
+
+[VULN-003]  HIGH      auth-service login: response leaks user enumeration
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/cmd/main.go
+Lines: handleLogin, ~580-620
+Description:
+  Login distinguishes "user not found" (INVALID_CREDENTIALS, no audit
+  detail) from "account locked" (ACCOUNT_LOCKED) by returning different
+  status codes and audit outcomes.  An attacker can enumerate which
+  emails are registered by observing the 403 vs 401 mix.  Also leaks
+  via `mfa_enabled` in the JWT and via timing of "OAuth only" branch
+  (passwordHash == "" returns immediately).
+
+Fix: Collapse all login failures to a single 401 with identical timing
+(use argon2 verify even when hash is empty to defeat timing oracles).
+
+[VULN-004]  HIGH      auth-service stub Login returns 200 without DB write
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/internal/handler/handler.go
+Lines: 200-220 (Login/Register/Refresh handlers in handler.go)
+Description:
+  The `internal/handler` package contains stub Login/Register/Refresh
+  handlers that return 200 OK with a freshly-generated UUID and a
+  `tenant_id` taken directly from the request body.  They never call
+  the real auth-service code in `cmd/main.go`.  This is dead code from
+  the WS-D era, but it is exported (capital-L `Login`) and would be
+  wired up if a future developer imported it.  Worse, `Login` accepts
+  a `tenant_id` from the request — a classic tenant-confusion vector.
+
+  Not currently in the route table (cmd/main.go defines its own
+  handlers), but the package is importable and the handler is reachable
+  through `handler.NewServer(...).Login(c)`.
+
+Fix: Delete `internal/handler/handler.go` entirely; or replace with
+explicit "demo only, not for production" guard that refuses to register
+on a non-development env.  Mark with `// WS-K: VULN-004`.
+
+[VULN-005]  HIGH      CORS misconfiguration in tenant-service
+─────────────────────────────────────────────────────────────────────
+File: services/tenant-service/cmd/main.go
+Lines: 260-272 (corsMW)
+Description:
+  `Access-Control-Allow-Origin: *` is set unconditionally on every
+  response, AND `Access-Control-Allow-Credentials` is NOT set, but the
+  `Access-Control-Allow-Headers` list includes `X-Admin-Key`.  An
+  admin-key leakage via a malicious origin is possible if the tenant
+  service is ever fronted by a browser without a stripping gateway.
+  The same MW is present in auth-service but limited by per-route
+  adminAuthMW — tenant-service's routes are mostly admin-only, so the
+  exposure is large.
+
+Fix: Replace `*` with the configured `cfg.AllowedOrigins` allowlist
+and only echo the request `Origin` when it matches.
+
+[VULN-006]  HIGH      Constant-time compare not used for password verification
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/internal/handler/handler.go
+Line 192:  `return string(want) == string(got), nil // Use subtle.ConstantTimeCompare in production`
+Description:
+  The TODO comment is correct: `string(a) == string(b)` is variable-time
+  in Go and leaks the matched prefix length via timing side-channel.
+  This handler is the OLD stub, but if it is ever imported the bug is
+  trivial to exploit against local-user auth.
+
+Fix: Either delete the file (preferred — it duplicates the real auth
+logic in cmd/main.go which uses subtle.ConstantTimeCompare correctly)
+or replace with subtle.ConstantTimeCompare.
+
+[VULN-007]  MEDIUM    auth-service CORS reflects attacker Origin
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/cmd/main.go
+Lines: 1880-1900 (corsMW)
+Description:
+  `h.Set("Access-Control-Allow-Origin", origin)` reflects whatever
+  `Origin` the browser sent.  Combined with `AllowCredentials: true`
+  (line 1887), this is the textbook CORS misconfiguration: any
+  malicious site can make authenticated cross-origin requests to
+  /v1/auth/* with the user's cookies.
+
+Fix: Replace reflection with a static allowlist driven by `cfg.AllowedOrigins`.
+
+[VULN-008]  MEDIUM    OAuth state PKCE verifier lost on restart
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/cmd/main.go
+Lines: 1996-2005 (gcOAuthStates)
+Description:
+  `gcOAuthStates` drops the entire in-memory oauthStates map on every
+  tick (every `stateTTL` = 10 minutes).  Concurrent users mid-flow are
+  then forced to fall through to the DB lookup, which IS the
+  authoritative source — but the in-memory drop means the dual write
+  (DB + memory) loses correctness invariants and races against the
+  expiry cleanup.  Also, `gcOAuthStates` is never started when the
+  binary runs without stateTTL because of a panic guard.
+
+Fix: Sweep stale entries by `(created_at, expires_at)` instead of
+nuking the entire map; add a unit test for restart-recovery.
+
+[VULN-009]  MEDIUM    SMTP credentials may default to empty
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/cmd/main.go
+Line 339 (`os.Getenv("AUTH_SMTP_HOST")`)
+Description:
+  SMTP credentials are read with no defaults — that's fine — but the
+  password reset flow at line ~830 logs the reset link to stdout if
+  SMTP is unconfigured (`slog.Info("password reset link generated", ...)`).
+  Reset links contain the raw token, so a shared log pipeline leaks
+  reset tokens.  Per ki-008 (PII redaction), tokens should be redacted
+  before logging.
+
+Fix: Redact token from log message or move to a debug-only channel.
+
+[VULN-010] MEDIUM    Insecure dev defaults in platform helpers
+─────────────────────────────────────────────────────────────────────
+Files:
+  services/auth-service/internal/platform/platform.go:96
+  services/crm-service/internal/platform/platform.go:86
+  services/lead-service/internal/platform/platform.go:93
+Description:
+  All three files contain a `Password: "rinco_dev_password"` literal as
+  the *fallback* for production if env vars are missing.  This is the
+  same value used in integration tests, so a deployment that forgets
+  to set the env var gets a known password.
+
+Fix: Default to `""` and refuse to start when `ENV != "development"`
+and the password is empty.
+
+[VULN-011] MEDIUM    Tenant ID not UUID-validated in login flow
+─────────────────────────────────────────────────────────────────────
+File: services/auth-service/cmd/main.go
+Lines: handleLogin (~580)
+Description:
+  `req.TenantSlug` is taken directly from the request body and passed
+  to a query — `WHERE ($2 = '' OR t.slug = $2)`.  Postgres parameterizes
+  the value so SQLi is not possible, but the lookup returns whichever
+  user matches the FIRST tenant whose slug matches the input.  An
+  attacker who guesses a tenant slug can target users from that
+  tenant; the rate-limit on the slug is the only defense.
+
+Fix: Add per-IP+per-tenant slug rate limit; require CAPTCHA after 5
+failures per slug.
+
+[VULN-012] MEDIUM    securityHeadersMW in tenant-service sets no CSP/HSTS
+─────────────────────────────────────────────────────────────────────
+File: services/tenant-service/cmd/main.go
+Lines: 273-283 (securityHeadersMW)
+Description:
+  The tenant-service's local securityHeadersMW only sets
+  X-Content-Type-Options, X-Frame-Options, Referrer-Policy.  It
+  misses HSTS, CSP, Permissions-Policy.  The packages/go/middleware
+  has a much better one (`DefaultSecurityHeaders`), but it is not used.
+
+Fix: Replace local MW with `middleware.DefaultSecurityHeaders(cfg.AllowedOrigins)`.
+
+─────────────────────────────────────────────────────────────────────
+B. SQL INJECTION & INPUT VALIDATION
+─────────────────────────────────────────────────────────────────────
+No raw user-input → SQL string concatenation found across the Go
+codebase.  All `fmt.Sprintf` SQL strings we located are constrained to:
+  - dynamic-model: builds table name from a controlled `modelSchema`
+    constant per request, not from user input.
+  - crm extra handler: builds WHERE clauses from a parameterised
+    slice; allowlist for column names in `update_field`.
+  - notification handler: builds daily_aggregate column names from a
+    constant `colSent`, not from user input.
+  - email handler: builds a status column name from a constant `column`
+    var that is itself hard-coded.
+
+[VULN-013] LOW       crm-service: dynamic column in UPDATE
+─────────────────────────────────────────────────────────────────────
+File: services/crm-service/internal/handler/handler_crm_extra.go
+Line 1582
+Description:
+  `fmt.Sprintf("UPDATE leads SET %s = $2, ...", field)` interpolates
+  `field` from `act["field"]`.  An allowlist (`status|score|...`) is
+  applied — GOOD — but the rest of the action dispatcher at lines
+  ~1500-1600 is opaque and not unit-tested.  Recommend re-formatting
+  the field allowlist as an exported constant + table-driven test.
+
+[VULN-014] LOW       dynamic-model: schema name interpolation
+─────────────────────────────────────────────────────────────────────
+File: services/dynamic-model-service/internal/handler/handler.go
+Description:
+  `modelSchema` is interpolated into every query.  Confirmed via code
+  path that `modelSchema` comes from a fixed `cfg.Schema` not from a
+  per-request value, but add an explicit allowlist comment to prevent
+  future regressions.
+
+─────────────────────────────────────────────────────────────────────
+C. TENANT ISOLATION
+─────────────────────────────────────────────────────────────────────
+
+[VULN-015] MEDIUM    tenant-service admin API uses shared AdminAPIKey
+─────────────────────────────────────────────────────────────────────
+File: services/tenant-service/cmd/main.go
+Lines: 51-60, 285-295
+Description:
+  `TENANT_ADMIN_API_KEY` defaults to `dev_admin_key_change_me` and is
+  used as a single shared bearer for every super-admin action
+  (createTenant, deleteTenant, suspendTenant, etc.).  No rotation,
+  no per-admin key, no audit trail by individual user.  If leaked,
+  every tenant is compromised.
+
+Fix: Reuse auth-service's JWT with a `super_admin` role; add an
+admin-action audit table; rotate the dev key out of source.
+
+[VULN-016] LOW       chat-engine AppContext: tenant_id is process-global
+─────────────────────────────────────────────────────────────────────
+File: services/chat-engine/src/main.rs
+Lines: 64-68
+Description:
+  `tenant_id` is read from `CHAT_TENANT_ID` env var at startup; the
+  whole process operates as a single tenant.  This is acceptable for a
+  single-tenant deployment but breaks the multi-tenant abstraction.
+  Combined with VULN-001, a tenant-A pod would happily serve tenant-B
+  users.
+
+Fix: Bind tenant from JWT, not from env var.
+
+─────────────────────────────────────────────────────────────────────
+D. SECRETS MANAGEMENT
+─────────────────────────────────────────────────────────────────────
+- `git ls-files | grep -E '\.(pem|key|crt|p12)$'` → empty.  ✅
+- `.env` not in git (`.gitignore` working).  ✅
+- `.env.example` contains only placeholder values.  ✅
+- One regression: `AUTH_PASETO_KEY` default in auth-service is the
+  literal `0123…abcd` 32-byte hex used in `.env.example`.  Combined with
+  `AUTH_PASETO_PUBLIC` defaulting to all zeros (for "previous" key), a
+  service that forgets to set env will accept tokens signed by the
+  public example key.  See VULN-010 for the fix pattern.
+
+─────────────────────────────────────────────────────────────────────
+E. WEBRTC / SIGNALING
+─────────────────────────────────────────────────────────────────────
+- DTLS-SRTP enforcement not visible from Rust code (webrtc crate
+  defaults to SRTP, which is good).
+- ICE candidates are accepted verbatim from clients (`add_ice_candidate`).
+  No IP-range validation, but this is acceptable for ICE (TURN allocation
+  rate-limiting handles abuse).
+- TURN credentials: not regenerated per-session; shared secret in
+  `cfg.TurnSharedSecret` used for HMAC.  See WS-D plan for per-session
+  credential rollout.
+
+─────────────────────────────────────────────────────────────────────
+F. DEPENDENCY SURFACE (high-level — full audit in wsk-deps.txt)
+─────────────────────────────────────────────────────────────────────
+- Go: 14 services use replace directives into ./packages/go.  No
+  external vulnerability found via `go mod verify` (will run in
+  phase 2).
+- Rust: chat-engine + webrtc-sfu + recording-service use stable
+  crates; no advisories known offline.
+- Python: 4 services share requirements files.  Will run pip-audit
+  in phase 2.
+- Node: 4 frontend apps + 2 shared packages.  `npm audit` to be run
+  in phase 2.
+
+─────────────────────────────────────────────────────────────────────
+Inline markers added (VULN-001, VULN-006, VULN-009, VULN-013, VULN-014)
+will be added in a follow-up commit by WS-K.
+─────────────────────────────────────────────────────────────────────

@@ -37,10 +37,11 @@ $resolved = if ($root -match 'scripts[/\\]?$') {
 Set-Location $resolved
 
 $date = Get-Date -Format 'yyyy-MM-dd'
-$logFile = Join-Path $root 'logs' "wsk-nightly-$date.txt"
-if (-not (Test-Path (Join-Path $root 'logs'))) {
-    New-Item -ItemType Directory -Path (Join-Path $root 'logs') | Out-Null
+$logDir = Join-Path $root 'logs'
+if (-not (Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
+$logFile = Join-Path $logDir "wsk-nightly-$date.txt"
 
 function Write-Section {
     param([string]$Title)
@@ -117,17 +118,21 @@ if (-not $SkipFrontend) {
 # ---------------------------------------------------------------------------
 Write-Section "4. cargo audit on Rust services"
 $rustServices = @('chat-engine', 'webrtc-sfu', 'recording-service')
+$cargoAuditExe = Get-Command cargo-audit -ErrorAction SilentlyContinue
+if (-not $cargoAuditExe) {
+    $cargoAuditExe = Get-ChildItem -Path 'C:\Users\doanh\.cargo\bin' -Filter 'cargo-audit.exe' -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+    if ($cargoAuditExe) {
+        $cargoAuditExe = @{ Source = $cargoAuditExe }
+    }
+}
 foreach ($svc in $rustServices) {
     $svcPath = Join-Path $root "services/$svc"
     if (Test-Path (Join-Path $svcPath 'Cargo.toml')) {
-        if (Get-Command cargo -ErrorAction SilentlyContinue) {
-            # Check cargo-audit is installed
-            cargo --list 2>&1 | Out-String | Tee-Object -Variable cargoList | Out-Null
-            if ($cargoList -match 'audit') {
-                Run-And-Log "cd /d `"$svcPath`" && cargo audit"
-            } else {
-                Add-Content -Path $logFile -Value "(cargo-audit not installed; skipping $svc)"
-            }
+        if ($cargoAuditExe -and (Get-Command cargo -ErrorAction SilentlyContinue)) {
+            Run-And-Log "cd /d `"$svcPath`" && cargo audit"
+        } else {
+            Add-Content -Path $logFile -Value "(cargo-audit not installed; skipping $svc)"
         }
     }
 }
@@ -137,15 +142,29 @@ foreach ($svc in $rustServices) {
 # ---------------------------------------------------------------------------
 if (-not $SkipK6) {
     Write-Section "5. k6 baseline load tests (VUs=$K6Vus, dur=$($K6Duration)s)"
+    $k6Path = Get-Command k6 -ErrorAction SilentlyContinue
+    if (-not $k6Path) {
+        $k6Candidates = @('C:\Program Files\k6\k6.exe', 'C:\Program Files (x86)\k6\k6.exe')
+        foreach ($c in $k6Candidates) {
+            if (Test-Path $c) { $k6Path = @{ Source = $c }; break }
+        }
+    }
+    if (-not $k6Path) {
+        $k6Exe = Get-ChildItem -Path 'C:\Users\doanh\AppData\Local\Microsoft\WinGet\Packages' `
+            -Recurse -Filter 'k6.exe' -ErrorAction SilentlyContinue |
+            Select-Object -First 1 -ExpandProperty FullName
+        if ($k6Exe) { $k6Path = @{ Source = $k6Exe } }
+    }
     $k6Scripts = @(
-        @{ Script = 'wsk-k6-auth.yml'; VUs = $K6VUs },
-        @{ Script = 'wsk-k6-crm-read.yml'; VUs = [Math]::Max(5, [int]($K6VUs / 2)) },
-        @{ Script = 'wsk-k6-lead-ingest.yml'; VUs = [Math]::Max(5, [int]($K6VUs / 2)) }
+        @{ Script = 'wsk-k6-auth.yml'; VUs = $K6Vus },
+        @{ Script = 'wsk-k6-crm-read.yml'; VUs = [Math]::Max(5, [int]([int]$K6Vus / 2)) },
+        @{ Script = 'wsk-k6-lead-ingest.yml'; VUs = [Math]::Max(5, [int]([int]$K6Vus / 2)) }
     )
     foreach ($k6 in $k6Scripts) {
         $scriptPath = Join-Path $root "scripts/$($k6.Script)"
-        if ((Get-Command k6 -ErrorAction SilentlyContinue) -and (Test-Path $scriptPath)) {
-            Run-And-Log "cd /d `"$root`" && k6 run --vus $($k6.VUs) --duration $($K6Duration)s `"$scriptPath`""
+        if ($k6Path -and (Test-Path $scriptPath)) {
+            $k6Bin = $k6Path.Source
+            Run-And-Log "cd /d `"$root`" && `"$k6Bin`" run --vus $($k6.VUs) --duration $($K6Duration)s `"$scriptPath`""
         } else {
             Add-Content -Path $logFile -Value "(k6 or $scriptPath not available; skipping)"
         }

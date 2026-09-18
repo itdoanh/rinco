@@ -1,0 +1,108 @@
+WS-K PERFORMANCE — pprof wiring + profile results
+====================================================
+Date: 2026-09-18 14:15 UTC+7
+Auditor: WS-K subagent
+
+─────────────────────────────────────────────────────────────────────
+A. PPROF INTEGRATION
+─────────────────────────────────────────────────────────────────────
+Status: ✅ enabled in auth-service (1/13 Go services wired up in this
+        loop — see TODOs below).
+
+Pattern used:
+  - Import: _ "net/http/pprof" (registers handlers on http.DefaultServeMux)
+  - Listener: separate goroutine on :6060 (bypasses Echo's mux)
+  - Endpoints exposed:
+      /debug/pprof/         — index
+      /debug/pprof/profile?seconds=N — CPU profile
+      /debug/pprof/heap     — heap profile
+      /debug/pprof/goroutine — goroutine dump
+      /debug/pprof/trace?seconds=N — execution trace
+
+Verified in this run:
+  $ curl http://localhost:6060/debug/pprof/
+  → HTML index returned, 8 goroutines, 9 threads, 6 allocs.
+
+Pprof file: logs/wsk-auth-30s.prof (1.3KB, captured during idle).
+CPU profile result: 0 samples (service was idle during capture).
+
+─────────────────────────────────────────────────────────────────────
+B. WS-K TODO — extend pprof to all 13 Go services
+─────────────────────────────────────────────────────────────────────
+The same 7-line patch (import + 7-line goroutine block) needs to be
+applied to:
+  - tenant-service       :6061
+  - crm-service          :6062
+  - dynamic-model-service:6063
+  - lead-service         :6064
+  - landing-service      :6065
+  - email-service        :6066
+  - notification-service :6067
+  - billing-service      :6068
+  - observability-service:6069
+  - search-service       :6070
+  - meta-capi-service    :6071
+  - analytics-service    :6072
+
+Each service uses its own port range to avoid clashes.
+
+─────────────────────────────────────────────────────────────────────
+C. SERVICE PROFILING (in this loop)
+─────────────────────────────────────────────────────────────────────
+Service          : auth-service
+Build            : C:\code\RINCO\services\auth-service\auth-svc.exe
+Build time       : 2026-09-18 14:07:30 UTC+7
+Profile duration : 30s (idle)
+Samples          : 0 (no traffic during capture)
+Heap allocs      : 6
+Goroutines       : 8
+OS threads       : 9
+
+Top consumers (idle): none — service was healthy but not under load.
+
+─────────────────────────────────────────────────────────────────────
+D. RUST SERVICES — flamegraph markers
+─────────────────────────────────────────────────────────────────────
+chat-engine + webrtc-sfu + recording-service: tracing spans already
+instrumented (`#[instrument]` in handlers, `tracing::info!` in main).
+`tracing` integrates with `opentelemetry-otlp` for distributed traces.
+For CPU flamegraphs, install `cargo flamegraph`:
+  cargo install flamegraph
+  cargo flamegraph --bin chat-engine
+
+─────────────────────────────────────────────────────────────────────
+E. PYTHON SERVICES — profiler availability
+─────────────────────────────────────────────────────────────────────
+py-spy available via pip:
+  pip install py-spy
+  py-spy dump --pid <PID>
+  py-spy record --pid <PID> --output profile.svg
+Built-in cProfile works for call-graph analysis.
+
+─────────────────────────────────────────────────────────────────────
+F. FRONTEND BUNDLE SIZES
+─────────────────────────────────────────────────────────────────────
+Per SYSTEM_STATUS.md:
+  landing       : 287 KB
+  admin-portal  : 412 KB
+  tenant-site   : 256 KB
+  meeting-ui    : 580 KB (WebRTC)
+
+Largest JS bundles (.next/static):
+  Run from each frontend dir:
+    ls -la .next/static/chunks/pages | sort -k5 -n -r | head -10
+
+─────────────────────────────────────────────────────────────────────
+G. RECOMMENDATIONS
+─────────────────────────────────────────────────────────────────────
+1. Apply pprof patch to all 13 Go services (separate ports :6060-:6072)
+2. Capture production profiles during business hours
+3. Set Prometheus alerts on goroutine count > 50k (chat-engine)
+4. Set Prometheus alerts on heap alloc rate > 100MB/s sustained
+5. Use py-spy for production Python profiling (no restart needed)
+6. Lighthouse audits require Docker-up state — defer to Phase 6
+
+ACTIONS TAKEN:
+- ✅ pprof wired into auth-service (logs/wsk-auth-30s.prof captured)
+- ✅ Pattern documented for replication across 12 other services
+- ⏳ Profiles under load (deferred until Docker-up phase)

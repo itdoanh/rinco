@@ -1,0 +1,520 @@
+WS-K Nightly Audit
+==================
+Date:  2026-09-18T15:56:55.7632967+07:00
+Root:  C:\code\RINCO
+
+=== 1. Go module verify ===
+>>> cd /d C:\code\RINCO\services\analytics-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\auth-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\billing-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\chat-engine && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\crm-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\dynamic-model-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\email-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\integration-tests && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\landing-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\lead-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\meta-capi-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\notification-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\observability-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\search-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\tenant-service && go mod verify
+all modules verified
+
+<<< OK
+>>> cd /d C:\code\RINCO\services\webrtc-sfu && go mod verify
+all modules verified
+
+<<< OK
+
+=== 2. pip-audit on Python services ===
+>>> pip-audit -r "C:\code\RINCO\services\lead-scoring\requirements.txt" --no-deps
+cmd : WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING:pip_aud...ed dependencies:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: 
+https://pip-tools.readthedocs.io/en/latest/#using-hashes
+Found 79 known vulnerabilities in 5 packages
+Name      Version ID                  Fix Versions
+--------- ------- ------------------- -------------
+mlflow    2.19.0  PYSEC-2026-1646     2.20.3
+mlflow    2.19.0  PYSEC-2025-52       2.22.2,3.1.0
+mlflow    2.19.0  PYSEC-2025-52       3.1.0
+mlflow    2.19.0  PYSEC-2026-1660
+mlflow    2.19.0  PYSEC-2026-1642     2.22.0rc0
+mlflow    2.19.0  PYSEC-2026-1640     2.22.4,3.0.0
+mlflow    2.19.0  PYSEC-2026-1656     3.5.0
+mlflow    2.19.0  PYSEC-2026-1639     3.4.0rc0
+mlflow    2.19.0  PYSEC-2026-2661     3.8.0rc0
+mlflow    2.19.0  PYSEC-2026-421      3.8.0rc0
+mlflow    2.19.0  PYSEC-2026-2658     3.8.0rc0
+mlflow    2.19.0  PYSEC-2026-2656     3.9.0rc0
+mlflow    2.19.0  PYSEC-2026-2657
+mlflow    2.19.0  PYSEC-2026-425      3.9.0rc0
+mlflow    2.19.0  PYSEC-2026-423      3.8.1
+mlflow    2.19.0  PYSEC-2026-419
+mlflow    2.19.0  PYSEC-2026-94       3.11.0rc0
+mlflow    2.19.0  PYSEC-2026-93       3.11.1
+mlflow    2.19.0  PYSEC-2026-2221     3.11.0
+mlflow    2.19.0  PYSEC-2026-2655     3.11.0
+mlflow    2.19.0  PYSEC-2026-2219     3.9.0
+mlflow    2.19.0  PYSEC-2026-2654     3.10.0
+mlflow    2.19.0  PYSEC-2026-424      3.9.0
+mlflow    2.19.0  PYSEC-2026-94       3.11.0rc0
+mlflow    2.19.0  PYSEC-2026-93       3.11.0rc0
+mlflow    2.19.0  PYSEC-2026-195      3.10.1
+mlflow    2.19.0  PYSEC-2026-2660     3.10.0
+mlflow    2.19.0  PYSEC-2026-424      3.9.0
+mlflow    2.19.0  PYSEC-2026-419
+mlflow    2.19.0  PYSEC-2026-421      3.8.0rc0
+mlflow    2.19.0  PYSEC-2026-425      3.9.0rc0
+mlflow    2.19.0  PYSEC-2026-423      3.8.1
+mlflow    2.19.0  PYSEC-2026-2220     3.11.0rc1
+mlflow    2.19.0  PYSEC-2026-1642     2.22.0rc0
+mlflow    2.19.0  PYSEC-2026-1646     2.20.3
+mlflow    2.19.0  PYSEC-2026-1640     2.22.4,3.0.0
+mlflow    2.19.0  PYSEC-2026-1660
+mlflow    2.19.0  PYSEC-2026-1639     3.4.0rc0
+mlflow    2.19.0  PYSEC-2026-1656     3.5.0
+mlflow    2.19.0  PYSEC-2026-2659     3.11.0rc0
+mlflow    2.19.0  PYSEC-2026-2222     3.11.0
+mlflow    2.19.0  PYSEC-2026-2219     3.9.0
+mlflow    2.19.0  PYSEC-2026-2220     3.11.0rc0
+mlflow    2.19.0  PYSEC-2026-2221     3.10.0
+mlflow    2.19.0  PYSEC-2026-2222     3.11.0
+mlflow    2.19.0  PYSEC-2026-2654     3.10.0
+mlflow    2.19.0  PYSEC-2026-2655     3.11.0
+mlflow    2.19.0  PYSEC-2026-2656     3.9.0rc0
+mlflow    2.19.0  PYSEC-2026-2657
+mlflow    2.19.0  PYSEC-2026-2660     3.10.0
+mlflow    2.19.0  PYSEC-2026-2659     3.11.0rc0
+mlflow    2.19.0  PYSEC-2026-2661     3.8.0rc0
+mlflow    2.19.0  PYSEC-2026-2658     3.8.0rc0
+mlflow    2.19.0  PYSEC-2026-195      3.10.1
+mlflow    2.19.0  PYSEC-2026-3686     3.13.0rc0
+mlflow    2.19.0  PYSEC-2026-3687     3.15.0
+mlflow    2.19.0  PYSEC-2026-3687     3.15.0
+mlflow    2.19.0  PYSEC-2026-3686     3.13.0rc0
+mlflow    2.19.0  GHSA-gqvg-gmmx-x4hm 3.15.0
+pytest    8.3.3   PYSEC-2026-1845     9.0.3
+pytest    8.3.3   PYSEC-2026-1845     9.0.3
+protobuf  4.25.9  PYSEC-2026-1805     5.29.6,6.33.5
+protobuf  4.25.9  PYSEC-2026-1805     5.29.6,6.33.5
+pyarrow   18.1.0  PYSEC-2026-113      23.0.1
+pyarrow   18.1.0  PYSEC-2026-113      23.0.1
+starlette 0.38.6  PYSEC-2026-1943     0.40.0
+starlette 0.38.6  PYSEC-2026-1941     0.47.2
+starlette 0.38.6  PYSEC-2026-161      1.0.1
+starlette 0.38.6  PYSEC-2026-161      1.0.1
+starlette 0.38.6  PYSEC-2026-2281     1.1.0
+starlette 0.38.6  PYSEC-2026-2280     1.1.0
+starlette 0.38.6  PYSEC-2026-249      1.3.1
+starlette 0.38.6  PYSEC-2026-248      1.3.0
+starlette 0.38.6  PYSEC-2026-249      1.3.1
+starlette 0.38.6  PYSEC-2026-248      1.3.0
+starlette 0.38.6  PYSEC-2026-1943     0.40.0
+starlette 0.38.6  PYSEC-2026-1941     0.47.2
+starlette 0.38.6  PYSEC-2026-2281     1.1.0
+starlette 0.38.6  PYSEC-2026-2280     1.1.0
+
+<<< OK
+>>> pip-audit -r "C:\code\RINCO\services\rag-chatbot\requirements.txt" --no-deps
+cmd : WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING:pip_aud...ed dependencies:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: 
+https://pip-tools.readthedocs.io/en/latest/#using-hashes
+Found 51 known vulnerabilities in 5 packages
+Name         Version  ID              Fix Versions
+------------ -------- --------------- ------------
+torch        2.4.1    PYSEC-2025-191  2.7.1rc1
+torch        2.4.1    PYSEC-2026-1970 2.8.0
+torch        2.4.1    PYSEC-2025-41   2.6.0
+torch        2.4.1    PYSEC-2025-41   2.6.0
+torch        2.4.1    PYSEC-2024-259  2.5.0
+torch        2.4.1    PYSEC-2025-205  2.7.1
+torch        2.4.1    PYSEC-2025-206  2.9.0
+torch        2.4.1    PYSEC-2025-207  2.7.1
+torch        2.4.1    PYSEC-2025-204  2.9.0
+torch        2.4.1    PYSEC-2026-139
+torch        2.4.1    PYSEC-2025-209  2.7.1
+torch        2.4.1    PYSEC-2025-208  2.7.1
+torch        2.4.1    PYSEC-2025-191
+torch        2.4.1    PYSEC-2025-198  2.7.0
+torch        2.4.1    PYSEC-2025-203  2.9.0
+torch        2.4.1    PYSEC-2025-189
+torch        2.4.1    PYSEC-2025-190
+torch        2.4.1    PYSEC-2025-192
+torch        2.4.1    PYSEC-2025-193  2.9.1
+torch        2.4.1    PYSEC-2025-194  2.13.0
+torch        2.4.1    PYSEC-2025-195  2.10.0
+torch        2.4.1    PYSEC-2026-1970 2.8.0
+torch        2.4.1    PYSEC-2026-2286 2.10.0
+pytest       8.3.3    PYSEC-2026-1845 9.0.3
+pytest       8.3.3    PYSEC-2026-1845 9.0.3
+pdfminer-six 20231228 PYSEC-2026-1762 20251107
+pdfminer-six 20231228 PYSEC-2026-1761 20251230
+pdfminer-six 20231228 PYSEC-2026-1762 20251107
+pdfminer-six 20231228 PYSEC-2026-1761 20251230
+starlette    0.38.6   PYSEC-2026-1943 0.40.0
+starlette    0.38.6   PYSEC-2026-1941 0.47.2
+starlette    0.38.6   PYSEC-2026-161  1.0.1
+starlette    0.38.6   PYSEC-2026-161  1.0.1
+starlette    0.38.6   PYSEC-2026-2281 1.1.0
+starlette    0.38.6   PYSEC-2026-2280 1.1.0
+starlette    0.38.6   PYSEC-2026-249  1.3.1
+starlette    0.38.6   PYSEC-2026-248  1.3.0
+starlette    0.38.6   PYSEC-2026-249  1.3.1
+starlette    0.38.6   PYSEC-2026-248  1.3.0
+starlette    0.38.6   PYSEC-2026-1943 0.40.0
+starlette    0.38.6   PYSEC-2026-1941 0.47.2
+starlette    0.38.6   PYSEC-2026-2281 1.1.0
+starlette    0.38.6   PYSEC-2026-2280 1.1.0
+transformers 4.57.6   PYSEC-2025-217
+transformers 4.57.6   PYSEC-2026-2288 5.0.0rc3
+transformers 4.57.6   PYSEC-2026-2289 5.3.0
+transformers 4.57.6   PYSEC-2026-2290
+transformers 4.57.6   PYSEC-2026-2288 5.0.0
+transformers 4.57.6   PYSEC-2026-2289 5.3.0
+transformers 4.57.6   PYSEC-2026-2290 5.5.0
+transformers 4.57.6   PYSEC-2026-3929 5.10.0
+
+<<< OK
+>>> pip-audit -r "C:\code\RINCO\services\ai-sre\requirements.txt" --no-deps
+cmd : WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING:pip_aud...ed dependencies:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: 
+https://pip-tools.readthedocs.io/en/latest/#using-hashes
+Found 16 known vulnerabilities in 2 packages
+Name      Version ID              Fix Versions
+--------- ------- --------------- ------------
+pytest    8.3.3   PYSEC-2026-1845 9.0.3
+pytest    8.3.3   PYSEC-2026-1845 9.0.3
+starlette 0.38.6  PYSEC-2026-1943 0.40.0
+starlette 0.38.6  PYSEC-2026-1941 0.47.2
+starlette 0.38.6  PYSEC-2026-161  1.0.1
+starlette 0.38.6  PYSEC-2026-161  1.0.1
+starlette 0.38.6  PYSEC-2026-2281 1.1.0
+starlette 0.38.6  PYSEC-2026-2280 1.1.0
+starlette 0.38.6  PYSEC-2026-249  1.3.1
+starlette 0.38.6  PYSEC-2026-248  1.3.0
+starlette 0.38.6  PYSEC-2026-249  1.3.1
+starlette 0.38.6  PYSEC-2026-248  1.3.0
+starlette 0.38.6  PYSEC-2026-1943 0.40.0
+starlette 0.38.6  PYSEC-2026-1941 0.47.2
+starlette 0.38.6  PYSEC-2026-2281 1.1.0
+starlette 0.38.6  PYSEC-2026-2280 1.1.0
+
+<<< OK
+>>> pip-audit -r "C:\code\RINCO\services\stt-service\requirements.txt" --no-deps
+cmd : WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (WARNING:pip_aud...ed dependencies:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: 
+https://pip-tools.readthedocs.io/en/latest/#using-hashes
+Found 30 known vulnerabilities in 3 packages
+Name             Version ID              Fix Versions
+---------------- ------- --------------- ------------
+python-multipart 0.0.9   PYSEC-2026-1851 0.0.18
+python-multipart 0.0.9   PYSEC-2026-1852 0.0.22
+python-multipart 0.0.9   PYSEC-2026-3038 0.0.26
+python-multipart 0.0.9   PYSEC-2026-3039 0.0.27
+python-multipart 0.0.9   PYSEC-2026-3040 0.0.31
+python-multipart 0.0.9   PYSEC-2026-3036 0.0.30
+python-multipart 0.0.9   PYSEC-2026-3037 0.0.30
+python-multipart 0.0.9   PYSEC-2026-1852 0.0.22
+python-multipart 0.0.9   PYSEC-2026-1851 0.0.18
+python-multipart 0.0.9   PYSEC-2026-3038 0.0.26
+python-multipart 0.0.9   PYSEC-2026-3037 0.0.30
+python-multipart 0.0.9   PYSEC-2026-3036 0.0.30
+python-multipart 0.0.9   PYSEC-2026-3040 0.0.31
+python-multipart 0.0.9   PYSEC-2026-3039 0.0.27
+pytest           8.3.3   PYSEC-2026-1845 9.0.3
+pytest           8.3.3   PYSEC-2026-1845 9.0.3
+starlette        0.38.6  PYSEC-2026-1943 0.40.0
+starlette        0.38.6  PYSEC-2026-1941 0.47.2
+starlette        0.38.6  PYSEC-2026-161  1.0.1
+starlette        0.38.6  PYSEC-2026-161  1.0.1
+starlette        0.38.6  PYSEC-2026-2281 1.1.0
+starlette        0.38.6  PYSEC-2026-2280 1.1.0
+starlette        0.38.6  PYSEC-2026-249  1.3.1
+starlette        0.38.6  PYSEC-2026-248  1.3.0
+starlette        0.38.6  PYSEC-2026-249  1.3.1
+starlette        0.38.6  PYSEC-2026-248  1.3.0
+starlette        0.38.6  PYSEC-2026-1943 0.40.0
+starlette        0.38.6  PYSEC-2026-1941 0.47.2
+starlette        0.38.6  PYSEC-2026-2281 1.1.0
+starlette        0.38.6  PYSEC-2026-2280 1.1.0
+
+<<< OK
+
+=== 3. npm audit on frontends ===
+>>> cd /d "C:\code\RINCO\frontend\landing" && npm audit --omit=dev
+# npm audit report
+
+postcss  <=8.5.22
+Severity: high
+PostCSS has XSS via Unescaped </style> in its CSS Stringify Output - https://github.com/advisories/GHSA-qx2v-qp2m-jg93
+PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments - https://github.com/advisories/GHSA-6g55-p6wh-862q
+PostCSS: incomplete fix of GHSA-6g55-p6wh-862q G현 attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset - https://github.com/advisories/GHSA-fxqj-rqcc-2cmp
+PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure - https://github.com/advisories/GHSA-r28c-9q8g-f849
+fix available via `npm audit fix --force`
+Will install next@16.3.5, which is a breaking change
+frontend/landing/node_modules/next/node_modules/postcss
+  next  9.3.4-canary.0 - 16.3.0-preview.10
+  Depends on vulnerable versions of postcss
+  frontend/landing/node_modules/next
+
+2 vulnerabilities (1 moderate, 1 high)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+<<< OK
+>>> cd /d "C:\code\RINCO\frontend\admin-portal" && npm audit --omit=dev
+# npm audit report
+
+postcss  <=8.5.22
+Severity: high
+PostCSS has XSS via Unescaped </style> in its CSS Stringify Output - https://github.com/advisories/GHSA-qx2v-qp2m-jg93
+PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments - https://github.com/advisories/GHSA-6g55-p6wh-862q
+PostCSS: incomplete fix of GHSA-6g55-p6wh-862q G현 attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset - https://github.com/advisories/GHSA-fxqj-rqcc-2cmp
+PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure - https://github.com/advisories/GHSA-r28c-9q8g-f849
+fix available via `npm audit fix --force`
+Will install next@16.3.5, which is a breaking change
+frontend/admin-portal/node_modules/next/node_modules/postcss
+  next  9.3.4-canary.0 - 16.3.0-preview.10
+  Depends on vulnerable versions of postcss
+  frontend/admin-portal/node_modules/next
+
+2 vulnerabilities (1 moderate, 1 high)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+<<< OK
+>>> cd /d "C:\code\RINCO\frontend\tenant-site" && npm audit --omit=dev
+# npm audit report
+
+postcss  <=8.5.22
+Severity: high
+PostCSS has XSS via Unescaped </style> in its CSS Stringify Output - https://github.com/advisories/GHSA-qx2v-qp2m-jg93
+PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments - https://github.com/advisories/GHSA-6g55-p6wh-862q
+PostCSS: incomplete fix of GHSA-6g55-p6wh-862q G현 attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset - https://github.com/advisories/GHSA-fxqj-rqcc-2cmp
+PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure - https://github.com/advisories/GHSA-r28c-9q8g-f849
+fix available via `npm audit fix --force`
+Will install next@16.3.5, which is a breaking change
+frontend/tenant-site/node_modules/next/node_modules/postcss
+  next  9.3.4-canary.0 - 16.3.0-preview.10
+  Depends on vulnerable versions of postcss
+  frontend/tenant-site/node_modules/next
+
+2 vulnerabilities (1 moderate, 1 high)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+<<< OK
+>>> cd /d "C:\code\RINCO\frontend\meeting-ui" && npm audit --omit=dev
+# npm audit report
+
+postcss  <=8.5.22
+Severity: high
+PostCSS has XSS via Unescaped </style> in its CSS Stringify Output - https://github.com/advisories/GHSA-qx2v-qp2m-jg93
+PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments - https://github.com/advisories/GHSA-6g55-p6wh-862q
+PostCSS: incomplete fix of GHSA-6g55-p6wh-862q G현 attacker-controlled sourceMappingURL reads arbitrary .map files when `from` is unset - https://github.com/advisories/GHSA-fxqj-rqcc-2cmp
+PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure - https://github.com/advisories/GHSA-r28c-9q8g-f849
+fix available via `npm audit fix --force`
+Will install next@16.3.5, which is a breaking change
+frontend/meeting-ui/node_modules/next/node_modules/postcss
+  next  9.3.4-canary.0 - 16.3.0-preview.10
+  Depends on vulnerable versions of postcss
+  frontend/meeting-ui/node_modules/next
+
+2 vulnerabilities (1 moderate, 1 high)
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+<<< OK
+
+=== 4. cargo audit on Rust services ===
+>>> cd /d "C:\code\RINCO\services\chat-engine" && cargo audit
+cmd :     Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Fetching ad...dvisory-db.git`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+      Loaded 1247 security advisories (from C:\Users\doanh\.cargo\advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (396 crate dependencies)
+Crate:     rustls-webpki
+Version:   0.102.8
+Title:     CRLs not considered authoritative by Distribution Point due to faulty matching logic
+Date:      2026-03-20
+ID:        RUSTSEC-2026-0049
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0049
+Solution:  Upgrade to >=0.103.10
+
+Crate:     rustls-webpki
+Version:   0.102.8
+Title:     Name constraints for URI names were incorrectly accepted
+Date:      2026-04-14
+ID:        RUSTSEC-2026-0098
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0098
+Solution:  Upgrade to >=0.103.12, <0.104.0-alpha.1 OR >=0.104.0-alpha.6
+
+Crate:     rustls-webpki
+Version:   0.102.8
+Title:     Name constraints were accepted for certificates asserting a wildcard name
+Date:      2026-04-14
+ID:        RUSTSEC-2026-0099
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0099
+Solution:  Upgrade to >=0.103.12, <0.104.0-alpha.1 OR >=0.104.0-alpha.6
+
+Crate:     rustls-webpki
+Version:   0.102.8
+Title:     Reachable panic in certificate revocation list parsing
+Date:      2026-04-22
+ID:        RUSTSEC-2026-0104
+URL:       https://rustsec.org/advisories/RUSTSEC-2026-0104
+Solution:  Upgrade to >=0.103.13, <0.104.0-alpha.1 OR >=0.104.0-alpha.7
+
+Crate:     rustls-pemfile
+Version:   2.2.0
+Warning:   unmaintained
+Title:     rustls-pemfile is unmaintained
+Date:      2025-11-28
+ID:        RUSTSEC-2025-0134
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0134
+
+error: 4 vulnerabilities found!
+warning: 1 allowed warning found
+
+<<< OK
+>>> cd /d "C:\code\RINCO\services\webrtc-sfu" && cargo audit
+cmd :     Fetching advisory database from `https://github.com/RustSec/advisory-db.git`
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Fetching ad...dvisory-db.git`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+      Loaded 1247 security advisories (from C:\Users\doanh\.cargo\advisory-db)
+    Updating crates.io index
+    Scanning Cargo.lock for vulnerabilities (380 crate dependencies)
+Crate:     bincode
+Version:   1.3.3
+Warning:   unmaintained
+Title:     Bincode is unmaintained
+Date:      2025-12-16
+ID:        RUSTSEC-2025-0141
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0141
+
+Crate:     rustls-pemfile
+Version:   2.2.0
+Warning:   unmaintained
+Title:     rustls-pemfile is unmaintained
+Date:      2025-11-28
+ID:        RUSTSEC-2025-0134
+URL:       https://rustsec.org/advisories/RUSTSEC-2025-0134
+
+warning: 2 allowed warnings found
+
+<<< OK
+>>> cd /d "C:\code\RINCO\services\recording-service" && cargo audit
+cmd : error: failed to parse manifest at `C:\code\RINCO\services\recording-service\Cargo.toml`
+At C:\code\RINCO\scripts\wsk-nightly-audit.ps1:57 char:16
++         $out = cmd /c $Cmd 2>&1
++                ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (error: failed t...ice\Cargo.toml`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+Caused by:
+  feature `default` includes `sqlx-postgres` which is neither a dependency nor another feature
+error: I/O operation failed: non-zero exit status running `cargo update --workspace`: 101
+
+<<< OK
+
+=== 6. Docker health check ===
+>>> docker ps --format "{{.Names}} {{.Status}}"
+rinco-clickhouse Up 2 hours (unhealthy)
+rinco-scylla Up 2 hours (healthy)
+rinco-mongodb Up 2 hours (healthy)
+rinco-qdrant Up 2 hours (healthy)
+rinco-meilisearch Up 2 hours (healthy)
+rinco-nats Up 2 hours (healthy)
+rinco-minio Up 2 hours (healthy)
+rinco-postgres Up 2 hours (healthy)
+rinco-loki Up 2 hours
+rinco-grafana Up 2 hours
+rinco-prometheus Up 2 hours
+rinco-valkey Up 2 hours (healthy)
+rinco-mailhog Up 2 hours
+
+<<< OK
+
+=== END OF NIGHTLY AUDIT ===
+Run completed at 2026-09-18T16:00:36.6973280+07:00
