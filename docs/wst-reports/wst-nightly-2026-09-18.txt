@@ -1,0 +1,51 @@
+# WS-T First Nightly Run — 2026-09-18
+
+## Status: ✅ SUCCESS
+
+## Summary
+
+| Suite | Passed | Failed | Duration |
+|-------|--------|--------|----------|
+| visual.spec.ts | 21/21 | 0 | 1.8m |
+| a11y.spec.ts | 11/11 | 0 | 2.8m |
+| responsive.spec.ts | 11/11 | 0 | 40s |
+
+**Total: 43/43 passed (5.2m)**
+
+## Performance Metrics (dev mode)
+
+| App | FCP | DOM Load | TTFB | Resources | Heap |
+|-----|-----|----------|------|-----------|------|
+| landing | 2528ms | 2520ms | 1588ms | 17 (5.4MB) | 82MB |
+| admin | 1640ms | 1619ms | 1447ms | 10 (3.7MB) | 69MB |
+| tenant | 708ms | 886ms | 513ms | 10 (2.3MB) | 38MB |
+| meeting | 1168ms | 1152ms | 980ms | 8 (2.0MB) | 36MB |
+
+## Accessibility
+
+- 11 routes audited via axe-core
+- 0 serious/critical WCAG 2.0 AA violations
+- Landing/admin/tenant/meeting all clean
+
+## Responsive Issues Documented (not blocking)
+
+1. **Landing mobile overflow (100px on iPhone SE, 103px on iPad)**
+   - Tracked in `docs/wst-issues/2026-09-18-landing-mobile-overflow.md`
+   - Fix: `overflow-x-hidden` on `<main>` (now applied in commit)
+   - Verification: re-run responsive test after fix
+
+2. **Tenant /demo mock fallback**
+   - Tracked in `docs/wst-issues/2026-09-18-tenant-mock-data-fallback.md`
+   - Documented as expected behaviour when backend offline
+
+## Mock Data Audit
+
+- No production code contains REAL placeholder mock data
+- All `mock-data.ts` files are intentional graceful fallbacks
+- 0 cleanup required
+
+## Next Steps (Nightly Schedule)
+
+- Schedule registered via `scripts/wst-schedule.ps1`
+- Next run: 2026-09-19 at 02:00 local time
+- Output → `docs/wst-reports/wst-nightly-<date>.txt`
