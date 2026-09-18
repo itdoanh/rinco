@@ -41,22 +41,17 @@ async function assertNoHorizontalScroll(page: Page): Promise<void> {
 
 // ============================================================================
 // Mobile — iPhone SE (375 x 667)
-// NOTE: Landing page has 100px overflow on mobile/tablet (known UX bug, tracked in
-// logs/wst-responsive-issues.txt). These tests document the issue rather than
-// failing the suite since the UI still renders; it's a CSS layout fix needed.
 // ============================================================================
 test.describe('Responsive mobile (iPhone SE)', () => {
   test.beforeEach(async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 });
   });
 
-  test('landing homepage renders (UX note: 100px horizontal overflow — see logs/wst-responsive-issues.txt)', async ({ page }) => {
+  test('landing homepage renders without horizontal scroll (post-fix)', async ({ page }) => {
     await page.goto(APPS.landing + '/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
-    // Assert the page loads and has content, but allow overflow as a known bug.
-    const bodyLen = (await page.content()).length;
-    expect(bodyLen).toBeGreaterThan(1000);
-    await shot(page, 'iphone-se-landing');
+    await assertNoHorizontalScroll(page);
+    await shot(page, 'iphone-se-landing-postfix');
   });
 
   test('admin login renders without horizontal scroll', async ({ page }) => {
@@ -89,12 +84,11 @@ test.describe('Responsive tablet (iPad)', () => {
     await page.setViewportSize({ width: 768, height: 1024 });
   });
 
-  test('landing renders (UX note: 103px overflow on tablet — see logs/wst-responsive-issues.txt)', async ({ page }) => {
+  test('landing renders without horizontal scroll (post-fix)', async ({ page }) => {
     await page.goto(APPS.landing + '/', { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(1500);
-    const bodyLen = (await page.content()).length;
-    expect(bodyLen).toBeGreaterThan(1000);
-    await shot(page, 'ipad-landing');
+    await assertNoHorizontalScroll(page);
+    await shot(page, 'ipad-landing-postfix');
   });
 
   test('admin dashboard renders without horizontal scroll', async ({ page }) => {
