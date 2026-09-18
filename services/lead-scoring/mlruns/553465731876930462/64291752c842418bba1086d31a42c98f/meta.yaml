@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/code/RINCO/services/lead-scoring/mlruns/553465731876930462/64291752c842418bba1086d31a42c98f/artifacts
+end_time: 1789664968287
+entry_point_name: ''
+experiment_id: '553465731876930462'
+lifecycle_stage: active
+run_id: 64291752c842418bba1086d31a42c98f
+run_name: train-default
+run_uuid: 64291752c842418bba1086d31a42c98f
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1789664968243
+status: 3
+tags: []
+user_id: doanh

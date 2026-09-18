@@ -1,0 +1,106 @@
+================================================================================
+WS-R PHASE 1 — ENVIRONMENT AUDIT
+Generated: 2026-09-18 04:25 UTC+7
+Agent: WS-R (Runtime & Operations)
+================================================================================
+
+1. TOOLS
+--------
+  Docker version           : 29.4.3 (build 055a478)
+  Docker Compose version   : v5.1.3
+  kubectl version          : Client v1.34.1 (Kustomize v5.7.1)
+  k3s                      : NOT INSTALLED (no binary, no C:\ProgramData\k3s, no C:\k3s)
+  Container context        : desktop-linux (Docker Desktop 4.73.1 / 226574)
+  PowerShell               : Windows PowerShell
+
+2. DOCKER STATE
+---------------
+  - com.docker.service was STOPPED at audit start. Manually launched Docker Desktop
+    (C:\Program Files\Docker\Docker\Docker Desktop.exe). Engine now reachable.
+  - 8 RINCO containers running (started by previous loop, project "infra"):
+      rinco-postgres    (healthy)  0.0.0.0:5433->5432/tcp
+      rinco-nats        (healthy)  0.0.0.0:4222,8222
+      rinco-valkey      (healthy)  0.0.0.0:6379->6379/tcp
+      rinco-minio       (healthy)  0.0.0.0:9000-9001
+      rinco-loki        (running)  0.0.0.0:3100
+      rinco-grafana     (running)  0.0.0.0:13000->3000/tcp
+      rinco-prometheus  (running)  0.0.0.0:9090
+      rinco-mailhog     (running)  0.0.0.0:1025,8025
+  - Postgres maps to host port 5433 (NOT 5432) because the existing .env sets
+    POSTGRES_PORT=5433 to avoid conflict with another local Postgres.
+  - Existing volume "infra_postgres_data" is reused (data preserved across loops).
+  - No rinco services (auth, crm, lead, ...) are currently running.
+
+3. PORT BINDINGS
+----------------
+  3000  : occupied by external Node process (pid 5208, unrelated to RINCO).
+  5432  : FREE (postgres using 5433 instead).
+  5433  : bound by rinco-postgres container.
+  6379  : bound by rinco-valkey (also listened by another node process pid 7496).
+  4222  : bound by rinco-nats.
+  7700  : FREE (meilisearch not yet started).
+  8123  : FREE (clickhouse not yet started).
+  8222  : bound by rinco-nats.
+  9000  : bound by rinco-minio.
+  9001  : bound by rinco-minio (console).
+  9090  : bound by rinco-prometheus.
+  13000 : bound by rinco-grafana (mapped from container 3000).
+  8081-8099, 8101-8102, 13133, 16686, 9100, 9093, 6333, 9042, 27017
+         : all FREE — no service containers started yet.
+
+4. K3S STATE
+------------
+  - NOT installed. Phase 4 will need to install via:
+      winget install k3s   OR
+      download windows binary from https://github.com/k3s-io/k3s/releases
+  - Path C:\ProgramData\k3s and C:\k3s do not exist.
+  - KUBECONFIG not set.
+
+5. ENV FILE STATE
+-----------------
+  - .env present, .env.example present, .env.local absent.
+  - .env uses POSTGRES_PORT=5433 (custom for this host).
+  - Valkey auth: password = rinco_dev_password
+  - Postgres password: rinco_dev_password
+  - MinIO root creds: rinco / rinco_dev_password
+  - Auth PASETO key: 64-hex string (valid length).
+
+6. DISK
+-------
+  C: Used 333 GB / Free 143 GB. Plenty for Docker volumes + K3s (~10 GB).
+
+7. ISSUES FOUND
+---------------
+  [P1-1] Docker Desktop service was stopped at audit start.
+         Resolved by relaunching Docker Desktop app.
+  [P1-2] Port 5432 is the .env default but rinco-postgres maps to 5433.
+         Accepted — infra already runs on 5433; consistent with .env.
+  [P1-3] Port 3000 occupied by external Node process.
+         rinco-grafana re-mapped to 13000 to avoid conflict. Frontends will
+         need alternative ports or host conflict resolution.
+  [P1-4] Missing DBs: pgbouncer, scylla, scylla-init, clickhouse, mongodb,
+         meilisearch, qdrant, minio-init, nats-init. No service containers.
+         Must start in Phase 2.
+  [P1-5] Local Postgres on port 5432 (pttk_postgres container) is Exited
+         since 16h. Not blocking, but volume + image remain.
+  [P1-6] Three leftover projects (apex_*, planit_*, deploy_*) all exited.
+         Harmless clutter; do NOT touch (no wipe without approval).
+
+8. RECOMMENDATIONS
+------------------
+  R1. Use the EXISTING rinco-* containers (project "infra") as the base.
+      Replicate the same project name to reuse volumes + .env settings.
+      Do NOT recreate the postgres container (data would survive in volume,
+      but resetting init.sql / pgb volume would break existing seeds).
+  R2. Start the missing DBs + observability + services via the
+      infra/docker-compose.yml / docker-compose.services.yml files using a
+      matching project name so ports stay on the existing map (5433 etc.).
+  R3. Frontend port collision: keep them on 3000-3003 inside containers but
+      document that 3000 is taken on host. Use a reverse proxy if needed.
+  R4. K3s install: attempt via winget, fall back to docker-based k3d if
+      Windows k3s is not available. Skip Phase 4 if neither works.
+  R5. Enable TLS to MinIO and createbuckets idempotently (minio-init).
+
+================================================================================
+END OF AUDIT
+================================================================================

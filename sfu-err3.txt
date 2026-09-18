@@ -1,0 +1,16 @@
+panic: pattern "/v1/rooms/" (registered at C:/code/RINCO/services/webrtc-sfu/internal/httpapi/server.go:45) conflicts with pattern "/v1/rooms/" (registered at C:/code/RINCO/services/webrtc-sfu/internal/httpapi/server.go:44):
+	/v1/rooms/ matches the same requests as /v1/rooms/
+
+goroutine 1 [running]:
+net/http.(*ServeMux).register(...)
+	C:/Program Files/Go/src/net/http/server.go:2882
+net/http.(*ServeMux).HandleFunc(0x26168d8fb88?, {0x7ff65efb21c9?, 0x48?}, 0x7ff65ef79540?)
+	C:/Program Files/Go/src/net/http/server.go:2856 +0x5e
+github.com/itdoanh/rinco/services/webrtc-sfu/internal/httpapi.(*Server).Routes(0x26168d52460)
+	C:/code/RINCO/services/webrtc-sfu/internal/httpapi/server.go:45 +0x1bc
+github.com/itdoanh/rinco/services/webrtc-sfu/internal/server.(*Server).Run(0x26168d02540, {0x7ff65efe7c50, 0x7ff65f4d40e0})
+	C:/code/RINCO/services/webrtc-sfu/internal/server/server.go:55 +0x165
+main.run()
+	C:/code/RINCO/services/webrtc-sfu/cmd/webrtc-sfu/main.go:31 +0x3b8
+main.main()
+	C:/code/RINCO/services/webrtc-sfu/cmd/webrtc-sfu/main.go:20 +0x13

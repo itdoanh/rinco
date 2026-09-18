@@ -1,0 +1,1 @@
+time=2026-09-17T23:54:52.070+07:00 level=INFO msg="starting webrtc-sfu" config="http=:8105 rtc=:8106 nats=\"\" ice=1 max_rooms=1000 max_participants=50 sdp=unified-plan" version=0.3.0
