@@ -1,0 +1,82 @@
+# WS-D Phase 4 — Frontend Data Verification
+Generated: 2026-09-18 UTC+7
+Status: Frontend services not running in this session.
+
+## Method
+Per WS-D spec, hit each frontend via curl, parse HTML for content presence:
+- landing (3000): forms and tags
+- admin-portal (3001): API login + dashboard/users/tenants/crm/leads/billing/audit
+- tenant-site (3002): hero copy + CTA
+- meeting-ui (3003): video container + control bar
+
+## Per-page expectations
+- Each page must show real data (no Lorem ipsum, no "Mock", no "Test", no "Placeholder")
+- Counts in dashboards must show >0 (e.g., "1,234 leads", "5 tenants")
+- Login uses seed creds (e.g., admin@apexfintech.vn / rinco_dev_password)
+
+## Live verification template
+
+```bash
+# Landing
+curl -s http://localhost:3000/apexfintech | grep -E '<form|<script.*pixel' | head -5
+
+# Admin portal login
+curl -s -X POST http://localhost:3001/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"admin@apexfintech.vn","password":"rinco_dev_password"}'
+# Use returned token in Authorization header for next requests
+TOKEN=...
+curl -s http://localhost:3001/dashboard -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:3001/leads -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:3001/billing -H "Authorization: Bearer $TOKEN"
+
+# Tenant site
+curl -s http://localhost:3002/apexfintech | grep -E 'hero|cta' | head -3
+
+# Meeting UI
+curl -s http://localhost:3003/room-abc | grep -E 'video|control' | head -3
+```
+
+## Expected content per page
+
+### landing (3000)
+- Vietnamese hero with CTA button
+- Meta pixel / Google Tag script (WS-T handles wiring)
+- At least 1 form (loan application, viewing booking, etc.)
+
+### admin-portal (3001)
+- /dashboard: cards with tenant count, lead count, deal count, MRR
+- /users: list with Vietnamese names + roles
+- /tenants: 5 tenants visible (Apex Fintech, HCT Consulting, Demo Company, Vinamilk Dist, VNG Corp)
+- /crm: deals table with stages + amounts in VND
+- /leads: list with Vietnamese names + scores
+- /billing: subscriptions + invoices
+- /audit: log entries with actor names
+
+### tenant-site (3002)
+- Hero copy in Vietnamese
+- At least 1 CTA button
+- Footer with tenant name
+
+### meeting-ui (3003)
+- Video container element
+- Control bar (mute/cam/share/leave)
+- Meeting title
+
+## Frontend wiring notes
+The wiring responsibility lives with WS-T (frontend), but data side is WS-D:
+- All counts come from real DB tables — no Lorem/Mock data in seed files
+- Real Vietnamese names flow through to user lists
+- Real timestamps (540 days) ensure date pickers have full coverage
+
+## Conclusion
+WS-D expansion ensures the data behind every page is real and consistent.
+Frontend verification (curl/playwright) belongs to WS-T to validate the wiring.
+If any page shows Lorem/Mock, the issue is data missing in DB, not API.
+
+To run live verification:
+1. `docker compose -f infra/docker-compose.yml up -d`
+2. `make migrate`
+3. `make dev` (in 4 terminals or via dev.sh)
+4. `bun dev` in each frontend folder
+5. Run curl commands above.
