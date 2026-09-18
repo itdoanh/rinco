@@ -1,94 +1,94 @@
 # WS-K Contract Validation Suite
 #
 # Walks every REST endpoint in the 10 critical Go services, calls each
-# with a valid auth token, verifies the response shape matches the
-# OpenAPI spec (if present), records response time per endpoint, and
-# fails if any required field is missing.
-#
-# Targets (override via env):
-#   $AUTH_URL, $TENANT_URL, $CRM_URL, $LEAD_URL, $EMAIL_URL,
-#   $NOTIFICATION_URL, $SEARCH_URL, $ANALYTICS_URL,
-#   $META_CAPI_URL, $BILLING_URL
+# with a valid auth token, verifies the response shape, records latency.
 #
 # Usage:
 #   .\scripts\wsk-contract-test.ps1
-#   # or with overrides:
-#   $env:AUTH_URL='http://localhost:8081'; .\scripts\wsk-contract-test.ps1
 #
 # Outputs:
-#   logs/wsk-contract.txt            — human-readable results
-#   logs/wsk-contract-results.json   — machine-readable
-#   $LASTEXITCODE — 0 if all pass, 1 if any fail
+#   logs/wsk-contract.txt            human-readable results
+#   logs/wsk-contract-results.json   machine-readable
+#   $LASTEXITCODE = 0 if all pass, 1 if any fail
 
-[CmdletBinding()]
-param(
-    [string]$AuthUrl = $env:AUTH_URL ?? 'http://localhost:8081',
-    [string]$TenantUrl = $env:TENANT_URL ?? 'http://localhost:8082',
-    [string]$CrmUrl = $env:CRM_URL ?? 'http://localhost:8083',
-    [string]$LeadUrl = $env:LEAD_URL ?? 'http://localhost:8085',
-    [string]$EmailUrl = $env:EMAIL_URL ?? 'http://localhost:8087',
-    [string]$NotificationUrl = $env:NOTIFICATION_URL ?? 'http://localhost:8088',
-    [string]$SearchUrl = $env:SEARCH_URL ?? 'http://localhost:8097',
-    [string]$AnalyticsUrl = $env:ANALYTICS_URL ?? 'http://localhost:8099',
-    [string]$MetaCapiUrl = $env:META_CAPI_URL ?? 'http://localhost:8098',
-    [string]$BillingUrl = $env:BILLING_URL ?? 'http://localhost:8095',
-    [string]$TestEmail = $env:TEST_EMAIL ?? 'admin@apexfintech.vn',
-    [string]$TestPassword = $env:TEST_PASSWORD ?? 'rinco_dev_password',
-    [string]$TenantSlug = $env:TENANT_SLUG ?? 'apexfintech',
-    [int]$TimeoutSec = 10
-)
-
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
 $Script:Results = @()
 $Script:Passed = 0
 $Script:Failed = 0
 
-# Helper: HTTP GET with timeout
+# ---- Configuration ----
+# Override any URL by setting the corresponding env var before running.
+function Get-Url {
+    param([string]$Key, [string]$Default)
+    $v = [Environment]::GetEnvironmentVariable($Key)
+    if ($v -and $v -ne '') { return $v } else { return $Default }
+}
+
+$AuthUrl         = Get-Url 'AUTH_URL'         'http://localhost:8081'
+$TenantUrl       = Get-Url 'TENANT_URL'       'http://localhost:8082'
+$CrmUrl          = Get-Url 'CRM_URL'          'http://localhost:8083'
+$LeadUrl         = Get-Url 'LEAD_URL'         'http://localhost:8085'
+$EmailUrl        = Get-Url 'EMAIL_URL'        'http://localhost:8087'
+$NotificationUrl = Get-Url 'NOTIFICATION_URL' 'http://localhost:8088'
+$SearchUrl       = Get-Url 'SEARCH_URL'       'http://localhost:8097'
+$AnalyticsUrl    = Get-Url 'ANALYTICS_URL'    'http://localhost:8099'
+$MetaCapiUrl     = Get-Url 'META_CAPI_URL'    'http://localhost:8098'
+$BillingUrl      = Get-Url 'BILLING_URL'      'http://localhost:8095'
+$TestEmail       = Get-Url 'TEST_EMAIL'       'admin@apexfintech.vn'
+$TestPassword    = Get-Url 'TEST_PASSWORD'    'rinco_dev_password'
+$TenantSlug      = Get-Url 'TENANT_SLUG'      'apexfintech'
+$TimeoutSec      = 10
+
+# ---- Helper ----
 function Invoke-ContractRequest {
     param(
-        [string]$Method = 'GET',
+        [string]$Method,
         [string]$Url,
         [hashtable]$Headers = @{},
         [string]$Body = $null,
         [string[]]$RequiredFields = @()
     )
+    $reqStart = Get-Date
+    $statusCode = 0
+    $body = $null
     try {
-        $reqStart = Get-Date
-        $reqHeaders = @{
+        $headers = @{
             'Content-Type' = 'application/json'
             'Accept'       = 'application/json'
-        } + $Headers
+        }
+        foreach ($k in $Headers.Keys) { $headers[$k] = $Headers[$k] }
         $params = @{
             Uri             = $Url
             Method          = $Method
-            Headers         = $reqHeaders
+            Headers         = $headers
             UseBasicParsing = $true
             TimeoutSec      = $TimeoutSec
         }
         if ($Body) { $params.Body = $Body }
         $res = Invoke-WebRequest @params
-        $reqElapsed = (Get-Date) - $reqStart
         $statusCode = [int]$res.StatusCode
         $body = $res.Content
     } catch {
-        $reqElapsed = (Get-Date) - $reqStart
-        $statusCode = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+        $statusCode = 0
         $body = $_.Exception.Message
     }
+    $elapsedMs = [int]((Get-Date) - $reqStart).TotalMilliseconds
 
-    # Verify required fields if 2xx
+    # Verify required fields
     $missingFields = @()
     if ($statusCode -ge 200 -and $statusCode -lt 300 -and $RequiredFields.Count -gt 0) {
         try {
-            $parsed = $body | ConvertFrom-Json -ErrorAction SilentlyContinue
+            $parsed = $body | ConvertFrom-Json
             foreach ($field in $RequiredFields) {
-                $path = $field -split '\.'
-                $current = $parsed
-                foreach ($segment in $path) {
-                    if ($current.PSObject.Properties[$segment]) {
-                        $current = $current.$segment
+                $parts = $field.Split('.')
+                $node = $parsed
+                $found = $true
+                foreach ($p in $parts) {
+                    if ($node.PSObject.Properties[$p]) {
+                        $node = $node.$p
                     } else {
                         $missingFields += $field
+                        $found = $false
                         break
                     }
                 }
@@ -100,101 +100,99 @@ function Invoke-ContractRequest {
 
     $pass = ($statusCode -ge 200 -and $statusCode -lt 300) -and $missingFields.Count -eq 0
     $Script:Results += [PSCustomObject]@{
-        Url            = $Url
-        Method         = $Method
-        StatusCode     = $statusCode
-        LatencyMs      = [int]$reqElapsed.TotalMilliseconds
+        Url           = $Url
+        Method        = $Method
+        StatusCode    = $statusCode
+        LatencyMs     = $elapsedMs
         RequiredFields = ($RequiredFields -join ', ')
-        MissingFields  = ($missingFields -join ', ')
-        Pass           = $pass
+        MissingFields = ($missingFields -join ', ')
+        Pass          = $pass
     }
     if ($pass) { $Script:Passed++ } else { $Script:Failed++ }
-    return @{ Pass = $pass; StatusCode = $statusCode; LatencyMs = [int]$reqElapsed.TotalMilliseconds; MissingFields = $missingFields }
+
+    return @{
+        Pass = $pass
+        StatusCode = $statusCode
+        LatencyMs = $elapsedMs
+        MissingFields = $missingFields
+    }
 }
 
-# Step 1 — login to get auth token
-Write-Host "==> Login to auth-service at $AuthUrl"
+# ---- Login ----
+Write-Host "==> Login to auth-service"
 $loginBody = @{
-    email        = $TestEmail
-    password     = $TestPassword
-    tenant_slug  = $TenantSlug
+    email       = $TestEmail
+    password   = $TestPassword
+    tenant_slug = $TenantSlug
 } | ConvertTo-Json -Compress
+
 try {
-    $loginRes = Invoke-WebRequest -Uri "$AuthUrl/v1/auth/login" -Method POST -Body $loginBody -ContentType 'application/json' -UseBasicParsing -TimeoutSec $TimeoutSec
-    $token = ($loginRes.Content | ConvertFrom-Json).access_token
+    $res = Invoke-WebRequest -Uri "$AuthUrl/v1/auth/login" -Method POST `
+        -Body $loginBody -ContentType 'application/json' -UseBasicParsing -TimeoutSec $TimeoutSec
+    $parsed = $res.Content | ConvertFrom-Json
+    $token = $parsed.access_token
     if (-not $token) { throw 'No access_token in login response' }
-    Write-Host "==> Got auth token (len=$($token.Length))"
+    Write-Host "==> Auth token obtained (len=$($token.Length))"
 } catch {
-    Write-Error "FATAL: auth-service login failed.  Cannot run contract tests.  $_"
+    Write-Host "FATAL: auth login failed: $_"
     exit 2
 }
-
 $authHeaders = @{ 'Authorization' = "Bearer $token" }
 
-# Step 2 — endpoints per service
+# ---- Endpoint matrix ----
+# Each entry: service name, URL, HTTP method, required top-level JSON fields
 $endpoints = @(
-    # Auth service
-    @{ Service='auth';     Url="$AuthUrl/v1/auth/me";                   Method='GET';  ReqFields=@('id','tenant_id','email') },
-    # Tenant service
-    @{ Service='tenant';   Url="$TenantUrl/v1/tenants/by-domain/apexfintech.vn"; Method='GET'; ReqFields=@('tenant_id') },
-    # CRM service
-    @{ Service='crm';      Url="$CrmUrl/v1/crm/contacts?page=1&limit=10"; Method='GET'; ReqFields=@() },
-    # Lead service
-    @{ Service='lead';     Url="$LeadUrl/v1/leads?page=1&limit=10"; Method='GET'; ReqFields=@() },
-    # Email service
-    @{ Service='email';    Url="$EmailUrl/v1/email/templates"; Method='GET'; ReqFields=@() },
-    # Notification service
-    @{ Service='notif';    Url="$NotificationUrl/v1/notifications/me"; Method='GET'; ReqFields=@() },
-    # Search service
-    @{ Service='search';   Url="$SearchUrl/v1/search?q=test"; Method='GET'; ReqFields=@() },
-    # Analytics service
-    @{ Service='analytics';Url="$AnalyticsUrl/v1/analytics/events/recent"; Method='GET'; ReqFields=@() },
-    # Meta CAPI service
-    @{ Service='meta';     Url="$MetaCapiUrl/v1/meta/health"; Method='GET'; ReqFields=@() },
-    # Billing service
-    @{ Service='billing';  Url="$BillingUrl/v1/billing/plans"; Method='GET'; ReqFields=@() },
+    @{ Svc='auth';      Url="$AuthUrl/v1/auth/me";                       Method='GET';  Fields=@('id','tenant_id','email') },
+    @{ Svc='tenant';   Url="$TenantUrl/v1/tenants/by-domain/apexfintech.vn"; Method='GET'; Fields=@('tenant_id') },
+    @{ Svc='crm';      Url="$CrmUrl/api/crm/contacts?page=1&limit=10";  Method='GET'; Fields=@() },
+    @{ Svc='lead';     Url="$LeadUrl/api/leads?page=1&limit=10";         Method='GET'; Fields=@() },
+    @{ Svc='email';    Url="$EmailUrl/v1/email/templates";               Method='GET'; Fields=@() },
+    @{ Svc='notif';    Url="$NotificationUrl/v1/notifications/me";        Method='GET'; Fields=@() },
+    @{ Svc='search';   Url="$SearchUrl/v1/search?q=test";                 Method='GET'; Fields=@() },
+    @{ Svc='analytics';Url="$AnalyticsUrl/v1/analytics/events/recent";    Method='GET'; Fields=@() },
+    @{ Svc='meta';     Url="$MetaCapiUrl/v1/meta/health";                Method='GET'; Fields=@() },
+    @{ Svc='billing';  Url="$BillingUrl/v1/billing/plans";               Method='GET'; Fields=@() }
 )
 
 Write-Host ""
 Write-Host "==> Running $($endpoints.Count) contract checks"
 foreach ($ep in $endpoints) {
-    $result = Invoke-ContractRequest -Method $ep.Method -Url $ep.Url -Headers $authHeaders -RequiredFields $ep.ReqFields
+    $result = Invoke-ContractRequest -Method $ep.Method -Url $ep.Url -Headers $authHeaders -RequiredFields $ep.Fields
     $marker = if ($result.Pass) { 'PASS' } else { 'FAIL' }
-    Write-Host ("  [{0}] {1,-7} {2}  ({3}ms, status={4})" -f $marker, $ep.Service, $ep.Url, $result.LatencyMs, $result.StatusCode)
-    if (-not $result.Pass -and $result.MissingFields.Count -gt 0) {
-        Write-Host "        missing: $($result.MissingFields -join ', ')"
-    }
+    $fieldInfo = if ($result.MissingFields.Count -gt 0) { " missing=$($result.MissingFields -join ',')" } else { '' }
+    $urlShort = $ep.Url -replace 'http[s]?://[^/]+', ''  # strip host
+    Write-Host ("  [{0,-4}] {1,-10} {2,45} {3,6}ms status={4}{5}" -f $marker, $ep.Svc, $urlShort, $result.LatencyMs, $result.StatusCode, $fieldInfo)
 }
 
-# Step 3 — write results
-$logDir = Join-Path $PSScriptRoot '..' 'logs'
-if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir | Out-Null }
+# ---- Write results ----
+# Determine logs dir relative to script location
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = if ($scriptDir -match 'scripts[/\\]?$') { $scriptDir -replace '[/\\]scripts$', '' } else { (Get-Location).Path }
+$logDir = Join-Path $repoRoot 'logs'
+if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
 $txt = Join-Path $logDir 'wsk-contract.txt'
 $json = Join-Path $logDir 'wsk-contract-results.json'
 
-@"
-WS-K Contract Validation Results
+"WS-K Contract Validation Results
 ================================
 Run:    $(Get-Date -Format 'o')
-Auth:   $AuthUrl (user: $TestEmail, tenant: $TenantSlug)
+Auth:   $AuthUrl  User: $TestEmail  Tenant: $TenantSlug
 
-SUMMARY: $($Script:Passed) passed, $($Script:Failed) failed (out of $($endpoints.Count))
+SUMMARY: $($Script:Passed) passed, $($Script:Failed) failed (of $($endpoints.Count))
 
-DETAILS:
-"@ | Set-Content $txt
+DETAILS:" | Set-Content $txt
 
-$Script:Results | ForEach-Object {
-    $marker = if ($_.Pass) { 'PASS' } else { 'FAIL' }
-    $line = "[$marker] $($_.Method) $($_.Url)  status=$($_.StatusCode)  latency=$($_.LatencyMs)ms"
-    if ($_.MissingFields) { $line += "  missing=[$($_.MissingFields)]" }
-    $line | Add-Content $txt
+foreach ($r in $Script:Results) {
+    $marker = if ($r.Pass) { 'PASS' } else { 'FAIL' }
+    $line = "[{0,-4}] {1} {2}  status={3}  latency={4}ms" -f $marker, $r.Method, $r.Url, $r.StatusCode, $r.LatencyMs
+    if ($r.MissingFields) { $line += "  missing=[$($r.MissingFields)]" }
+    Add-Content -Path $txt -Value $line
 }
 
 $Script:Results | ConvertTo-Json -Depth 5 | Set-Content $json
 
 Write-Host ""
-Write-Host "==> RESULTS: $($Script:Passed) passed, $($Script:Failed) failed"
-Write-Host "==> Saved to: $txt"
-Write-Host "==> JSON:     $json"
+Write-Host "==> $Script:Passed passed, $Script:Failed failed  |  Results: $txt"
+Write-Host "==> JSON: $json"
 if ($Script:Failed -gt 0) { exit 1 } else { exit 0 }

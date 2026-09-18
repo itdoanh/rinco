@@ -17,15 +17,24 @@
 
 [CmdletBinding()]
 param(
-    [int]$K6Vus = 10,           # scaled-down VU count
+    [string]$K6Vus = 10,
     [int]$K6Duration = 30,      # seconds
     [switch]$SkipK6,            # skip load tests (faster nightly)
     [switch]$SkipFrontend       # skip npm audit (faster nightly)
 )
 
 $ErrorActionPreference = 'Continue'
-$root = Split-Path -Parent $PSScriptRoot
-Set-Location $root
+# Resolve $root to the RINCO repo root.  When running as a file, we can
+# use the known parent of the scripts/ directory.  If running interactively
+# without a script path, fall back to $PWD.
+$root = $PWD.Path
+# Detect if we're running from within the scripts/ directory.
+$resolved = if ($root -match 'scripts[/\\]?$') {
+    $root -replace '[/\\]scripts[/\\]?$', ''
+} else {
+    $root
+}
+Set-Location $resolved
 
 $date = Get-Date -Format 'yyyy-MM-dd'
 $logFile = Join-Path $root 'logs' "wsk-nightly-$date.txt"
@@ -129,9 +138,9 @@ foreach ($svc in $rustServices) {
 if (-not $SkipK6) {
     Write-Section "5. k6 baseline load tests (VUs=$K6Vus, dur=$($K6Duration)s)"
     $k6Scripts = @(
-        @{ Script = 'wsk-k6-auth.yml'; VUs = $K6Vus },
-        @{ Script = 'wsk-k6-crm-read.yml'; VUs = [Math]::Max(5, $K6Vus / 2) },
-        @{ Script = 'wsk-k6-lead-ingest.yml'; VUs = [Math]::Max(5, $K6Vus / 2) },
+        @{ Script = 'wsk-k6-auth.yml'; VUs = $K6VUs },
+        @{ Script = 'wsk-k6-crm-read.yml'; VUs = [Math]::Max(5, [int]($K6VUs / 2)) },
+        @{ Script = 'wsk-k6-lead-ingest.yml'; VUs = [Math]::Max(5, [int]($K6VUs / 2)) }
     )
     foreach ($k6 in $k6Scripts) {
         $scriptPath = Join-Path $root "scripts/$($k6.Script)"
