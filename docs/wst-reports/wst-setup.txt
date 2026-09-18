@@ -1,0 +1,30 @@
+[WS-T global-setup] 2026-09-18T04:26:53.006Z
+  landing http://localhost:3000 -> status=200
+  admin-portal http://localhost:3001 -> status=404
+  tenant-site http://localhost:3002 -> status=404
+  meeting-ui http://localhost:3003 -> status=200
+[WS-T global-setup] 2026-09-18T04:32:39.221Z
+  landing http://localhost:3000 -> status=200
+  admin-portal http://localhost:3001 -> status=404
+  tenant-site http://localhost:3002 -> status=404
+  meeting-ui http://localhost:3003 -> status=200
+[WS-T global-setup] 2026-09-18T04:39:52.304Z
+  landing http://localhost:3000 -> status=200
+  admin-portal http://localhost:3001 -> status=404
+  tenant-site http://localhost:3002 -> status=404
+  meeting-ui http://localhost:3003 -> status=200
+[WS-T global-setup] 2026-09-18T04:43:09.998Z
+  landing http://localhost:3000 -> status=200
+  admin-portal http://localhost:3001 -> status=404
+  tenant-site http://localhost:3002 -> status=404
+  meeting-ui http://localhost:3003 -> status=200
+[WS-T global-setup] 2026-09-18T04:43:39.274Z
+  landing http://localhost:3000 -> status=200
+  admin-portal http://localhost:3001 -> status=404
+  tenant-site http://localhost:3002 -> status=404
+  meeting-ui http://localhost:3003 -> status=200
+[WS-T global-setup] 2026-09-18T04:49:36.967Z
+  landing http://localhost:3000 -> status=200
+  admin-portal http://localhost:3001 -> status=404
+  tenant-site http://localhost:3002 -> status=404
+  meeting-ui http://localhost:3003 -> status=200

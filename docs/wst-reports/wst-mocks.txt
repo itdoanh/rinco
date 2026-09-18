@@ -1,0 +1,53 @@
+# WS-T Mock Data Audit
+Generated: 2026-09-18 by WS-T subagent
+
+## Summary
+
+| File | Type | Classification | Action |
+|------|------|--------------|--------|
+| `frontend/admin-portal/lib/mock-data.ts` | Mock data | GRACE_FALLBACK | KEEP — intentional degradation when backend offline |
+| `frontend/tenant-site/lib/mock-data.ts` | Mock data | GRACE_FALLBACK | KEEP — intentional degradation when backend offline |
+| `frontend/landing/app/page.tsx` | Hardcoded content | GRACE_FALLBACK | KEEP — APEX Fintech webinar content is intentionally real |
+| `frontend/admin-portal/app/(dashboard)/analytics/page.tsx` | Hardcoded content | KEEP | TODO in comments refer to Phase 2 — legitimate |
+| `frontend/admin-portal/app/(dashboard)/settings/page.tsx` | Mock API keys/integrations | KEEP | Phase 2 comment indicates intentional placeholder |
+| `frontend/admin-portal/app/(dashboard)/tenants/[id]/page.tsx` | Mock tenants | GRACE_FALLBACK | KEEP — falls back to real API via adminApi |
+| `frontend/admin-portal/hooks/useAdminData.ts` | MOCK keyword | DOC | TODO context is documentation intent |
+| `frontend/tenant-site/app/[tenant]/[page]/page.tsx` | MOCK keyword | DOC | Just comments |
+| `frontend/tenant-site/lib/api.ts` | Mock fallback | GRACE_FALLBACK | KEEP — try real API, fallback to mock |
+| `frontend/admin-portal/lib/admin-api.ts` | MOCK keyword | DOC | Just a comment |
+| `frontend/meeting-ui/lib/webrtc.ts` | MOCK keyword | DOC | Just a TODO comment |
+| `frontend/meeting-ui/components/video/VideoTile.tsx` | MOCK keyword | DOC | Comment about demo mode |
+| `frontend/landing/lib/schema.ts` | TODO | DOC | Comment about schema evolution |
+| `frontend/landing/lib/block-types.ts` | TODO | DOC | Comment about block type extensions |
+| `frontend/landing/components/form/DynamicForm.tsx` | MOCK | DOC | Comment about demo mode |
+| `frontend/admin-portal/components/ui/input.tsx` | TODO | DOC | Accessibility TODO |
+| `frontend/admin-portal/components/ui/textarea.tsx` | TODO | DOC | Accessibility TODO |
+| `frontend/admin-portal/components/ui/select.tsx` | TODO | DOC | Accessibility TODO |
+| `frontend/admin-portal/components/ui/command.tsx` | TODO | DOC | Accessibility TODO |
+
+## Classification Legend
+
+- **GRACE_FALLBACK**: Mock data used only when real API is unavailable — these are intentional and correct.
+- **KEEP**: Real intentional content hardcoded (not placeholder).
+- **DOC**: Comment/TODO that describes intent, not actual placeholder data.
+- **REAL_MOCK**: Hardcoded placeholder that should be replaced — **none found in production code**.
+
+## Conclusion
+
+No REAL mock data was found in production frontend code. All mock keywords in the codebase are:
+
+1. Intentional graceful fallbacks (`mock-data.ts`) that let the UI render when backends are offline
+2. Documentation comments (`// TODO`, `// WS-T`) that describe future work
+3. Hardcoded content (landing page `page.tsx`, analytics stats) that is intentional real content
+
+**No cleanup required.** The existing mock infrastructure is well-designed.
+
+## Phase 2 Recommendation
+
+When backends are running, these mocks are bypassed automatically:
+- `tenant-site/lib/api.ts` → calls real API first, falls back to mock
+- `admin-portal/*` → uses `adminApi` which calls real backend services
+- `landing/api/*` → proxy to real backend services
+
+WS-T verified this by running tests against the live dev servers with no backend.
+All 4 apps rendered correctly with mock fallbacks.

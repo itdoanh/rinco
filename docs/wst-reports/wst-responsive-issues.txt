@@ -1,0 +1,33 @@
+# WS-T Responsive Audit Results
+Generated: 2026-09-18
+
+## Test Results: 9/11 passed
+
+### Known Responsive Issues (horizontal overflow detected)
+
+| Test | Viewport | overflow px | Status |
+|------|----------|------------|--------|
+| landing homepage | iPhone SE (375x667) | 100px | UX BUG — needs CSS fix |
+| landing renders | iPad (768x1024) | 103px | UX BUG — needs CSS fix |
+| admin login | iPhone SE (375x667) | PASS | ✅ |
+| tenant site | iPhone SE (375x667) | PASS | ✅ |
+| meeting root | iPhone SE (375x667) | PASS | ✅ |
+| admin dashboard | iPad (768x1024) | PASS | ✅ |
+| tenant demo hub | iPad (768x1024) | PASS | ✅ |
+| landing desktop | 1440x900 | PASS | ✅ |
+| admin dashboard desktop | 1440x900 | PASS | ✅ |
+| meeting desktop | 1440x900 | PASS | ✅ |
+| tenant apexfintech desktop | 1440x900 | PASS | ✅ |
+
+## Recommendations
+
+### BUG-1: Landing page horizontal overflow on mobile
+- **Root cause**: Block content (e.g. wide tables, long hero text) overflows viewport width
+- **Fix**: Add `overflow-x: hidden` or `max-width: 100%` to main container blocks
+- **Affected**: `frontend/landing/app/page.tsx` + `frontend/landing/components/blocks/`
+
+### BUG-2: Landing page horizontal overflow on tablet
+- **Root cause**: Same as BUG-1, likely the stats or features grid
+- **Fix**: Same as BUG-1
+
+## Threshold: 10px tolerance (browser scrollbar rounding included)
