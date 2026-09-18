@@ -69,6 +69,9 @@ pub enum ServerMessage {
 }
 
 /// Drive one WebSocket connection.
+// WS-K: VULN-002 CRITICAL — `initial_user` comes from URL/query with no
+// token verification; `ClientMessage::Join` lets the client pick
+// `user_id` AND `tenant_id` freely.  See logs/wsk-security-audit.txt.
 pub async fn handle_socket(socket: WebSocket, ctx: Arc<SfuContext>, initial_room: Option<Uuid>, initial_user: Option<Uuid>) {
     let (mut sink, mut stream) = socket.split();
     let mut state = ConnectionState::default();
@@ -116,6 +119,12 @@ struct ConnectionState {
     event_rx: Option<tokio::sync::broadcast::Receiver<RoomEvent>>,
 }
 
+// WS-K: VULN-002 CRITICAL — `ClientMessage::Join` carries `user_id`
+// AND `tenant_id` from the client.  No token verification, no
+// check that the user actually belongs to that tenant.  An attacker
+// can join any room as any user.  Fix: derive user_id from JWT and
+// verify tenant_id claim matches room's tenant before letting the
+// participant join.  See logs/wsk-security-audit.txt.
 async fn handle_text(
     ctx: &Arc<SfuContext>,
     state: &mut ConnectionState,

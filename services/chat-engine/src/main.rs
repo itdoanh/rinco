@@ -91,6 +91,14 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+// WS-K: VULN-001 CRITICAL — this upgrade path accepts any user_id from
+// the URL or `?user_id=` query string with zero authentication.  An
+// attacker who knows a victim's UUID can open a WebSocket and receive
+// their private messages, publish messages as them, and drive their
+// presence state.  Fix: require a PASETO bearer token, bind the
+// connection's user_id to the token's `uid` claim, drop the URL/query
+// `user_id` parameter.  See logs/wsk-security-audit.txt for full
+// reproduction.
 async fn ws_upgrade(
     axum::extract::State(ctx): axum::extract::State<Arc<AppContext>>,
     axum::extract::Path(user_id): axum::extract::Path<Uuid>,

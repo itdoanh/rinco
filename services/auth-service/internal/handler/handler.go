@@ -189,13 +189,26 @@ func verifyPassword(encoded, password string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// WS-K: VULN-006 HIGH — `string(a) == string(b)` is variable-time.
+	// Use subtle.ConstantTimeCompare (which the real auth-service
+	// already does correctly in cmd/main.go: `verifyPwd`).  Left as-is
+	// only because this entire file is dead code (see VULN-004).
 	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
-	return string(want) == string(got), nil // Use subtle.ConstantTimeCompare in production
+	return string(want) == string(got), nil
 }
 
 // =============================================================================
 // HTTP handlers (stub implementations)
 // =============================================================================
+
+// WS-K: VULN-004 CRITICAL — this Login/Register/Refresh in the legacy
+// `internal/handler` package is DEAD CODE: the real auth handlers live
+// in cmd/main.go.  However this package is exported and importable.
+// If anyone wires these handlers into a router they would (a) accept
+// any `tenant_id` from the request body (tenant confusion) and
+// (b) use the broken `string == string` password compare (see
+// VULN-006 below).  Do NOT import `internal/handler` from this
+// service — use `cmd/main.go`'s server.  TODO: delete this file.
 
 func (s *Server) Login(c echo.Context) error {
 	var req loginRequest

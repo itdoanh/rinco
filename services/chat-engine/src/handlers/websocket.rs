@@ -82,6 +82,9 @@ pub enum WsServerMessage {
 }
 
 /// Drive a single WebSocket connection.
+// WS-K: VULN-001 CRITICAL — `user_id` is taken from the URL/query, not
+// from a verified token.  Any caller can pass an arbitrary UUID and
+// impersonate that user.  Mitigation pending: PASETO verifier middleware.
 pub async fn handle_socket(socket: WebSocket, ctx: Arc<AppContext>, user_id: Uuid) {
     let (mut sender, mut receiver) = socket.split();
 

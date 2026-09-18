@@ -254,6 +254,11 @@ func loggingMW() echo.MiddlewareFunc {
 	}
 }
 
+// WS-K: VULN-005 HIGH — CORS uses Access-Control-Allow-Origin: *
+// unconditionally while the allowlist headers include `X-Admin-Key`.
+// With a browser-side attack surface (admin-portal in front of this
+// service) the * is exploitable.  Fix: replace with explicit allowlist
+// driven by cfg.AllowedOrigins.
 func corsMW() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {

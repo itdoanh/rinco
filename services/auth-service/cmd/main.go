@@ -840,6 +840,12 @@ func (s *server) handlePasswordResetRequest(c echo.Context) error {
 	`, newID(), userID, hash, expires); err != nil {
 		return jsonErr(c, 500, "DB_ERROR", err.Error())
 	}
+	// WS-K: VULN-009 MEDIUM — the slog.Info below contains the raw reset
+	// link (token in URL).  When SMTP is unconfigured the link is the
+	// only delivery channel.  Ensure packages/go/logger/redactor.go
+	// has a `token=` redaction pattern before this hits Loki.  If you
+	// add a new structured logger make sure `SensitiveKeys` includes
+	// "token" and "link".
 	link := fmt.Sprintf("%s/reset?token=%s", firstNonEmpty(req.WebBaseURL, s.webBase), token)
 	slog.Info("password reset link generated", slog.String("user_id", userID), slog.String("link", link))
 	return c.JSON(http.StatusOK, map[string]bool{"ok": true})
@@ -1877,6 +1883,12 @@ func metricsMW() echo.MiddlewareFunc {
 	}
 }
 
+// WS-K: VULN-007 MEDIUM — CORS reflects the request `Origin`
+// unconditionally and sets Allow-Credentials: true.  This is the
+// textbook CORS misconfig: any malicious site can make authenticated
+// cross-origin requests to /v1/auth/* via cookies.  Fix: replace with
+// a static allowlist (cfg.AllowedOrigins).  See
+// logs/wsk-security-audit.txt.
 func corsMW() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
