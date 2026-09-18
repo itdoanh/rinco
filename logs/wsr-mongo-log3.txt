@@ -1,0 +1,26 @@
+﻿docker : BadValue: security.keyFile is required when authorization is enabled with replica sets
+At C:\Users\doanh\AppData\Local\Temp\ps-script-478a362b-c07a-4d2b-90e5-61d1891096f3.ps1:93 char:1
++ docker logs rinco-mongodb --tail 20 2>&1 | Out-File -FilePath "C:\cod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (BadValue: secur...th replica sets:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+try 'mongod --help' for more information
+{"t":{"$date":"2026-09-18T04:45:12.318Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+{"t":{"$date":"2026-09-18T04:45:38.317Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+{"t":{"$date":"2026-09-18T04:46:30.043Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+{"t":{"$date":"2026-09-18T04:47:30.461Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+{"t":{"$date":"2026-09-18T04:48:31.353Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+{"t":{"$date":"2026-09-18T04:49:31.818Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}

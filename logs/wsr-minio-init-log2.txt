@@ -1,0 +1,12 @@
+﻿Added `rinco` successfully.
+==> Applying CORS / region defaults
+Added `rinco` successfully.
+==> Applying CORS / region defaults
+docker : mc: <ERROR> Unable to set anonymous `none` for `rinco`. Bucket name cannot be empty.
+At C:\Users\doanh\AppData\Local\Temp\ps-script-8c118fd1-65d3-43c3-910a-3424d282a773.ps1:93 char:26
++ Start-Sleep -Seconds 10; docker logs rinco-minio-init 2>&1 | Out-File ...
++                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (mc: <ERROR> Una...annot be empty.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+/scripts/createbuckets.sh: line 28: jq: command not found

@@ -1,0 +1,255 @@
+﻿[
+    {
+        "Id": "d3b363e9b550be76c994e25d350cb2d735ad36b40c84ad0c091a0af0b38939b2",
+        "Created": "2026-09-18T04:40:08.870351957Z",
+        "Path": "/bin/sh",
+        "Args": [
+            "/scripts/createbuckets.sh"
+        ],
+        "State": {
+            "Status": "exited",
+            "Running": false,
+            "Paused": false,
+            "Restarting": false,
+            "OOMKilled": false,
+            "Dead": false,
+            "Pid": 0,
+            "ExitCode": 1,
+            "Error": "",
+            "StartedAt": "2026-09-18T04:40:40.986824251Z",
+            "FinishedAt": "2026-09-18T04:40:50.908009959Z"
+        },
+        "Image": "sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727",
+        "ResolvConfPath": "/var/lib/docker/containers/d3b363e9b550be76c994e25d350cb2d735ad36b40c84ad0c091a0af0b38939b2/resolv.conf",
+        "HostnamePath": "/var/lib/docker/containers/d3b363e9b550be76c994e25d350cb2d735ad36b40c84ad0c091a0af0b38939b2/hostname",
+        "HostsPath": "/var/lib/docker/containers/d3b363e9b550be76c994e25d350cb2d735ad36b40c84ad0c091a0af0b38939b2/hosts",
+        "LogPath": "/var/lib/docker/containers/d3b363e9b550be76c994e25d350cb2d735ad36b40c84ad0c091a0af0b38939b2/d3b363e9b550be76c994e25d350cb2d735ad36b40c84ad0c091a0af0b38939b2-json.log",
+        "Name": "/rinco-minio-init",
+        "RestartCount": 0,
+        "Driver": "overlayfs",
+        "Platform": "linux",
+        "MountLabel": "",
+        "ProcessLabel": "",
+        "AppArmorProfile": "",
+        "ExecIDs": null,
+        "HostConfig": {
+            "Binds": [
+                "C:\\code\\RINCO\\infra\\minio\\createbuckets.sh:/scripts/createbuckets.sh:ro",
+                "C:\\code\\RINCO\\infra\\minio\\buckets.json:/scripts/buckets.json:ro"
+            ],
+            "ContainerIDFile": "",
+            "LogConfig": {
+                "Type": "json-file",
+                "Config": {}
+            },
+            "NetworkMode": "rinco-network",
+            "PortBindings": {},
+            "RestartPolicy": {
+                "Name": "no",
+                "MaximumRetryCount": 0
+            },
+            "AutoRemove": false,
+            "VolumeDriver": "",
+            "VolumesFrom": null,
+            "ConsoleSize": [
+                0,
+                0
+            ],
+            "CapAdd": null,
+            "CapDrop": null,
+            "CgroupnsMode": "private",
+            "Dns": null,
+            "DnsOptions": null,
+            "DnsSearch": null,
+            "ExtraHosts": [],
+            "GroupAdd": null,
+            "IpcMode": "private",
+            "Cgroup": "",
+            "Links": null,
+            "OomScoreAdj": 0,
+            "PidMode": "",
+            "Privileged": false,
+            "PublishAllPorts": false,
+            "ReadonlyRootfs": false,
+            "SecurityOpt": null,
+            "UTSMode": "",
+            "UsernsMode": "",
+            "ShmSize": 67108864,
+            "Runtime": "runc",
+            "Isolation": "",
+            "CpuShares": 0,
+            "Memory": 0,
+            "NanoCpus": 0,
+            "CgroupParent": "",
+            "BlkioWeight": 0,
+            "BlkioWeightDevice": null,
+            "BlkioDeviceReadBps": null,
+            "BlkioDeviceWriteBps": null,
+            "BlkioDeviceReadIOps": null,
+            "BlkioDeviceWriteIOps": null,
+            "CpuPeriod": 0,
+            "CpuQuota": 0,
+            "CpuRealtimePeriod": 0,
+            "CpuRealtimeRuntime": 0,
+            "CpusetCpus": "",
+            "CpusetMems": "",
+            "Devices": null,
+            "DeviceCgroupRules": null,
+            "DeviceRequests": null,
+            "MemoryReservation": 0,
+            "MemorySwap": 0,
+            "MemorySwappiness": null,
+            "OomKillDisable": null,
+            "PidsLimit": null,
+            "Ulimits": null,
+            "CpuCount": 0,
+            "CpuPercent": 0,
+            "IOMaximumIOps": 0,
+            "IOMaximumBandwidth": 0,
+            "MaskedPaths": [
+                "/proc/acpi",
+                "/proc/asound",
+                "/proc/interrupts",
+                "/proc/kcore",
+                "/proc/keys",
+                "/proc/latency_stats",
+                "/proc/sched_debug",
+                "/proc/scsi",
+                "/proc/timer_list",
+                "/proc/timer_stats",
+                "/sys/devices/virtual/powercap",
+                "/sys/firmware"
+            ],
+            "ReadonlyPaths": [
+                "/proc/bus",
+                "/proc/fs",
+                "/proc/irq",
+                "/proc/sys",
+                "/proc/sysrq-trigger"
+            ]
+        },
+        "Storage": {
+            "RootFS": {
+                "Snapshot": {
+                    "Name": "overlayfs"
+                }
+            }
+        },
+        "Mounts": [
+            {
+                "Type": "bind",
+                "Source": "C:\\code\\RINCO\\infra\\minio\\createbuckets.sh",
+                "Destination": "/scripts/createbuckets.sh",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            },
+            {
+                "Type": "bind",
+                "Source": "C:\\code\\RINCO\\infra\\minio\\buckets.json",
+                "Destination": "/scripts/buckets.json",
+                "Mode": "ro",
+                "RW": false,
+                "Propagation": "rprivate"
+            }
+        ],
+        "Config": {
+            "Hostname": "d3b363e9b550",
+            "Domainname": "",
+            "User": "",
+            "AttachStdin": false,
+            "AttachStdout": true,
+            "AttachStderr": true,
+            "Tty": false,
+            "OpenStdin": false,
+            "StdinOnce": false,
+            "Env": [
+                "TZ=Asia/Ho_Chi_Minh",
+                "MINIO_ENDPOINT=http://minio:9000",
+                "MINIO_ROOT_USER=rinco",
+                "MINIO_ROOT_PASSWORD=rinco_dev_password",
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+            ],
+            "Cmd": null,
+            "Image": "minio/mc:latest",
+            "Volumes": null,
+            "WorkingDir": "/",
+            "Entrypoint": [
+                "/bin/sh",
+                "/scripts/createbuckets.sh"
+            ],
+            "Labels": {
+                "architecture": "x86_64",
+                "build-date": "2025-08-06T08:12:37",
+                "com.docker.compose.config-hash": "978d4472d0c4fc53f873e038d7708f8004b259119798babfdcd8bcd3ea00c3d8",
+                "com.docker.compose.container-number": "1",
+                "com.docker.compose.depends_on": "minio:service_healthy:false",
+                "com.docker.compose.image": "sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727",
+                "com.docker.compose.oneoff": "False",
+                "com.docker.compose.project": "infra",
+                "com.docker.compose.project.config_files": "C:\\code\\RINCO\\infra\\docker-compose.yml",
+                "com.docker.compose.project.working_dir": "C:\\code\\RINCO\\infra",
+                "com.docker.compose.service": "minio-init",
+                "com.docker.compose.version": "5.1.3",
+                "com.redhat.component": "ubi9-micro-container",
+                "com.redhat.license_terms": "https://www.redhat.com/en/about/red-hat-end-user-license-agreements#UBI",
+                "description": "Very small image which doesn't install the package manager.",
+                "distribution-scope": "public",
+                "io.buildah.version": "1.40.1",
+                "io.k8s.description": "Very small image which doesn't install the package manager.",
+                "io.k8s.display-name": "Red Hat Universal Base Image 9 Micro",
+                "io.openshift.expose-services": "",
+                "maintainer": "MinIO Inc \u003cdev@min.io\u003e",
+                "name": "ubi9/ubi-micro",
+                "release": "1754467928",
+                "summary": "ubi9 micro image",
+                "url": "https://catalog.redhat.com/en/search?searchType=containers",
+                "vcs-ref": "32d8e5209f029a1fb7235308ab32253bface1001",
+                "vcs-type": "git",
+                "vendor": "Red Hat, Inc.",
+                "version": "9.6"
+            },
+            "StopTimeout": 1
+        },
+        "NetworkSettings": {
+            "SandboxID": "",
+            "SandboxKey": "",
+            "Ports": {},
+            "Networks": {
+                "rinco-network": {
+                    "IPAMConfig": null,
+                    "Links": null,
+                    "Aliases": [
+                        "rinco-minio-init",
+                        "minio-init"
+                    ],
+                    "DriverOpts": null,
+                    "GwPriority": 0,
+                    "NetworkID": "a32b3d74bf5860d69dc886325c0aa469d568b4a613506ef81f848a8b5fc8df06",
+                    "EndpointID": "",
+                    "Gateway": "",
+                    "IPAddress": "",
+                    "MacAddress": "",
+                    "IPPrefixLen": 0,
+                    "IPv6Gateway": "",
+                    "GlobalIPv6Address": "",
+                    "GlobalIPv6PrefixLen": 0,
+                    "DNSNames": [
+                        "rinco-minio-init",
+                        "minio-init",
+                        "d3b363e9b550"
+                    ]
+                }
+            }
+        },
+        "ImageManifestDescriptor": {
+            "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+            "digest": "sha256:eb4ea9884b77704230e2423e9004d2fa738dc272876b9cc41a297d29443b8780",
+            "size": 1490,
+            "platform": {
+                "architecture": "amd64",
+                "os": "linux"
+            }
+        }
+    }
+]

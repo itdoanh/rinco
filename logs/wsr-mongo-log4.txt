@@ -1,0 +1,16 @@
+﻿docker : Error parsing command line: unrecognised option '--noIndexBuildRetry'
+At C:\Users\doanh\AppData\Local\Temp\ps-script-3992e076-ec21-4b37-89ff-55b4ee42cdf7.ps1:93 char:1
++ docker logs rinco-mongodb --tail 10 2>&1 | Out-File -FilePath "C:\cod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Error parsing c...ndexBuildRetry':String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+try 'mongod --help' for more information
+Error parsing command line: unrecognised option '--noIndexBuildRetry'
+try 'mongod --help' for more information
+Error parsing command line: unrecognised option '--noIndexBuildRetry'
+try 'mongod --help' for more information
+Error parsing command line: unrecognised option '--noIndexBuildRetry'
+try 'mongod --help' for more information
+Error parsing command line: unrecognised option '--noIndexBuildRetry'
+try 'mongod --help' for more information

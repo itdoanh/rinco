@@ -1,0 +1,5 @@
+﻿2026-09-18T04:44:35.968663Z  INFO qdrant::actix: Qdrant HTTP listening on 6333    
+2026-09-18T04:44:35.968767Z  INFO actix_server::builder: Starting 8 workers
+2026-09-18T04:44:35.970509Z  INFO qdrant::tonic: Qdrant gRPC listening on 6334    
+2026-09-18T04:44:35.970570Z  INFO qdrant::tonic: TLS disabled for gRPC API    
+2026-09-18T04:44:35.972891Z  INFO actix_server::server: Actix runtime found; starting in Actix runtime

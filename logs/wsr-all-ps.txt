@@ -1,0 +1,14 @@
+﻿NAMES               STATUS
+rinco-clickhouse    Up About a minute (health: starting)
+rinco-scylla        Up 3 minutes (healthy)
+rinco-mongodb       Up 4 minutes (healthy)
+rinco-qdrant        Up 8 minutes (healthy)
+rinco-meilisearch   Up 8 minutes (healthy)
+rinco-nats          Up 16 minutes (healthy)
+rinco-minio         Up 16 minutes (healthy)
+rinco-postgres      Up 27 minutes (healthy)
+rinco-loki          Up 27 minutes
+rinco-grafana       Up 27 minutes
+rinco-prometheus    Up 27 minutes
+rinco-valkey        Up 27 minutes (healthy)
+rinco-mailhog       Up 27 minutes

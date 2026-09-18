@@ -1,0 +1,9 @@
+﻿NAMES              STATUS                   IMAGE
+rinco-postgres     Up 7 minutes (healthy)   postgres:16.4-alpine
+rinco-nats         Up 7 minutes (healthy)   nats:2.10.17-alpine
+rinco-loki         Up 7 minutes             grafana/loki:2.9.4
+rinco-grafana      Up 7 minutes             grafana/grafana:10.4.2
+rinco-prometheus   Up 7 minutes             prom/prometheus:v2.53.0
+rinco-minio        Up 7 minutes (healthy)   minio/minio:latest
+rinco-valkey       Up 7 minutes (healthy)   valkey/valkey:7.2.5-alpine
+rinco-mailhog      Up 7 minutes             mailhog/mailhog:v1.0.1

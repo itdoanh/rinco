@@ -1,0 +1,13 @@
+﻿NAMES               STATUS                    PORTS
+rinco-scylla        Up 47 seconds (healthy)   0.0.0.0:7000-7001->7000-7001/tcp, [::]:7000-7001->7000-7001/tcp, 0.0.0.0:9042->9042/tcp, [::]:9042->9042/tcp
+rinco-mongodb       Up 2 minutes (healthy)    0.0.0.0:27017->27017/tcp, [::]:27017->27017/tcp
+rinco-qdrant        Up 6 minutes (healthy)    0.0.0.0:6333-6334->6333-6334/tcp, [::]:6333-6334->6333-6334/tcp
+rinco-meilisearch   Up 6 minutes (healthy)    0.0.0.0:7700->7700/tcp, [::]:7700->7700/tcp
+rinco-nats          Up 14 minutes (healthy)   0.0.0.0:4222->4222/tcp, [::]:4222->4222/tcp, 0.0.0.0:6222->6222/tcp, [::]:6222->6222/tcp, 0.0.0.0:8222->8222/tcp, [::]:8222->8222/tcp
+rinco-minio         Up 14 minutes (healthy)   0.0.0.0:9000-9001->9000-9001/tcp, [::]:9000-9001->9000-9001/tcp
+rinco-postgres      Up 25 minutes (healthy)   0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp
+rinco-loki          Up 25 minutes             0.0.0.0:3100->3100/tcp, [::]:3100->3100/tcp
+rinco-grafana       Up 25 minutes             0.0.0.0:13000->3000/tcp, [::]:13000->3000/tcp
+rinco-prometheus    Up 25 minutes             0.0.0.0:9090->9090/tcp, [::]:9090->9090/tcp
+rinco-valkey        Up 25 minutes (healthy)   0.0.0.0:6379->6379/tcp, [::]:6379->6379/tcp
+rinco-mailhog       Up 25 minutes             0.0.0.0:1025->1025/tcp, [::]:1025->1025/tcp, 0.0.0.0:8025->8025/tcp, [::]:8025->8025/tcp

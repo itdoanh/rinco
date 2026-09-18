@@ -1,0 +1,27 @@
+﻿command used: "/usr/bin/scylla --log-to-syslog 0 --log-to-stdout 1 --network-stack posix --developer-mode=1 --memory 2G --smp 2 --overprovisioned --listen-address 172.23.0.4 --rpc-address 172.23.0.4 --seed-provider-parameters seeds=172.23.0.4 --alternator-address 172.23.0.4 --blocked-reactor-notify-ms 999999999 --compaction-throughput-mb-per-sec=128"
+pid: 311
+parsed command line options: [log-to-syslog, (positional) 0, log-to-stdout, (positional) 1, network-stack, (positional) posix, developer-mode: 1, memory, (positional) 2G, smp, (positional) 2, overprovisioned, listen-address: 172.23.0.4, rpc-address: 172.23.0.4, seed-provider-parameters: seeds=172.23.0.4, alternator-address: 172.23.0.4, blocked-reactor-notify-ms, (positional) 999999999, compaction-throughput-mb-per-sec: 128]
+2026-09-18 11:41:58,042 WARN exited: scylla (exit status 1; not expected)
+2026-09-18 11:42:00,046 INFO spawned: 'scylla' with pid 322
+docker : Could not initialize seastar: std::runtime_error (insufficient physical memory: needed 2042626048 available 
+1311899648)
+At C:\Users\doanh\AppData\Local\Temp\ps-script-3edc475b-403a-4d4f-830a-f52c8ae74b67.ps1:93 char:1
++ docker logs rinco-scylla --tail 20 2>&1 | Out-File -FilePath "C:\code ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Could not initi...ble 1311899648):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+Scylla version 6.2.0-0.20241013.b8a9fd4e49e8 with build-id a61f658b0408ba10663812f7a3b4d6aea7714fac starting ...
+Could not initialize seastar: std::runtime_error (insufficient physical memory: needed 2042626048 available 1311899648)
+command used: "/usr/bin/scylla --log-to-syslog 0 --log-to-stdout 1 --network-stack posix --developer-mode=1 --memory 2G --smp 2 --overprovisioned --listen-address 172.23.0.4 --rpc-address 172.23.0.4 --seed-provider-parameters seeds=172.23.0.4 --alternator-address 172.23.0.4 --blocked-reactor-notify-ms 999999999 --compaction-throughput-mb-per-sec=128"
+pid: 322
+parsed command line options: [log-to-syslog, (positional) 0, log-to-stdout, (positional) 1, network-stack, (positional) posix, developer-mode: 1, memory, (positional) 2G, smp, (positional) 2, overprovisioned, listen-address: 172.23.0.4, rpc-address: 172.23.0.4, seed-provider-parameters: seeds=172.23.0.4, alternator-address: 172.23.0.4, blocked-reactor-notify-ms, (positional) 999999999, compaction-throughput-mb-per-sec: 128]
+2026-09-18 11:42:00,832 WARN exited: scylla (exit status 1; not expected)
+2026-09-18 11:42:03,843 INFO spawned: 'scylla' with pid 333
+Scylla version 6.2.0-0.20241013.b8a9fd4e49e8 with build-id a61f658b0408ba10663812f7a3b4d6aea7714fac starting ...
+command used: "/usr/bin/scylla --log-to-syslog 0 --log-to-stdout 1 --network-stack posix --developer-mode=1 --memory 2G --smp 2 --overprovisioned --listen-address 172.23.0.4 --rpc-address 172.23.0.4 --seed-provider-parameters seeds=172.23.0.4 --alternator-address 172.23.0.4 --blocked-reactor-notify-ms 999999999 --compaction-throughput-mb-per-sec=128"
+pid: 333
+parsed command line options: [log-to-syslog, (positional) 0, log-to-stdout, (positional) 1, network-stack, (positional) posix, developer-mode: 1, memory, (positional) 2G, smp, (positional) 2, overprovisioned, listen-address: 172.23.0.4, rpc-address: 172.23.0.4, seed-provider-parameters: seeds=172.23.0.4, alternator-address: 172.23.0.4, blocked-reactor-notify-ms, (positional) 999999999, compaction-throughput-mb-per-sec: 128]
+Could not initialize seastar: std::runtime_error (insufficient physical memory: needed 2042626048 available 1311899648)
+2026-09-18 11:42:04,467 WARN exited: scylla (exit status 1; not expected)
+2026-09-18 11:42:05,477 INFO gave up: scylla entered FATAL state, too many start retries too quickly

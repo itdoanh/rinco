@@ -1,0 +1,70 @@
+﻿docker : time="2026-09-18T11:39:35+07:00" level=warning msg="C:\\code\\RINCO\\infra\\docker-compose.yml: the attribute 
+`version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+At C:\Users\doanh\AppData\Local\Temp\ps-script-b685ce20-b666-48e1-aa4a-bb79e017118f.ps1:93 char:19
++ ... code\RINCO; docker compose -p infra -f infra/docker-compose.yml up -d ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (time="2026-09-1...tial confusion":String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ Volume infra_mongodb_config Creating 
+ Volume infra_mongodb_config Created 
+ Volume infra_scylla_hints Creating 
+ Volume infra_scylla_hints Created 
+ Volume infra_scylla_data Creating 
+ Volume infra_scylla_data Created 
+ Volume infra_mongodb_data Creating 
+ Volume infra_mongodb_data Created 
+ Volume infra_clickhouse_data Creating 
+ Volume infra_clickhouse_data Created 
+ Volume infra_qdrant_data Creating 
+ Volume infra_qdrant_data Created 
+ Volume infra_meilisearch_data Creating 
+ Volume infra_meilisearch_data Created 
+ Volume infra_scylla_commitlog Creating 
+ Volume infra_scylla_commitlog Created 
+ Container rinco-clickhouse Creating 
+ Container rinco-meilisearch Creating 
+ Container rinco-minio Recreate 
+ Container rinco-qdrant Creating 
+ Container rinco-scylla Creating 
+ Container rinco-mongodb Creating 
+ Container rinco-nats Recreate 
+ Container rinco-meilisearch Created 
+ Container rinco-clickhouse Created 
+ Container rinco-mongodb Created 
+ Container rinco-qdrant Created 
+ Container rinco-scylla Created 
+ Container rinco-scylla-init Creating 
+ Container rinco-scylla-init Created 
+ Container rinco-minio Recreated 
+ Container rinco-minio-init Creating 
+ Container rinco-nats Recreated 
+ Container rinco-nats-init Creating 
+ Container rinco-minio-init Created 
+ Container rinco-nats-init Created 
+ Container rinco-clickhouse Starting 
+ Container rinco-qdrant Starting 
+ Container rinco-mongodb Starting 
+ Container rinco-meilisearch Starting 
+ Container rinco-minio Starting 
+ Container rinco-nats Starting 
+ Container rinco-scylla Starting 
+ Container rinco-qdrant Started 
+ Container rinco-minio Started 
+ Container rinco-minio Waiting 
+ Container rinco-scylla Started 
+ Container rinco-scylla Waiting 
+ Container rinco-mongodb Started 
+ Container rinco-meilisearch Started 
+ Container rinco-nats Started 
+ Container rinco-nats Waiting 
+ Container rinco-nats Healthy 
+ Container rinco-nats-init Starting 
+ Container rinco-nats-init Started 
+ Container rinco-minio Healthy 
+ Container rinco-minio-init Starting 
+ Container rinco-minio-init Started 
+ Container rinco-scylla Error dependency scylla failed to start
+Error response from daemon: failed to set up container networking: driver failed programming external connectivity on 
+endpoint rinco-clickhouse (c1eb45ca91cce4f6261e8ae7e32c13e4b32504ffbdf2a5b00078d8d3116795e7): Bind for 0.0.0.0:9000 
+failed: port is already allocated

@@ -1,0 +1,13 @@
+﻿docker : time="2026-09-18T11:50:09+07:00" level=warning msg="C:\\code\\RINCO\\infra\\docker-compose.yml: the attribute 
+`version` is obsolete, it will be ignored, please remove it to avoid potential confusion"
+At C:\Users\doanh\AppData\Local\Temp\ps-script-09447ecb-8d12-47d6-a6cf-cb85d5f5bed2.ps1:93 char:19
++ ... code\RINCO; docker compose -p infra -f infra/docker-compose.yml up -d ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (time="2026-09-1...tial confusion":String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ Container rinco-scylla Running 
+ Container rinco-mongodb Recreate 
+ Container rinco-mongodb Recreated 
+ Container rinco-mongodb Starting 
+ Container rinco-mongodb Started 

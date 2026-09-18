@@ -1,0 +1,35 @@
+﻿docker : 
+At C:\Users\doanh\AppData\Local\Temp\ps-script-dd5dc44b-a0f9-4ce6-855a-62a1e8d71dd6.ps1:93 char:1
++ docker logs rinco-meilisearch --tail 30 2>&1 | Out-File -FilePath "C: ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+888b     d888          d8b 888 d8b                                            888
+8888b   d8888          Y8P 888 Y8P                                            888
+88888b.d88888              888                                                888
+888Y88888P888  .d88b.  888 888 888 .d8888b   .d88b.   8888b.  888d888 .d8888b 88888b.
+888 Y888P 888 d8P  Y8b 888 888 888 88K      d8P  Y8b     "88b 888P"  d88P"    888 "88b
+888  Y8P  888 88888888 888 888 888 "Y8888b. 88888888 .d888888 888    888      888  888
+888   "   888 Y8b.     888 888 888      X88 Y8b.     888  888 888    Y88b.    888  888
+888       888  "Y8888  888 888 888  88888P'  "Y8888  "Y888888 888     "Y8888P 888  888
+
+Config file path:	"none"
+Database path:		"/meili_data"
+Server listening on:	"http://0.0.0.0:7700"
+Environment:		"development"
+Commit SHA:		"0259ad6082cde748ac0478c03c49d8d9a1859e87"
+Commit date:		"2024-03-27T16:49:40Z"
+Package version:	"1.7.4"
+Anonymous telemetry:	"Disabled"
+
+A master key has been set. Requests to Meilisearch won't be authorized unless you provide an authentication key.
+
+Check out Meilisearch Cloud!	https://www.meilisearch.com/cloud?utm_campaign=oss&utm_source=engine&utm_medium=cli
+Documentation:			https://www.meilisearch.com/docs
+Source code:			https://github.com/meilisearch/meilisearch
+Discord:			https://discord.meilisearch.com
+
+[2m2026-09-18T04:40:14.239724Z[0m [32m INFO[0m [2mactix_server::builder[0m[2m:[0m starting 4 workers
+[2m2026-09-18T04:40:14.241913Z[0m [32m INFO[0m [2mactix_server::server[0m[2m:[0m Actix runtime found; starting 
+in Actix runtime

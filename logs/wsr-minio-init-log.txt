@@ -1,0 +1,9 @@
+﻿Added `rinco` successfully.
+docker : mc: <ERROR> Unable to set anonymous `none` for `rinco`. Bucket name cannot be empty.
+At C:\Users\doanh\AppData\Local\Temp\ps-script-56a0c4fb-80a2-416f-bab3-bedb866186af.ps1:93 char:19
++ cd C:\code\RINCO; docker logs rinco-minio-init 2>&1 | Out-File -FileP ...
++                   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (mc: <ERROR> Una...annot be empty.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+==> Applying CORS / region defaults

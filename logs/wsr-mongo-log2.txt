@@ -1,0 +1,21 @@
+﻿{"t":{"$date":"2026-09-18T04:44:46.924Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+docker : BadValue: security.keyFile is required when authorization is enabled with replica sets
+At C:\Users\doanh\AppData\Local\Temp\ps-script-5b9fb01e-da10-4246-8c20-bbe8fe0bc5d7.ps1:93 char:1
++ docker logs rinco-mongodb --tail 15 2>&1 | Out-File -FilePath "C:\cod ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (BadValue: secur...th replica sets:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+{"t":{"$date":"2026-09-18T04:44:51.973Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+{"t":{"$date":"2026-09-18T04:44:58.972Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+{"t":{"$date":"2026-09-18T04:45:12.318Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+BadValue: security.keyFile is required when authorization is enabled with replica sets
+try 'mongod --help' for more information
+{"t":{"$date":"2026-09-18T04:45:38.317Z"},"s":"I",  "c":"CONTROL",  "id":5760901, "ctx":"main","msg":"Applied --setParameter options","attr":{"serverParameters":{"authenticationMechanisms":{"default":["MONGODB-X509","SCRAM-SHA-1","SCRAM-SHA-256"],"value":["SCRAM-SHA-256"]}}}}

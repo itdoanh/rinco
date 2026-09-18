@@ -1,0 +1,24 @@
+﻿
+
+StatusCode        : 200
+StatusDescription : OK
+Content           : Ok.
+                    
+RawContent        : HTTP/1.1 200 OK
+                    Connection: Keep-Alive
+                    Transfer-Encoding: chunked
+                    Keep-Alive: timeout=10
+                    X-ClickHouse-Summary: 
+                    {"read_rows":"0","read_bytes":"0","written_rows":"0","written_bytes":"0","total_rows_...
+Forms             : 
+Headers           : {[Connection, Keep-Alive], [Transfer-Encoding, chunked], [Keep-Alive, timeout=10], 
+                    [X-ClickHouse-Summary, {"read_rows":"0","read_bytes":"0","written_rows":"0","written_bytes":"0","to
+                    tal_rows_to_read":"0","result_rows":"0","result_bytes":"0","elapsed_ns":"423500"}]...}
+Images            : {}
+InputFields       : {}
+Links             : {}
+ParsedHtml        : 
+RawContentLength  : 4
+
+
+
