@@ -1,0 +1,96 @@
+// WS-K k6 baseline — CRM list reads.
+//
+// Tests GET /api/crm/contacts?page=1&limit=100 against crm-service.
+// Requires:
+//   - Bearer token from auth-service (see wsk-k6-auth.yml)
+//   - crm-service running on its port (default 8083)
+//
+// SLOs:
+//   - p95 latency < 250ms (list with limit=100)
+//   - error rate < 1%
+//
+// Run: BASE_URL_CRM=http://localhost:8083 \
+//      BASE_URL_AUTH=http://localhost:8081 \
+//      k6 run scripts/wsk-k6-crm-read.yml
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+import { Trend, Rate } from 'k6/metrics';
+
+const crmLatency = new Trend('crm_list_latency_ms');
+const crmErrors = new Rate('crm_list_errors');
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 10 },
+    { duration: '60s', target: 50 },
+    { duration: '30s', target: 100 },
+    { duration: '30s', target: 500 },
+    { duration: '30s', target: 10 },
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<250'],
+    crm_list_errors: ['rate<0.01'],
+  },
+};
+
+const BASE_URL_CRM = __ENV.BASE_URL_CRM || 'http://localhost:8083';
+const BASE_URL_AUTH = __ENV.BASE_URL_AUTH || 'http://localhost:8081';
+const EMAIL = __ENV.TEST_EMAIL || 'admin@apexfintech.vn';
+const PASSWORD = __ENV.TEST_PASSWORD || 'rinco_dev_password';
+const TENANT_SLUG = __ENV.TENANT_SLUG || 'apexfintech';
+
+// Cache token at VU init so we don't re-login every iteration.
+let accessToken = null;
+
+export function setup() {
+  // Run once per test (not per VU).
+  const res = http.post(
+    `${BASE_URL_AUTH}/v1/auth/login`,
+    JSON.stringify({
+      email: EMAIL,
+      password: PASSWORD,
+      tenant_slug: TENANT_SLUG,
+    }),
+    { headers: { 'Content-Type': 'application/json' } },
+  );
+  if (res.status !== 200) {
+    throw new Error(`Setup: auth login failed: ${res.status} ${res.body}`);
+  }
+  accessToken = res.json('access_token');
+  return { accessToken };
+}
+
+export default function (data) {
+  accessToken = accessToken || data.accessToken;
+  const url = `${BASE_URL_CRM}/api/crm/contacts?page=1&limit=100`;
+  const params = {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  };
+
+  const start = Date.now();
+  const res = http.get(url, params);
+  const elapsed = Date.now() - start;
+
+  crmLatency.add(elapsed);
+  crmErrors.add(res.status !== 200);
+
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'has contacts array': (r) => {
+      try { return Array.isArray(r.json('contacts')) || Array.isArray(r.json('data')); }
+      catch (e) { return false; }
+    },
+    'latency under 600ms': (r) => elapsed < 600,
+  });
+
+  sleep(1);
+}
+
+export function handleSummary(data) {
+  return {
+    'logs/wsk-k6-crm-read-summary.json': JSON.stringify(data, null, 2),
+  };
+}

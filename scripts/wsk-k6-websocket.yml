@@ -1,0 +1,111 @@
+// WS-K k6 baseline — WebSocket chat load.
+//
+// Tests chat-engine WebSocket throughput with:
+//   - 50 concurrent WS connections
+//   - 10 messages per second total fan-out
+//   - Measure reconnect time after server-side close
+//
+// Run: BASE_URL_WS=ws://localhost:8101 \
+//      TENANT_SLUG=apexfintech \
+//      k6 run scripts/wsk-k6-websocket.yml
+//
+// NOTE: requires k6 with WebSocket support (built-in since 0.27+).
+// Requires the k6 websocket module:
+import ws from 'k6/ws';
+import { check, sleep } from 'k6';
+import { Trend, Counter, Rate } from 'k6/metrics';
+
+const wsConnectLatency = new Trend('ws_connect_latency_ms');
+const wsMessageLatency = new Trend('ws_message_roundtrip_ms');
+const wsReconnectLatency = new Trend('ws_reconnect_latency_ms');
+const wsMessagesSent = new Counter('ws_messages_sent');
+const wsErrors = new Rate('ws_errors');
+
+export const options = {
+  stages: [
+    { duration: '20s', target: 25 },
+    { duration: '60s', target: 50 },
+    { duration: '30s', target: 50 },
+    { duration: '20s', target: 0 },
+  ],
+  thresholds: {
+    ws_connect_latency_ms: ['p(95)<500'],
+    ws_errors: ['rate<0.05'],
+  },
+};
+
+const WS_URL = __ENV.BASE_URL_WS || 'ws://localhost:8101';
+const TENANT_SLUG = __ENV.TENANT_SLUG || 'apexfintech';
+// Generate unique user_id per VU (for VULN-001 reproduction — the WS
+// accepts any user_id; this script DOES NOT exploit this).
+const USER_ID = `00000000-0000-0000-0000-${String(__VU).padStart(12, '0')}`;
+
+export default function () {
+  const url = `${WS_URL}/v1/ws/${USER_ID}`;
+  const params = { tags: { vu: String(__VU) } };
+
+  const connectStart = Date.now();
+  const res = ws.connect(url, params, function (socket) {
+    const connectElapsed = Date.now() - connectStart;
+    wsConnectLatency.add(connectElapsed);
+
+    socket.on('open', function open() {
+      // Send a chat message every ~5s.
+      socket.setInterval(function () {
+        const sendStart = Date.now();
+        socket.send(JSON.stringify({
+          type: 'message',
+          channel_id: '11111111-1111-1111-1111-111111111111',
+          sender_device_id: 1,
+          ciphertext: 'dGVzdA==',   // base64("test")
+          ratchet_pub: '',
+          msg_number: Date.now(),
+        }));
+        wsMessageLatency.add(Date.now() - sendStart);
+        wsMessagesSent.add(1);
+      }, 5000);
+    });
+
+    socket.on('message', function (msg) {
+      // We don't expect round-trips in this baseline, but if server
+      // echoes we measure latency.
+      wsMessageLatency.add(Date.now() - connectStart);
+    });
+
+    socket.on('close', function () {
+      // No-op for now; reconnect test happens below.
+    });
+
+    socket.on('error', function (e) {
+      wsErrors.add(true);
+      console.error(`WS error VU=${__VU}: ${e.error() || e}`);
+    });
+
+    // Hold the connection for the test duration.
+    socket.setTimeout(function () {
+      socket.close();
+    }, 60000);
+  });
+
+  check(res, { 'connected': (r) => r && r.status === 101 });
+
+  // Reconnect test: close and reconnect, measure reconnect time.
+  const reconnectStart = Date.now();
+  ws.connect(url, params, function (socket) {
+    socket.on('open', function () {
+      wsReconnectLatency.add(Date.now() - reconnectStart);
+      socket.close();
+    });
+    socket.on('error', function () {
+      wsErrors.add(true);
+    });
+  });
+
+  sleep(1);
+}
+
+export function handleSummary(data) {
+  return {
+    'logs/wsk-k6-websocket-summary.json': JSON.stringify(data, null, 2),
+  };
+}

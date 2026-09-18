@@ -1,0 +1,77 @@
+// WS-K k6 baseline — auth login endpoint.
+//
+// Tests POST /v1/auth/login against auth-service with:
+//   - 30s warmup @ 10 VUs
+//   - 60s steady @ 50 VUs (default), 100 VUs (ramp), 500 VUs (spike)
+//   - 30s rampdown @ 10 VUs
+//
+// SLOs verified:
+//   - p95 latency < 200ms
+//   - error rate < 1%
+//
+// Requires k6: https://k6.io/docs/getting-started/installation
+// Run: k6 run scripts/wsk-k6-auth.yml
+// Override target: BASE_URL=http://localhost:8081 k6 run ...
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+import { Trend, Rate } from 'k6/metrics';
+
+const loginLatency = new Trend('login_latency_ms');
+const loginErrors = new Rate('login_errors');
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 10 },   // warmup
+    { duration: '60s', target: 50 },   // steady
+    { duration: '30s', target: 100 },  // ramp
+    { duration: '30s', target: 500 },  // spike
+    { duration: '30s', target: 10 },   // rampdown
+  ],
+  thresholds: {
+    http_req_duration: ['p(95)<200'],   // p95 < 200ms
+    login_errors: ['rate<0.01'],         // < 1% errors
+    http_req_failed: ['rate<0.01'],
+  },
+};
+
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:8081';
+// Test credentials — must exist in the test DB (seeded by WS-D).
+const EMAIL = __ENV.TEST_EMAIL || 'admin@apexfintech.vn';
+const PASSWORD = __ENV.TEST_PASSWORD || 'rinco_dev_password';
+const TENANT_SLUG = __ENV.TENANT_SLUG || 'apexfintech';
+
+export default function () {
+  const url = `${BASE_URL}/v1/auth/login`;
+  const payload = JSON.stringify({
+    email: EMAIL,
+    password: PASSWORD,
+    tenant_slug: TENANT_SLUG,
+  });
+  const params = {
+    headers: { 'Content-Type': 'application/json' },
+  };
+
+  const start = Date.now();
+  const res = http.post(url, payload, params);
+  const elapsed = Date.now() - start;
+
+  loginLatency.add(elapsed);
+  loginErrors.add(res.status !== 200);
+
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'has access_token': (r) => {
+      try { return r.json('access_token') !== undefined; }
+      catch (e) { return false; }
+    },
+    'latency under 500ms': (r) => elapsed < 500,
+  });
+
+  sleep(1);
+}
+
+export function handleSummary(data) {
+  return {
+    'logs/wsk-k6-auth-summary.json': JSON.stringify(data, null, 2),
+  };
+}
