@@ -91,6 +91,14 @@ ON CONFLICT (slug) DO NOTHING;
 \i expansion/05_notifications_chat_extra.sql
 
 \echo ''
+\echo '--- [13/N] WS-D expansion: 2 new tenants + extra users + 18-month timestamps ---'
+\i expansion/06_ws_d_tenants.sql
+\i expansion/07_ws_d_users_extra.sql
+\i expansion/07b_ws_d_vng_users.sql
+\i expansion/08_ws_d_leads_18mo.sql
+\i expansion/09_ws_d_activities_extra.sql
+
+\echo ''
 \echo '==========================================='
 \echo 'RINCO Demo Seed complete. Summary:'
 SELECT
