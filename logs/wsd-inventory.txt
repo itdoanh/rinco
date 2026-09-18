@@ -1,0 +1,103 @@
+# WS-D Phase 1 — Seed Inventory Report
+Generated: 2026-09-18 11:17 UTC+7
+WS-D subagent task — Real Data & Backend Integration
+
+## 1. Seed file inventory
+
+### PostgreSQL seeds (migrations/seed/)
+| File | Lines | Tables populated | Rows (estimated) |
+|------|-------|------------------|------------------|
+| 00_master.sql | 134 | (orchestrator) | n/a |
+| 00_setup.sql | ~470 | schemas, types | n/a |
+| 01_tenants.sql | 105 | tenant.tenants, tenant_domains, tenant_sites, tenant_branding, tenant_settings | 3 tenants + 5 domains + 3 sites + 15 settings |
+| 02_users.sql | 144 | auth.users, auth.refresh_tokens, crm.user_hierarchy | ~57 users |
+| 03_crm_tree.sql | ~340 | crm.departments, sources, pipelines, companies | ~30 entities |
+| 04_leads.sql | ~110 | leads.leads | ~200 leads (75+75+50) |
+| 05_deals_activities.sql | ~250 | crm.deals, crm.activities, crm.notes | ~50+ deals, ~1000+ activities |
+| 06_tags_custom_fields.sql | ~190 | crm.tags, custom_fields | 20+ tags, 30+ fields |
+| 07_workflows_audit.sql | ~290 | workflow.workflows, audit.audit_logs | 14 workflows, 360 audit logs |
+| 08_billing.sql | ~210 | billing.plans, subscriptions, invoices, payment_methods | 3 plans + sub/inv/pm |
+| 09_notifications_chat.sql | ~480 | notification.*, chat_channels, chat_messages, meeting_rooms, api_keys | 700+ notifications |
+| 10_other_services.sql | ~410 | email_templates, landing_pages, fb_pixel_configs, recordings | many |
+| 11_legacy_services.sql | ~280 | legacy mirror tables | many |
+| 12_lead_scores.sql | ~80 | employee.data.*, lead_scores | 12+ scores |
+| 13_ai_sre.sql | ~90 | ai_sre.incidents, runbooks | 5+ incidents |
+| 14_rag_kb.sql | ~70 | rag.kb_documents | 10+ docs |
+| 15_stt_transcripts.sql | ~80 | stt.transcripts | 8+ transcripts |
+
+### PostgreSQL expansion seeds (migrations/seed/expansion/)
+| File | Lines | Tables | Estimated added rows |
+|------|-------|--------|----------------------|
+| 01_leads_extra.sql | ~350 | leads.leads | 150+ extra leads |
+| 02_deals_activities_extra.sql | ~300 | crm.deals, activities | 100+ deals, 500+ activities |
+| 03_users_crm_tree_extra.sql | ~420 | auth.users, crm tree | 13 extra users, sub-depts, 15 companies |
+| 04_workflows_audit_extra.sql | ~350 | workflows, audit | 14 extra workflows, 23 entity_field_defs, 360 audit_logs, 1000 api_requests |
+| 05_notifications_chat_extra.sql | ~430 | notifications, chat | many extra |
+
+### External backends seeds (seed/external/)
+| File | Lines | Backend | Estimated rows/objects |
+|------|-------|---------|------------------------|
+| scylla/seed.cql | 132 | ScyllaDB | 13 conversations |
+| scylla/seed.sql | ~520 | ScyllaDB (alt) | extra rows |
+| scylla/expansion/07_chat_events_extra.sql | ~1100 | ScyllaDB | 15 conv, 22 msg, 17 presence, 3 reactions, 34 receipts, 25 events, 30 subs, 15 webhooks |
+| mongo/seed.js | 439 | MongoDB | 18 schemas, 350 records, 12 vi landing pages, 850 forms, 400 enrichment cache |
+| mongo/expansion/06_records_extra.js | ~700 | MongoDB | more records |
+| clickhouse/seed.sql | 374 | ClickHouse | 3500+ events, 1500 sessions, 600 conversions |
+| clickhouse/expansion/05_events_extra.sql | ~330 | ClickHouse | extra events |
+| valkey/seed.sh | 140 | Valkey | sessions, rate limit, semantic cache |
+| valkey/expansion/08_cache_warmup_extra.sh | ~360 | Valkey | 750+ keys |
+| minio/seed.sh | 137 | MinIO | recordings, uploads |
+| minio/expansion/08_objects_extra.sh | ~210 | MinIO | 90+ objects |
+
+### Python service seeds (services/*/)
+| File | Lines | Service | Notes |
+|------|-------|---------|-------|
+| ai-sre/seed_data.py | 75 | ai-sre | legacy |
+| ai-sre/app/seed.py | 110 | ai-sre | legacy |
+| ai-sre/app/expansion/seed_extra.py | 240 | ai-sre | 15+ incidents, runbooks |
+| lead-scoring/seed_data.py | 80 | lead-scoring | XGBoost training data |
+| lead-scoring/app/seed.py | 130 | lead-scoring | legacy |
+| lead-scoring/app/expansion/seed_extra.py | 200 | lead-scoring | 5 MLflow runs |
+| rag-chatbot/seed_data.py | 95 | rag-chatbot | legacy |
+| rag-chatbot/app/seed.py | 90 | rag-chatbot | legacy |
+| rag-chatbot/app/expansion/seed_extra.py | 480 | rag-chatbot | Vietnamese Q&A pairs |
+| recording-service/seed_data.py | 80 | recording-service | legacy |
+| recording-service/app/seed.py | 70 | recording-service | legacy |
+| recording-service/app/expansion/seed_extra.py | 90 | recording-service | recording metadata |
+| stt-service/app/seed.py | 70 | stt-service | legacy |
+| stt-service/app/expansion/seed_extra.py | 200 | stt-service | Vietnamese transcripts |
+
+### MLflow runs (services/lead-scoring/mlruns/)
+- 5 runs (one per tenant per month Apr-Aug 2026)
+- Model: XGBoost lead-scoring
+- DO NOT DELETE
+
+## 2. Realism audit (initial pass)
+
+### What looks real (no action needed)
+- Tenant names: Apex Fintech, HCT Consulting, Demo Company
+- Vietnamese names: Trần Minh Quân, Phạm Thị Mai, etc. (authentic diacritics + surname patterns)
+- Phone numbers: +84 prefix with valid 7-digit numbers
+- UTM params: facebook/google/tiktok realistic
+- Lead custom fields: budget_range (5-10tr, 10-30tr), preferred_location, loan_purpose
+
+### What needs realism improvement (Phase 2)
+1. **Fewer than 5 tenants** (currently 3 + sentinel) — need 2 more.
+2. **User counts per tenant**: 20, 16, 18 (below 30 target).
+3. **Lead timestamps** spread 30 days — extend to 540 days (18 months).
+4. **Deal currency** is small — need realistic VND amounts (15M-50M).
+5. **ClickHouse events** spread 30 days — extend to 540 days.
+6. **Activity descriptions** could be more varied/realistic.
+7. **Chat conversations** — verify natural Vietnamese slang.
+8. **Addresses** — add specific street/district combinations.
+
+## 3. Database reachability check
+
+Stack not yet running in this session. Will defer live SELECT count(*) to next phases
+when services are reachable via docker compose.
+
+## 4. Next steps
+- Phase 2: Per-file realism enhancement with atomic commits.
+- Phase 3: Cross-backend consistency verification.
+- Phase 4: Frontend data verification via curl.
+- Phase 5: Nightly refresh script + scheduling.
