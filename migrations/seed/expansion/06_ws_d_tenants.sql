@@ -59,31 +59,6 @@ INSERT INTO tenant.tenant_sites (id, tenant_id, domain, deployment_mode, theme, 
     'published', NOW() - INTERVAL '365 days', NOW() - INTERVAL '1 day')
 ON CONFLICT (id) DO NOTHING;
 
--- ============================================================================
--- TENANT BRANDING (legacy mirror)
--- ============================================================================
-INSERT INTO tenant.tenant_branding (tenant_id, logo_url, favicon_url, primary_color, secondary_color, accent_color, font_family, custom_css, email_logo_url, updated_at)
-SELECT id, logo_url,
-       'https://cdn.rinco.app/favicons/' || slug || '.ico',
-       CASE slug WHEN 'vinamilk-dist' THEN '#0066B3' WHEN 'vng-corp' THEN '#0068FF' END,
-       CASE slug WHEN 'vinamilk-dist' THEN '#FFC20E' WHEN 'vng-corp' THEN '#00C7B7' END,
-       '#10B981', 'Inter', '', 'https://cdn.rinco.app/logos/' || slug || '-email.png', NOW()
-FROM tenant.tenants
-WHERE id IN ('cccccccc-0000-0000-0000-000000000004','dddddddd-0000-0000-0000-000000000005')
-ON CONFLICT (tenant_id) DO NOTHING;
-
--- ============================================================================
--- TENANT SETTINGS (key/value)
--- ============================================================================
-INSERT INTO tenant.tenant_settings (id, tenant_id, key, value, updated_at)
-SELECT gen_random_uuid(), t.id, kv.k, kv.v::jsonb, NOW()
-FROM tenant.tenants t
-CROSS JOIN (VALUES
-  ('feature_flags','{"ai_scoring_enabled":true,"auto_assign_enabled":true,"email_inbound_enabled":true,"churn_prediction_enabled":true,"webhook_outbound_enabled":true,"realtime_dashboard":true,"distributor_route_planning":true}'),
-  ('integrations','{"zalo_oa":"","facebook_pixel_id":"","google_ads_id":"","tiktok_pixel_id":"","salesforce_sync":false,"hubspot_sync":false,"sap_sync":true}'),
-  ('working_hours','{"mon":"08:00-17:30","tue":"08:00-17:30","wed":"08:00-17:30","thu":"08:00-17:30","fri":"08:00-17:00","sat":"08:00-12:00","sun":"closed"}'),
-  ('lead_assignment_rules','{"round_robin":true,"weight_by_capacity":true,"region_based":true,"auto_tag_by_source":true,"tier_based":true}'),
-  ('notification_preferences','{"new_lead_alert":true,"daily_report":true,"weekly_summary":true,"score_threshold":75,"sms_alert_enabled":true}')
-) AS kv(k, v)
-WHERE t.id IN ('cccccccc-0000-0000-0000-000000000004','dddddddd-0000-0000-0000-000000000005')
-ON CONFLICT (tenant_id, key) DO NOTHING;
+-- -- Tenant domains are defined inline above (INSERT INTO tenant.tenant_domains)
+-- -- Tenant sites are defined inline above (INSERT INTO tenant.tenant_sites)
+-- -- tenant_branding and tenant_settings tables do not exist — skipped

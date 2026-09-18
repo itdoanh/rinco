@@ -1,6 +1,6 @@
 module github.com/itdoanh/rinco/services/webrtc-sfu
 
-go 1.25.0
+go 1.23
 
 require (
 	connectrpc.com/connect v1.21.0

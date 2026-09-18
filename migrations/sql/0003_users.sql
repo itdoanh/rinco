@@ -187,13 +187,3 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS auth.fido2_credentials CASCADE;
-DROP TABLE IF EXISTS auth.fido2_challenges  CASCADE;
-DROP TABLE IF EXISTS auth.refresh_tokens    CASCADE;
-DROP TABLE IF EXISTS auth.users             CASCADE;
-DROP FUNCTION IF EXISTS auth.move_subtree;
-DROP FUNCTION IF EXISTS auth.get_subtree_users(UUID);
--- +goose StatementEnd

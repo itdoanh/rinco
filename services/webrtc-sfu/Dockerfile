@@ -9,13 +9,11 @@ WORKDIR /app
 RUN apk add --no-cache git ca-certificates
 
 # Copy go mod files first for caching
-COPY services/webrtc-sfu/go.mod services/webrtc-sfu/go.sum ./
-RUN go mod download
+COPY services/webrtc-sfu/go.mod services/webrtc-sfu/go.sum* ./
 
 # Copy source and build
-COPY services/webrtc-sfu/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-w -s" \
-    -o webrtc-sfu ./cmd/webrtc-sfu
+COPY ./services/webrtc-sfu/ .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o webrtc-sfu ./cmd/webrtc-sfu
 
 # Final stage
 FROM alpine:3.19

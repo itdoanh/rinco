@@ -55,9 +55,11 @@ services:
 
   # Auth Service
   auth-service:
-    build: ./services/auth-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/auth-service/Dockerfile
     container_name: rinco-auth-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       PASETO_KEY_CURRENT: ${PASETO_KEY_CURRENT:-rinco_dev_paseto_key_change_in_prod_32bytes}
@@ -85,9 +87,11 @@ services:
 
   # Tenant Service
   tenant-service:
-    build: ./services/tenant-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/tenant-service/Dockerfile
     container_name: rinco-tenant-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
@@ -108,9 +112,11 @@ services:
 
   # CRM Service
   crm-service:
-    build: ./services/crm-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/crm-service/Dockerfile
     container_name: rinco-crm-service
-    <<: *restart
+    restart: unless-stopped
     environment: *go-env
     ports:
       - "8083:8083"
@@ -129,9 +135,11 @@ services:
 
   # Dynamic Model Service
   dynamic-model-service:
-    build: ./services/dynamic-model-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/dynamic-model-service/Dockerfile
     container_name: rinco-dynamic-model-service
-    <<: *restart
+    restart: unless-stopped
     environment: *go-env
     ports:
       - "8084:8084"
@@ -152,9 +160,11 @@ services:
 
   # Lead Service
   lead-service:
-    build: ./services/lead-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/lead-service/Dockerfile
     container_name: rinco-lead-service
-    <<: *restart
+    restart: unless-stopped
     environment: *go-env
     ports:
       - "8085:8085"
@@ -175,9 +185,11 @@ services:
 
   # Landing Service
   landing-service:
-    build: ./services/landing-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/landing-service/Dockerfile
     container_name: rinco-landing-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       DB_HOST: postgres
@@ -208,9 +220,11 @@ services:
 
   # Email Service
   email-service:
-    build: ./services/email-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/email-service/Dockerfile
     container_name: rinco-email-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       SMTP_HOST: mailhog
       SMTP_PORT: 1025
@@ -231,9 +245,11 @@ services:
 
   # Notification Service
   notification-service:
-    build: ./services/notification-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/notification-service/Dockerfile
     container_name: rinco-notification-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
@@ -258,17 +274,21 @@ services:
 
   # Observability Service
   observability-service:
-    build: ./services/observability-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/observability-service/Dockerfile
     container_name: rinco-observability-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       OBSERVABILITY_HTTP_ADDR: ":8096"
     ports:
       - "8096:8096"
     depends_on:
-      - auth-service
-      - crm-service
+      auth-service:
+        condition: service_started
+      crm-service:
+        condition: service_started
       prometheus:
         condition: service_started
     healthcheck:
@@ -283,9 +303,11 @@ services:
 
   # Billing Service
   billing-service:
-    build: ./services/billing-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/billing-service/Dockerfile
     container_name: rinco-billing-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
@@ -311,9 +333,11 @@ services:
 
   # Search Service
   search-service:
-    build: ./services/search-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/search-service/Dockerfile
     container_name: rinco-search-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       MEILISEARCH_HOST: http://meilisearch:7700
@@ -337,9 +361,11 @@ services:
 
   # Analytics Service
   analytics-service:
-    build: ./services/analytics-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/analytics-service/Dockerfile
     container_name: rinco-analytics-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       CLICKHOUSE_URL: clickhouse://clickhouse:9000
@@ -363,9 +389,11 @@ services:
 
   # Meta CAPI Service
   meta-capi-service:
-    build: ./services/meta-capi-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/meta-capi-service/Dockerfile
     container_name: rinco-meta-capi-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *go-env
       ADMIN_API_KEY: ${ADMIN_API_KEY:-dev_admin_key_change_me}
@@ -390,9 +418,11 @@ services:
 
   # Chat Engine
   chat-engine:
-    build: ./services/chat-engine
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/chat-engine/Dockerfile
     container_name: rinco-chat-engine
-    <<: *restart
+    restart: unless-stopped
     environment:
       SCYLLA_HOST: scylla
       VALKEY_URL: redis://valkey:6379
@@ -422,9 +452,11 @@ services:
 
   # WebRTC SFU
   webrtc-sfu:
-    build: ./services/webrtc-sfu
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/webrtc-sfu/Dockerfile
     container_name: rinco-webrtc-sfu
-    <<: *restart
+    restart: unless-stopped
     environment:
       TURN_HOST: turn.rinco.app
       TURN_SECRET: ${TURN_SECRET:-dev_turn_secret}
@@ -442,9 +474,11 @@ services:
 
   # Recording Service
   recording-service:
-    build: ./services/recording-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/recording-service/Dockerfile
     container_name: rinco-recording-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY: ${MINIO_ROOT_USER:-rinco}
@@ -474,9 +508,11 @@ services:
 
   # Lead Scoring Service
   lead-scoring:
-    build: ./services/lead-scoring
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/lead-scoring/Dockerfile
     container_name: rinco-lead-scoring
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *python-env
       DB_HOST: postgres
@@ -501,9 +537,11 @@ services:
 
   # AI SRE Service
   ai-sre:
-    build: ./services/ai-sre
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/ai-sre/Dockerfile
     container_name: rinco-ai-sre
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *python-env
       CLICKHOUSE_URL: http://clickhouse:8123
@@ -529,9 +567,11 @@ services:
 
   # RAG Chatbot Service
   rag-chatbot:
-    build: ./services/rag-chatbot
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/rag-chatbot/Dockerfile
     container_name: rinco-rag-chatbot
-    <<: *restart
+    restart: unless-stopped
     environment:
       <<: *python-env
       QDRANT_HOST: qdrant
@@ -553,9 +593,11 @@ services:
 
   # STT Service (Speech-to-Text)
   stt-service:
-    build: ./services/stt-service
+    build:
+      context: C:/code/RINCO
+      dockerfile: services/stt-service/Dockerfile
     container_name: rinco-stt-service
-    <<: *restart
+    restart: unless-stopped
     environment:
       WHISPER_MODEL: large-v3
       WHISPER_DEVICE: cuda
@@ -585,9 +627,11 @@ services:
 
   # Landing Page Frontend
   landing-frontend:
-    build: ./frontend/landing
+    build:
+      context: C:/code/RINCO
+      dockerfile: frontend/landing/Dockerfile
     container_name: rinco-landing-frontend
-    <<: *restart
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://landing-service:8086
       NEXT_PUBLIC_FB_PIXEL_ID: ${NEXT_PUBLIC_FB_PIXEL_ID:-}
@@ -608,9 +652,11 @@ services:
 
   # Admin Portal Frontend
   admin-portal-frontend:
-    build: ./frontend/admin-portal
+    build:
+      context: C:/code/RINCO
+      dockerfile: frontend/admin-portal/Dockerfile
     container_name: rinco-admin-portal
-    <<: *restart
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://auth-service:8081
     ports:
@@ -630,9 +676,11 @@ services:
 
   # Tenant Site Frontend
   tenant-site-frontend:
-    build: ./frontend/tenant-site
+    build:
+      context: C:/code/RINCO
+      dockerfile: frontend/tenant-site/Dockerfile
     container_name: rinco-tenant-site-frontend
-    <<: *restart
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://tenant-service:8082
     ports:
@@ -652,9 +700,11 @@ services:
 
   # Meeting UI Frontend
   meeting-ui-frontend:
-    build: ./frontend/meeting-ui
+    build:
+      context: C:/code/RINCO
+      dockerfile: frontend/meeting-ui/Dockerfile
     container_name: rinco-meeting-ui-frontend
-    <<: *restart
+    restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_URL: http://auth-service:8081
       NEXT_PUBLIC_SFU_URL: http://webrtc-sfu:8102

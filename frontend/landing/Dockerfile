@@ -10,7 +10,7 @@ RUN bun install --frozen-lockfile
 # Build
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY ./frontend/landing/ .
 RUN bun run build
 
 # Production

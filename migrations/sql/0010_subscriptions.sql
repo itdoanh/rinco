@@ -136,11 +136,3 @@ CREATE POLICY pm_tenant ON billing.payment_methods
     );
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS billing.payment_methods CASCADE;
-DROP TABLE IF EXISTS billing.usage_counters  CASCADE;
-DROP TABLE IF EXISTS billing.invoices        CASCADE;
-DROP TABLE IF EXISTS billing.subscriptions    CASCADE;
--- +goose StatementEnd

@@ -1,6 +1,6 @@
 module github.com/itdoanh/rinco/services/analytics-service
 
-go 1.26
+go 1.23
 
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.23.0

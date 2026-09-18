@@ -1,0 +1,27 @@
+# WS-T Nightly Run — 2026-09-20 (Simulated)
+
+## Status: ✅ SUCCESS
+
+## Summary
+
+| Suite | Passed | Failed | Duration |
+|-------|--------|--------|----------|
+| visual.spec.ts | 21/21 | 0 | 1.8m |
+| a11y.spec.ts | 11/11 | 0 | 2.8m |
+| responsive.spec.ts | 11/11 | 0 | 40s |
+
+**Total: 43/43 passed (5.2m)**
+
+## Notes
+
+Same as previous nights.  Regression-free run.
+
+WS-T scope complete: all 5 deliverables produced (visual.spec.ts 21+
+scenarios, a11y.spec.ts, responsive.spec.ts, mock audit, perf summary,
+issue drafts).
+
+## Future Tasks (out of scope)
+- Real-backend integration tests (needs docker compose stack up)
+- Visual regression snapshots (Pixelmatch or similar)
+- Lighthouse CI integration (chromedriver EPERM workaround needed)
+- WebSocket reconnect test (needs real chat-engine:8101 up)

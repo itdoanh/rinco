@@ -26,7 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /install /usr/local
 
 # Copy service code.
-COPY services/lead-scoring/ .
+COPY services/lead-scoring/ . .
 
 # Non-root user.
 RUN useradd -u 1001 rinco && chown -R rinco:rinco /app

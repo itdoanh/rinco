@@ -122,10 +122,3 @@ CREATE POLICY tenant_sites_tenant ON tenant.tenant_sites
     );
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS tenant.tenant_sites    CASCADE;
-DROP TABLE IF EXISTS tenant.tenant_domains  CASCADE;
-DROP TABLE IF EXISTS tenant.tenants         CASCADE;
--- +goose StatementEnd

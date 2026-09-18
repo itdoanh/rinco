@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /install /usr/local
-COPY services/rag-chatbot/ .
+COPY services/rag-chatbot/ . .
 
 RUN useradd -u 1001 rinco && chown -R rinco:rinco /app
 USER rinco

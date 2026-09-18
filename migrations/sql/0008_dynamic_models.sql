@@ -190,12 +190,3 @@ CREATE POLICY dr_tenant ON workflow.dynamic_records
     );
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS workflow.dynamic_records        CASCADE;
-DROP TABLE IF EXISTS workflow.workflow_executions    CASCADE;
-DROP TABLE IF EXISTS workflow.workflows              CASCADE;
-DROP TABLE IF EXISTS workflow.entity_field_defs      CASCADE;
-DROP TABLE IF EXISTS workflow.entity_definitions     CASCADE;
--- +goose StatementEnd

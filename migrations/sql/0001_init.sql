@@ -99,15 +99,3 @@ GRANT CONNECT ON DATABASE rinco TO rinco_app;
 GRANT USAGE ON SCHEMA app, tenant, auth, crm, leads, workflow, audit, billing, public TO rinco_app;
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP SCHEMA IF EXISTS billing CASCADE;
-DROP SCHEMA IF EXISTS audit   CASCADE;
-DROP SCHEMA IF EXISTS workflow CASCADE;
-DROP SCHEMA IF EXISTS leads   CASCADE;
-DROP SCHEMA IF EXISTS crm     CASCADE;
-DROP SCHEMA IF EXISTS auth    CASCADE;
-DROP SCHEMA IF EXISTS tenant  CASCADE;
-DROP SCHEMA IF EXISTS app     CASCADE;
--- +goose StatementEnd

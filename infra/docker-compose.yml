@@ -117,8 +117,8 @@ services:
       <<: *common-env
     command:
       - "--developer-mode=1"
-      - "--memory=2G"
-      - "--smp=2"
+      - "--memory=1G"
+      - "--smp=1"
       - "--overprovisioned=1"
       - "--compaction-throughput-mb-per-sec=128"
     ports:
@@ -190,7 +190,7 @@ services:
       <<: *common-env
     ports:
       - "8123:8123"
-      - "9000:9000"
+      - "9005:9000"
       - "9009:9009"
     ulimits:
       nofile:
@@ -231,11 +231,7 @@ services:
       - "--replSet"
       - "rs0"
       - "--bind_ip_all"
-      - "--keyFile"
-      - "/etc/mongo-keyfile"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-rinco}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-rinco_dev_password}
       MONGO_INITDB_DATABASE: ${MONGO_DB:-rinco}
       <<: *common-env
     ports:
@@ -243,7 +239,6 @@ services:
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
-      - ./mongo/mongo-keyfile:/etc/mongo-keyfile:ro
       - ./mongo/init.js:/docker-entrypoint-initdb.d/01-init.js:ro
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongodb:27017'}]}).ok }"]
@@ -314,7 +309,7 @@ services:
     volumes:
       - meilisearch_data:/meili_data
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7700/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:7700/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -345,7 +340,7 @@ services:
       QDRANT__LOG_LEVEL: INFO
       <<: *common-env
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "sh -c 'grep -q \"18BD\" /proc/net/tcp || grep -q \"18BD\" /proc/net/tcp6'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -365,7 +360,7 @@ services:
   # 8. MINIO — S3-compatible object storage
   # ============================================================
   minio:
-    image: minio/minio:RELEASE.2024-07-16T23-46-41Z
+    image: minio/minio:latest
     container_name: rinco-minio
     <<: *restart
     environment:
@@ -789,8 +784,5 @@ volumes:
 
 networks:
   rinco-network:
-    driver: bridge
+    external: true
     name: rinco-network
-    ipam:
-      config:
-        - subnet: 172.25.0.0/16

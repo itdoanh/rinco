@@ -100,9 +100,3 @@ CREATE POLICY user_hierarchy_subtree_select ON crm.user_hierarchy
     );
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS crm.user_hierarchy CASCADE;
-DROP TABLE IF EXISTS crm.departments    CASCADE;
--- +goose StatementEnd

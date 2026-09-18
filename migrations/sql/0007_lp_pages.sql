@@ -110,10 +110,3 @@ CREATE POLICY lpvab_tenant ON crm.landing_page_ab_variants
     );
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS crm.landing_page_ab_variants CASCADE;
-DROP TABLE IF EXISTS crm.landing_page_versions    CASCADE;
-DROP TABLE IF EXISTS crm.landing_pages            CASCADE;
--- +goose StatementEnd

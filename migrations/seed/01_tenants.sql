@@ -29,7 +29,7 @@ VALUES
     '{"industry":"FinTech","employees":150,"founded":2019,"tax_code":"0316445991","address":"Tầng 12, Bitexco Tower, HCMC"}'::jsonb,
     536870912000, 10000000, 200, 500000, NOW() - INTERVAL '120 days', NOW() - INTERVAL '5 days'),
 
-  ('aaaaaaaa-0000-0000-0000-000000000002', 'hct-consulting', 'HCT Consulting', 'HCT Real Estate Consulting', 'Công ty tư vấn bất động sản & đầu tư cá nhân - chuyên phân khúc cao cấp Hà Nội', 'https://cdn.rinco.app/logos/hct-consulting.png', 'https://hctconsulting.vn', 'pro', 'active', 'SHARED', 'ap-southeast-1',
+  ('aaaaaaaa-0000-0000-0000-000000000002', 'hct-consulting', 'HCT Consulting', 'HCT Real Estate Consulting', 'Công ty tư vấn bất động sản & đầu tư cá nhân - chuyên phân khúc cao cấp Hà Nội', 'https://cdn.rinco.app/logos/hct-consulting.png', 'https://hctconsulting.vn', 'business', 'active', 'SHARED', 'ap-southeast-1',
     '{"theme":"classic","locale":"vi-VN","currency":"VND","timezone":"Asia/Ho_Chi_Minh","features":{"ai_scoring":true,"webhook_out":true,"api_access":true,"sso":false}}'::jsonb,
     '{"industry":"Real Estate","employees":45,"founded":2021,"tax_code":"0109988776","address":"Tầng 8, Capital Place, Hà Nội"}'::jsonb,
     268435456000, 5000000, 80, 100000, NOW() - INTERVAL '60 days', NOW() - INTERVAL '2 days'),
@@ -78,30 +78,9 @@ INSERT INTO tenant.tenant_sites (id, tenant_id, domain, deployment_mode, theme, 
 ON CONFLICT (id) DO NOTHING;
 
 -- ============================================================================
--- SECTION 4: TENANT BRANDING (legacy mirror table from tenant-service)
+-- SECTION 4: (tenant_branding table does not exist — skip)
 -- ============================================================================
-INSERT INTO tenant.tenant_branding (tenant_id, logo_url, favicon_url, primary_color, secondary_color, accent_color, font_family, custom_css, email_logo_url, updated_at)
-SELECT id, logo_url,
-       'https://cdn.rinco.app/favicons/' || slug || '.ico',
-       CASE slug WHEN 'apexfintech'    THEN '#0F766E' WHEN 'hct-consulting' THEN '#1E40AF' ELSE '#7C3AED' END,
-       CASE slug WHEN 'apexfintech'    THEN '#F59E0B' WHEN 'hct-consulting' THEN '#DC2626' ELSE '#FBBF24' END,
-       '#10B981', 'Inter', '', 'https://cdn.rinco.app/logos/' || slug || '-email.png', NOW()
-FROM tenant.tenants
-WHERE id IN ('aaaaaaaa-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000002','bbbbbbbb-0000-0000-0000-000000000003')
-ON CONFLICT (tenant_id) DO NOTHING;
 
 -- ============================================================================
--- SECTION 5: TENANT SETTINGS (key/value store)
+-- SECTION 5: (tenant_settings table does not exist — skip)
 -- ============================================================================
-INSERT INTO tenant.tenant_settings (id, tenant_id, key, value, updated_at)
-SELECT gen_random_uuid(), t.id, kv.k, kv.v::jsonb, NOW()
-FROM tenant.tenants t
-CROSS JOIN (VALUES
-  ('feature_flags','{"ai_scoring_enabled":true,"auto_assign_enabled":true,"email_inbound_enabled":true,"churn_prediction_enabled":true,"webhook_outbound_enabled":true,"realtime_dashboard":true}'),
-  ('integrations','{"zalo_oa":"","facebook_pixel_id":"","google_ads_id":"","tiktok_pixel_id":"","salesforce_sync":false,"hubspot_sync":false}'),
-  ('working_hours','{"mon":"09:00-18:00","tue":"09:00-18:00","wed":"09:00-18:00","thu":"09:00-18:00","fri":"09:00-17:00","sat":"closed","sun":"closed"}'),
-  ('lead_assignment_rules','{"round_robin":true,"weight_by_capacity":true,"region_based":true,"auto_tag_by_source":true}'),
-  ('notification_preferences','{"new_lead_alert":true,"daily_report":true,"weekly_summary":true,"score_threshold":80}')
-) AS kv(k, v)
-WHERE t.id IN ('aaaaaaaa-0000-0000-0000-000000000001','aaaaaaaa-0000-0000-0000-000000000002','bbbbbbbb-0000-0000-0000-000000000003')
-ON CONFLICT (tenant_id, key) DO NOTHING;

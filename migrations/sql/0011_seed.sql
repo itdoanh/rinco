@@ -78,18 +78,3 @@ VALUES (
 ON CONFLICT DO NOTHING;
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DELETE FROM billing.subscriptions WHERE id IN (
-    '22222222-2222-2222-2222-222222222222'
-);
-DELETE FROM auth.users WHERE id IN (
-    '11111111-1111-1111-1111-111111111111',
-    '00000000-0000-0000-0000-000000000001'
-);
-DELETE FROM tenant.tenants WHERE id IN (
-    '00000000-0000-0000-0000-000000000000',
-    '11111111-1111-1111-1111-111111111111'
-);
--- +goose StatementEnd

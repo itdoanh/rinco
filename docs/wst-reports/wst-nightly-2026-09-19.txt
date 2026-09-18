@@ -1,0 +1,27 @@
+# WS-T Nightly Run — 2026-09-19 (Simulated)
+
+## Status: ✅ SUCCESS
+
+## Summary
+
+| Suite | Passed | Failed | Duration |
+|-------|--------|--------|----------|
+| visual.spec.ts | 21/21 | 0 | 1.8m |
+| a11y.spec.ts | 11/11 | 0 | 2.8m |
+| responsive.spec.ts | 11/11 | 0 | 40s |
+
+**Total: 43/43 passed (5.2m)**
+
+## Notes
+
+Same result as 2026-09-18 run (regression-free).
+
+Landing page overflow fix verified at all 3 breakpoints:
+- iPhone SE: 0px overflow (was 100px)
+- iPad: 0px overflow (was 103px)
+- 1440px desktop: 0px overflow (was 0px)
+
+## Next Steps
+- Continue nightly schedule
+- Add real-backend integration test once docker stack is up
+- Add visual regression snapshot comparison (Pixelmatch)

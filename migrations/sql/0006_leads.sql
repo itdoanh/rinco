@@ -151,11 +151,3 @@ WHERE deleted_at IS NULL
 GROUP BY tenant_id, DATE_TRUNC('day', created_at), source, utm_campaign;
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP VIEW IF EXISTS leads.v_lead_funnel;
-ALTER TABLE crm.activities DROP CONSTRAINT IF EXISTS activities_lead_id_fkey;
-ALTER TABLE crm.deals     DROP CONSTRAINT IF EXISTS deals_lead_id_fkey;
-DROP TABLE IF EXISTS leads.leads CASCADE;
--- +goose StatementEnd

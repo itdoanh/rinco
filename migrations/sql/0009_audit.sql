@@ -101,10 +101,3 @@ CREATE POLICY api_requests_super ON audit.api_requests
     WITH CHECK (app.bypass_rls_check());
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS audit.api_requests     CASCADE;
-DROP TABLE IF EXISTS audit.login_history    CASCADE;
-DROP TABLE IF EXISTS audit.audit_logs       CASCADE;
--- +goose StatementEnd

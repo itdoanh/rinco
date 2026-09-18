@@ -2,9 +2,7 @@
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
-COPY go.mod go.sum* ./
-RUN go mod download
-COPY . .
+COPY ./services/billing-service/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/billing-service ./cmd
 
 FROM gcr.io/distroless/static-debian12:nonroot

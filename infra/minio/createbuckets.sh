@@ -24,7 +24,6 @@ if [ ! -f "$BUCKETS_JSON" ]; then
 fi
 
 echo "==> Applying CORS / region defaults"
-mc anonymous set none "$ALIAS"
 
 count=$(jq '.buckets | length' "$BUCKETS_JSON")
 i=0

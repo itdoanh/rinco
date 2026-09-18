@@ -127,10 +127,3 @@ CREATE POLICY pipelines_tenant ON crm.pipelines
     );
 
 -- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS crm.pipelines   CASCADE;
-DROP TABLE IF EXISTS crm.activities  CASCADE;
-DROP TABLE IF EXISTS crm.deals       CASCADE;
--- +goose StatementEnd

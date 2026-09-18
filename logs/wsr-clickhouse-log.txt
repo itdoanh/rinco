@@ -1,0 +1,27 @@
+﻿docker : Logging errors to /var/log/clickhouse-server/clickhouse-server.err.log
+At C:\Users\doanh\AppData\Local\Temp\ps-script-e69a054d-d8c4-4484-bdc5-b0383b11e10d.ps1:95 char:172
++ ... -not-needed 2>&1; docker logs rinco-clickhouse --tail 20 2>&1 | Out-F ...
++                       ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Logging errors ...-server.err.log:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+/entrypoint.sh: create database 'rinco_analytics'
+/entrypoint.sh: running /docker-entrypoint-initdb.d/01-init.sql
+Received exception from server (version 24.3.3):
+Code: 495. DB::Exception: Received from 127.0.0.1:9000. DB::Exception: Cannot insert user `rinco` to users_xml because 
+this storage is readonly. (ACCESS_STORAGE_READONLY)
+(query: -- Application role (created if it does not exist)
+/entrypoint.sh: create new user 'rinco' instead 'default'
+CREATE USER IF NOT EXISTS rinco IDENTIFIED WITH plaintext_password BY 'rinco_dev_password';)
+ClickHouse Database directory appears to contain a database; Skipping initialization
+Processing configuration file '/etc/clickhouse-server/config.xml'.
+Merging configuration file '/etc/clickhouse-server/config.d/docker_related_config.xml'.
+Logging trace to /var/log/clickhouse-server/clickhouse-server.log
+Logging errors to /var/log/clickhouse-server/clickhouse-server.err.log
+/entrypoint.sh: create new user 'rinco' instead 'default'
+ClickHouse Database directory appears to contain a database; Skipping initialization
+Processing configuration file '/etc/clickhouse-server/config.xml'.
+Merging configuration file '/etc/clickhouse-server/config.d/docker_related_config.xml'.
+Logging trace to /var/log/clickhouse-server/clickhouse-server.log
+Logging errors to /var/log/clickhouse-server/clickhouse-server.err.log
