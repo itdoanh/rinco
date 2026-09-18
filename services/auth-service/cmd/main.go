@@ -7,7 +7,9 @@
 // participates in the RINCO multi-tenant pool via RLS GUCs.
 package main
 
+// WS-K: Add pprof import for performance profiling.
 import (
+	_ "net/http/pprof"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -283,6 +285,17 @@ func main() {
 		}
 	}()
 
+	// WS-K: pprof listener on a dedicated port (bypasses Echo's mux).
+	// Standard Go pattern for profiling services that use Echo or Gin.
+	// Auth-service listens on :6060, other services follow :6061, :6062, ...
+	go func() {
+		pprofAddr := ":6060"
+		logger.Info("pprof listener starting", slog.String("addr", pprofAddr))
+		if err := http.ListenAndServe(pprofAddr, nil); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("pprof server error", slog.String("error", err.Error()))
+		}
+	}()
+
 	// Periodic GC of OAuth state map (DB persistence is authoritative, this
 	// is just an in-memory accelerator). Stale entries past stateTTL expire.
 	go srv.gcOAuthStates(rootCtx, stateTTL)
@@ -446,6 +459,12 @@ func newEcho(srv *server) *echo.Echo {
 	})
 	e.GET("/readyz", readyz(srv))
 	e.GET("/metrics", echo.WrapHandler(promhttp.Handler()))
+	// WS-K TODO: pprof registration blocked by Echo routing conflict.
+	// See logs/wsk-performance.txt for workaround (separate pprof port).
+	// Current approach: import net/http/pprof (already added above) and
+	// start a second listener on :6060 in a goroutine:
+	//   go func() { log.Println(http.ListenAndServe(":6060", nil)) }()
+	// This bypasses Echo's mux entirely and is the standard Go pattern.
 	e.GET("/version", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"service": serviceName, "version": version})
 	})
