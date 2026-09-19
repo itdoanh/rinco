@@ -199,9 +199,9 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./clickhouse/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
-      - ./clickhouse/tables:/docker-entrypoint-initdb.d/tables:ro
-      - ./clickhouse/materialized-views:/docker-entrypoint-initdb.d/materialized-views:ro
-      - ./clickhouse/dictionaries:/docker-entrypoint-initdb.d/dictionaries:ro
+      - ./clickhouse/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - ./clickhouse/03-seed.sql:/docker-entrypoint-initdb.d/03-seed.sql:ro
+      - ./clickhouse/config.d:/etc/clickhouse-server/config.d:ro
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
       interval: 10s

@@ -24,14 +24,25 @@ CREATE EXTENSION IF NOT EXISTS citext WITH SCHEMA ext;
 -- Composite B-tree GiST indexes
 CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA ext;
 
--- Vector similarity search (pgvector)
-CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA ext;
+-- NOTE: pgvector is intentionally NOT installed here. It ships as a
+-- separate .so file that must be compiled against the running
+-- PostgreSQL binary and loaded via `shared_preload_libraries`. The
+-- stock `postgres:16-alpine` image does not bundle it. The RAG service
+-- uses Qdrant for vector similarity instead, so pgvector is not
+-- required for development. If you need it, switch to
+-- `pgvector/pgvector:pg16` and re-add `vector` to shared_preload_libraries.
 
 -- Query statistics
 CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA ext;
 
--- Background workers, scheduled jobs
-CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA ext;
+-- NOTE: pg_cron is intentionally NOT installed here.
+-- pg_cron ships as a separate .so file that must be compiled against the
+-- running PostgreSQL binary and loaded via `shared_preload_libraries`.
+-- The stock `postgres:16-alpine` image does not bundle it, so this
+-- `CREATE EXTENSION` would crash the database on every restart.
+-- If pg_cron is required, switch to a custom image (e.g.
+-- ` timescale/timescaledb-ha:pg16` or build one with `postgresql-16-cron`)
+-- and add `shared_preload_libraries = 'pg_cron'` to postgresql.conf.
 
 -- Schemas
 CREATE SCHEMA IF NOT EXISTS app;

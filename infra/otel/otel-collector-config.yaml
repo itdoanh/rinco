@@ -46,13 +46,19 @@ exporters:
     tls:
       insecure: true
 
-  clickhouse:
-    endpoint: tcp://clickhouse:9000
-    database: rinco_logs
-    username: rinco
-    password: rinco_dev_password
-    logs_table_name: app_logs
-    timeout: 5s
+  # NOTE: clickhouse exporter is disabled by default in dev because the
+  # stock clickhouse image only binds the native protocol (9000) to
+  # loopback, and ClickHouse logs use a different default database
+  # (`rinco_logs`) that must be provisioned separately.  Re-enable
+  # after exporting the native port (compose: "9000:9000" instead of
+  # "9005:9000") and creating the `rinco_logs` database.
+  # clickhouse:
+  #   endpoint: tcp://clickhouse:9000
+  #   database: rinco_logs
+  #   username: rinco
+  #   password: rinco_dev_password
+  #   logs_table_name: app_logs
+  #   timeout: 5s
 
   logging:
     verbosity: normal
@@ -71,4 +77,4 @@ service:
     logs:
       receivers: [otlp]
       processors: [memory_limiter, resource, batch]
-      exporters: [clickhouse, logging]
+      exporters: [logging]
