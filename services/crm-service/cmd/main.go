@@ -234,6 +234,7 @@ func migrationsList() []migrationFile {
 		{"0012_workflows", migration0012},
 		{"0013_audit_log", migration0013},
 		{"0014_notifications", migration0014},
+		{"0015_users_fk", migration0015},
 	}
 }
 
@@ -648,29 +649,6 @@ FROM users WHERE deleted_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_uwd_id ON users_with_depth(id);
 CREATE INDEX IF NOT EXISTS idx_uwd_tenant ON users_with_depth(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_uwd_path ON users_with_depth USING GIST (path);
-
--- Add foreign keys
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'contacts_owner_user_id_fkey') THEN
-        ALTER TABLE contacts ADD CONSTRAINT contacts_owner_user_id_fkey REFERENCES users(id) ON DELETE SET NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'deals_owner_user_id_fkey') THEN
-        ALTER TABLE deals ADD CONSTRAINT deals_owner_user_id_fkey REFERENCES users(id) ON DELETE SET NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'activities_owner_user_id_fkey') THEN
-        ALTER TABLE activities ADD CONSTRAINT activities_owner_user_id_fkey REFERENCES users(id) ON DELETE SET NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'notes_author_id_fkey') THEN
-        ALTER TABLE notes ADD CONSTRAINT notes_author_id_fkey REFERENCES users(id) ON DELETE SET NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'deal_stage_history_changed_by_fkey') THEN
-        ALTER TABLE deal_stage_history ADD CONSTRAINT deal_stage_history_changed_by_fkey REFERENCES users(id) ON DELETE SET NULL;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'users_parent_id_fkey') THEN
-        ALTER TABLE users ADD CONSTRAINT users_parent_id_fkey REFERENCES users(id) ON DELETE SET NULL;
-    END IF;
-END $$;
 `
 
 const migration0009 = `
@@ -1267,4 +1245,31 @@ CREATE POLICY notif_prefs_tenant_isolation ON notification_preferences
         tenant_id = current_setting('app.current_tenant_id', true)::UUID
         AND user_id = current_setting('app.current_user_id', true)::UUID
     );
+`
+
+const migration0015 = `
+-- Migration 0015: Add user FK constraints (extracted from 0008_users_tree.sql)
+-- Fix: 0008 ran ALTER TABLE on tables created in later migrations.
+-- This migration safely adds FK constraints idempotently after all dependent tables exist.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'contacts_owner_user_id_fkey') THEN
+        ALTER TABLE contacts ADD CONSTRAINT contacts_owner_user_id_fkey REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'deals_owner_user_id_fkey') THEN
+        ALTER TABLE deals ADD CONSTRAINT deals_owner_user_id_fkey REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'activities_owner_user_id_fkey') THEN
+        ALTER TABLE activities ADD CONSTRAINT activities_owner_user_id_fkey REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'notes_author_id_fkey') THEN
+        ALTER TABLE notes ADD CONSTRAINT notes_author_id_fkey REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'deal_stage_history_changed_by_fkey') THEN
+        ALTER TABLE deal_stage_history ADD CONSTRAINT deal_stage_history_changed_by_fkey REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'users_parent_id_fkey') THEN
+        ALTER TABLE users ADD CONSTRAINT users_parent_id_fkey REFERENCES users(id) ON DELETE SET NULL;
+    END IF;
+END $$;
 `
