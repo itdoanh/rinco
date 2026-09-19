@@ -5,7 +5,7 @@
 
 CREATE TABLE IF NOT EXISTS rinco_analytics.conversions
 (
-    event_time      DateTime64(3),
+    event_time      DateTime,
     tenant_id       LowCardinality(String),
     user_id         UUID,
     campaign_id     UUID,
