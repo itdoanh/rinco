@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<clickhouse>
+    <profiles>
+        <default>
+            <allow_experimental_object_type>1</allow_experimental_object_type>
+            <allow_experimental_json_type>1</allow_experimental_json_type>
+        </default>
+    </profiles>
+    <users_config>users.xml</users_config>
+    <user_directories>
+        <users_xml>
+            <path>users.xml</path>
+        </users_xml>
+        <local_directory>
+            <path>/var/lib/clickhouse/access/</path>
+        </local_directory>
+    </user_directories>
+</clickhouse>

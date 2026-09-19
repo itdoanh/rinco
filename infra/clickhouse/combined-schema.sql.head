@@ -1,0 +1,6 @@
+-- Combined ClickHouse schema (created at runtime via `cat`).
+-- This file is referenced by docker-entrypoint-initdb.d/ to ensure
+-- tables and materialized views are created in a single transaction.
+-- It does NOT replace the per-file sources in tables/ and materialized-views/
+-- (those remain the canonical source for code review) — it is rebuilt by
+-- build-all-services.bat / Makefile.
