@@ -1,0 +1,5 @@
+USE rinco_events;
+INSERT INTO event_log (tenant_id, event_date, event_id, event_time, event_name, actor_user_id, actor_type, entity_type, entity_id, correlation_id, payload, source_service) VALUES ('aaaaaaaa-0000-0000-0000-000000000001', toDate(now()), uuid(), toTimestamp(now()), 'lead.created', uuid(), 'user', 'lead', uuid(), uuid(), '{"source":"facebook"}', 'lead-service');
+INSERT INTO event_log (tenant_id, event_date, event_id, event_time, event_name, actor_user_id, actor_type, entity_type, entity_id, correlation_id, payload, source_service) VALUES ('aaaaaaaa-0000-0000-0000-000000000001', toDate(now()), uuid(), toTimestamp(now()), 'deal.won', uuid(), 'user', 'deal', uuid(), uuid(), '{"value":200000000}', 'crm-service');
+INSERT INTO event_log (tenant_id, event_date, event_id, event_time, event_name, actor_user_id, actor_type, entity_type, entity_id, correlation_id, payload, source_service) VALUES ('aaaaaaaa-0000-0000-0000-000000000002', toDate(now()), uuid(), toTimestamp(now()), 'property.viewing.scheduled', uuid(), 'user', 'property', uuid(), uuid(), '{"property":"Vinhomes"}', 'crm-service');
+SELECT count(*) FROM event_log;
